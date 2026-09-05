@@ -48,20 +48,27 @@ make install-cleat   # install the pinned cleat toolchain from cleat-version.env
 make port PORT=dbos-transact-py
 ```
 
-`make install-cleat CLEAT_REF=develop` installs cleat's development branch
-instead of the pinned release — which is what nightly CI does.
+`make install-cleat CLEAT_REF=v0.2.0` pins to a release instead.
 
 ## How this repo is wired to core
 
-- **Pull requests here** run every port against the **pinned** cleat version in
-  `cleat-version.env`. A failure means the port changed.
-- **Nightly** runs every port against `cleat-team/cleat@develop`. A failure means
-  **cleat** changed, and the run opens or updates a single tracking issue on the
-  core repo.
-- **`workflow_dispatch`** lets a core PR trigger this suite before merging.
+Ports run against **`cleat-team/cleat@develop`** — cleat's development branch,
+not its last release. Cleat moves fast enough right now that testing against
+v0.2.0 would mostly measure drift between the release and develop, which is not
+the question this repo exists to answer.
 
-The pin is what makes the signal readable: without it, every failure is
-ambiguous between "cleat regressed" and "the port bit-rotted".
+- **Pull requests here** run every port against `develop`.
+- **Nightly** runs every port against `develop`, and on failure opens or updates
+  a single tracking issue on the core repo.
+- **`workflow_dispatch`** lets a core PR trigger this suite against its own ref
+  before merging.
+
+The cost of tracking a moving branch, stated plainly: a failure no longer
+distinguishes "the port changed" from "cleat changed" on its own. Each run
+records the exact cleat commit under test in `bin/.cleat-build` and prints it in
+the log, so read a failure against that SHA and against whether the PR touched
+the port. `cleat-version.env` says how to switch back to a pin once cleat cuts a
+release this suite is known green against.
 
 ## License
 

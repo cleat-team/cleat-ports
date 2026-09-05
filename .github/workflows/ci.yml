@@ -1,9 +1,10 @@
-# Pull-request CI: every port, against the PINNED cleat version.
+# Pull-request CI: every port, against CLEAT_PINNED_REF from cleat-version.env.
 #
-# Pinned deliberately. A failure on a pull request here means the PORT changed;
-# a failure on nightly (which runs the same ports against cleat's development
-# branch) means CLEAT changed. Without the pin both runs would say the same
-# ambiguous thing, and the ambiguity is expensive to chase every single time.
+# That value is currently `develop`, so this workflow and nightly test the same
+# moving target and a failure here does not by itself say whether the port or
+# cleat changed. Each run prints the cleat commit under test; read a failure
+# against that and against whether the PR touched the port. cleat-version.env
+# records why develop was chosen and how to move back to a pin.
 name: CI
 
 on:

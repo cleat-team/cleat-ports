@@ -1,10 +1,9 @@
 # cleat-ports — run ported upstream test suites against cleat.
 #
-# The cleat toolchain under test is selected by CLEAT_REF, which defaults to the
-# pinned release in cleat-version.env. Nightly CI overrides it with the
-# development branch. Keeping the default pinned is what makes a failure
-# readable: on a pull request a failure means the port changed, and on nightly
-# it means cleat changed.
+# The cleat toolchain under test is selected by CLEAT_REF, which defaults to
+# CLEAT_PINNED_REF in cleat-version.env -- currently `develop`, so ports track
+# cleat's development branch rather than the last release. See the rationale and
+# the cost of that choice in cleat-version.env.
 
 include cleat-version.env
 export
