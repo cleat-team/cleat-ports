@@ -1,8 +1,15 @@
+# scripts/install-cleat.sh clones cleat here. Anchored patterns like /.venv/ do
+# not cover it, and an unignored full checkout of another repo inside this one
+# makes `git status` useless after the first local run.
+/.cleat-src/
 /bin/
 /out/
-/.venv/
+/.port-results/
+
+# Ports create these in their own directories, so these must not be anchored.
+.venv/
 __pycache__/
 *.pyc
 *.wasm
 .pytest_cache/
-.port-results/
+node_modules/
