@@ -1,0 +1,25 @@
+cleat-ports
+Copyright 2026 The cleat authors
+
+This product includes software derived from the test suites of other
+durable-execution projects. Each port under ports/ records its upstream
+project, upstream license, and the upstream commit it was derived from in
+that port's UPSTREAM file.
+
+Upstream projects derived from in this repository:
+
+  DBOS Transact (Python)  -- https://github.com/dbos-inc/dbos-transact-py
+                             Copyright (c) DBOS, Inc.
+                             Licensed under the MIT License.
+
+  Temporal Go Samples     -- https://github.com/temporalio/samples-go
+                             Copyright (c) 2025 Temporal Technologies, Inc.
+                             Copyright (c) 2020 Uber Technologies, Inc.
+                             Licensed under the MIT License.
+
+Derivation is at the level of test intent and assertions: what behaviour the
+upstream test pins down, re-expressed against cleat's APIs. Upstream source is
+not vendored into this repository.
+
+No code from a copyleft-licensed or unlicensed upstream appears in this
+repository. See docs/licensing.md.

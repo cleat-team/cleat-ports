@@ -1,0 +1,73 @@
+# Pull-request CI: every port, against the PINNED cleat version.
+#
+# Pinned deliberately. A failure on a pull request here means the PORT changed;
+# a failure on nightly (which runs the same ports against cleat's development
+# branch) means CLEAT changed. Without the pin both runs would say the same
+# ambiguous thing, and the ambiguity is expensive to chase every single time.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover ports
+    runs-on: ubuntu-latest
+    outputs:
+      ports: ${{ steps.list.outputs.ports }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: list
+        # Ports are discovered rather than listed here, so adding a port never
+        # requires also remembering to edit this workflow. TEMPLATE is not a port.
+        run: |
+          ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)
+          echo "ports=$ports" >> "$GITHUB_OUTPUT"
+          echo "discovered: $ports"
+
+  port:
+    name: ${{ matrix.port }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        port: ${{ fromJSON(needs.discover.outputs.ports) }}
+    services:
+      postgres:
+        image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cleat_ports
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version: "1.25" }
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - name: Install pinned cleat
+        run: make install-cleat
+      - name: Run port
+        run: make port PORT=${{ matrix.port }}
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ matrix.port }}
+          path: .port-results/
+          if-no-files-found: ignore

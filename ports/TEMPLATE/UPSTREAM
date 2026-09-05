@@ -1,0 +1,8 @@
+project:  <upstream project name>
+url:      https://github.com/<org>/<repo>
+license:  <SPDX id — must be MIT, Apache-2.0, BSD-*, or ISC>
+commit:   <full 40-char SHA this port was derived from>
+derived:  <YYYY-MM-DD>
+
+# Pin the commit. "Derived from main" is not reproducible, and when upstream
+# changes an assertion you need to know which version you matched.

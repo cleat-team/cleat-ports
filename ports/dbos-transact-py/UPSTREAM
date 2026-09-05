@@ -1,0 +1,8 @@
+project:  DBOS Transact (Python)
+url:      https://github.com/dbos-inc/dbos-transact-py
+license:  MIT
+commit:   833794f7a1138bacf75ff6d88647a33eb5e35e52
+derived:  2026-09-05
+
+# Upstream source is not vendored. This port re-expresses the assertions of the
+# upstream tests against cleat's Python SDK. See ../../docs/licensing.md.

@@ -1,0 +1,20 @@
+# PostgreSQL for the ports to run against.
+#
+# Pinned by digest to the same image cleat's own docker-compose.dev.yml uses.
+# The point of matching is that a port failure should never be explicable by
+# "different Postgres than core tests against" — that ambiguity is expensive to
+# chase and free to avoid. Bump this together with core's pin, not separately.
+services:
+  postgres:
+    image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cleat_ports
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
