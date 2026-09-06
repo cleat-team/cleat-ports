@@ -289,6 +289,16 @@ def recovery_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def defer_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("defercleanup", "defer_cleanup")
+
+
+@pytest.fixture(scope="session")
+def send_after_sleep_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("sendaftersleep", "send_after_sleep")
+
+
+@pytest.fixture(scope="session")
 def worker():
     """Crash and restart the shared worker.
 
