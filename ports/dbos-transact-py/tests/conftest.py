@@ -87,6 +87,22 @@ class Cleat:
                 return exc.code, {"body": raw.decode(errors="replace")[:200]}
 
     def start(self, name: str, payload, concurrency_key: str | None = None):
+        """Start a workflow. `payload` must be a dict keyed by parameter name.
+
+        Entry-point arguments bind by *lowercased parameter name*, so a
+        workflow `Handle(h, ms int)` takes `{"ms": 1500}`. Passing a bare
+        scalar is not an error: unmatched parameters are left at their zero
+        value and the run completes normally. Every test in this port was
+        briefly passing `{"input": 1500}` and therefore running with ms=0 --
+        the assertions still held, but for weaker reasons than they claimed.
+        Hence the assertion below rather than a comment: a payload that is not
+        a mapping cannot bind to anything, and silently proving less than
+        intended is the failure mode worth making impossible.
+        """
+        assert isinstance(payload, dict), (
+            "workflow input must be a dict keyed by parameter name, e.g. "
+            f"{{'ms': 1500}}; got {type(payload).__name__}"
+        )
         headers = {}
         if concurrency_key:
             headers["Cleat-Concurrency-Key"] = concurrency_key
@@ -95,6 +111,23 @@ class Cleat:
 
     def get(self, run_id: str):
         return self._req("GET", f"/api/workflows/{run_id}")
+
+    def query(self, run_id: str, key: str):
+        return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
+
+    def poll_query(self, run_id: str, key: str, timeout: float = 15.0):
+        """Wait until a query key has a value, and return it.
+
+        Needed because the interesting value is published mid-run: a caller
+        that waits for completion first has already missed it.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status, body = self.query(run_id, key)
+            if status == 200 and body.get("value"):
+                return body["value"]
+            time.sleep(0.1)
+        return None
 
     def await_terminal(self, run_id: str, timeout: float = 30.0) -> dict:
         deadline = time.monotonic() + timeout
@@ -113,31 +146,34 @@ def cleat(api: str, api_key: str) -> Cleat:
     return Cleat(api, api_key)
 
 
-@pytest.fixture(scope="session")
-def holds_key_workflow(cleat: Cleat) -> str:
-    """Build and deploy the workflow these tests drive, and return its name.
-
-    Session-scoped and idempotent: deploying the same name again adds a version
-    rather than failing, so a re-run costs a build but never a stale binary.
-    """
-    # tests/ -> dbos-transact-py/ -> ports/ -> repo root
+def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
+    """Build one workflow package to WASM and deploy it under a stable name."""
     root = pathlib.Path(__file__).resolve().parents[3]
-    pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / "concurrency"
-    out = root / ".port-results" / "wasm" / "concurrency"
+    pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / pkg_name
+    out = root / ".port-results" / "wasm" / pkg_name
 
     built = subprocess.run(
         [str(root / "scripts" / "build-workflow.sh"), str(pkg), str(out)],
         capture_output=True, text=True,
     )
     if built.returncode != 0:
-        pytest.fail(f"building the workflow failed:\n{built.stderr[-2000:]}")
-    wasm = built.stdout.strip()
+        pytest.fail(f"building {pkg_name} failed:\n{built.stderr[-2000:]}")
 
     deployed = subprocess.run(
         [str(root / "bin" / "cleat"), "--db", os.environ["CLEAT_PORTS_DSN"],
-         "deploy", "--name", "holds_key", wasm],
+         "deploy", "--name", workflow_name, built.stdout.strip()],
         capture_output=True, text=True,
     )
     if deployed.returncode != 0:
-        pytest.fail(f"deploying the workflow failed:\n{deployed.stderr[-2000:]}")
-    return "holds_key"
+        pytest.fail(f"deploying {workflow_name} failed:\n{deployed.stderr[-2000:]}")
+    return workflow_name
+
+
+@pytest.fixture(scope="session")
+def replay_identity_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("replay", "replay_identity")
+
+
+@pytest.fixture(scope="session")
+def holds_key_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("concurrency", "holds_key")

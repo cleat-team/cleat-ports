@@ -44,6 +44,17 @@ mint_key() {
   [ -s "$KEYFILE" ] || { echo "failed to mint an API key" >&2; rm -f "$KEYFILE"; exit 1; }
 }
 
+stop_worker() {
+  if running; then
+    pid="$(cat "$PIDFILE")"
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    echo "worker stopped (pid $pid)"
+  fi
+  rm -f "$PIDFILE"
+}
+
 start() {
   [ -x "$ROOT/bin/cleat-worker" ] || {
     echo "cleat-worker not built -- run: make install-cleat" >&2; exit 2; }
@@ -98,14 +109,24 @@ start() {
 
   echo "worker did not become healthy within 30s; log follows:" >&2
   tail -20 "$LOGFILE" >&2
-  stop || true
+  stop_worker
   exit 1
 }
 
 case "${1:?usage: worker.sh <ensure|stop|url>}" in
   ensure)
-    if running && healthy; then
-      echo "worker already running at $API_URL (pid $(cat "$PIDFILE"))"
+    # Health of the endpoint, not ownership of the pidfile, is what decides.
+    # A worker left by an earlier run serves fine and starting a second one
+    # just loses the port bind -- which is how this was found: the second
+    # process logged "address already in use", exited, and took the run with
+    # it while the healthy first worker sat there unused.
+    if healthy; then
+      echo "worker already serving $API_URL${PIDFILE:+ (pid $(cat "$PIDFILE" 2>/dev/null || echo unknown))}"
+      mint_key
+    elif running; then
+      echo "worker process is up but not serving; restarting"
+      stop_worker
+      start
     else
       # A pidfile whose process is gone, or a process that is up but not
       # serving, are both "start a fresh one" -- but the stale pid must go
@@ -115,14 +136,7 @@ case "${1:?usage: worker.sh <ensure|stop|url>}" in
     fi
     ;;
   stop)
-    if running; then
-      pid="$(cat "$PIDFILE")"
-      kill "$pid" 2>/dev/null || true
-      for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-      echo "worker stopped (pid $pid)"
-    fi
-    rm -f "$PIDFILE"
+    stop_worker
     ;;
   url) echo "$API_URL" ;;
   *) echo "usage: worker.sh <ensure|stop|url>" >&2; exit 2 ;;
