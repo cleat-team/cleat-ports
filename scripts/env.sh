@@ -12,6 +12,12 @@
 : "${CLEAT_PORTS_PG_PORT:=5442}"
 : "${CLEAT_PORTS_DSN:=postgres://postgres:postgres@localhost:${CLEAT_PORTS_PG_PORT}/cleat_ports?sslmode=disable}"
 
+# Listen port for the fixture service the ports call to make failures happen on
+# purpose. The worker forwards unrecognised service calls here; see
+# scripts/fixture-service.py.
+: "${CLEAT_PORTS_FIXTURE_PORT:=8098}"
+: "${CLEAT_PORTS_FIXTURE_URL:=http://127.0.0.1:${CLEAT_PORTS_FIXTURE_PORT}}"
+
 # Listen port for the shared worker's HTTP API.
 : "${CLEAT_PORTS_API_PORT:=8099}"
 : "${CLEAT_PORTS_API:=http://127.0.0.1:${CLEAT_PORTS_API_PORT}}"
@@ -20,4 +26,5 @@
 # -rls-check note in worker.sh for what that costs.
 : "${CLEAT_PORTS_TENANT:=00000000-0000-0000-0000-000000000000}"
 
+export CLEAT_PORTS_FIXTURE_PORT CLEAT_PORTS_FIXTURE_URL
 export CLEAT_PORTS_TENANT CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API
