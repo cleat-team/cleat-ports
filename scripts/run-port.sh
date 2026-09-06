@@ -10,7 +10,11 @@ DIR="$ROOT/ports/$PORT"
 [ -x "$ROOT/bin/cleat" ] || { echo "cleat not installed — run: make install-cleat" >&2; exit 2; }
 
 export PATH="$ROOT/bin:$PATH"
-export CLEAT_PORTS_DSN="${CLEAT_PORTS_DSN:-postgres://postgres:postgres@localhost:5432/cleat_ports?sslmode=disable}"
+# Default host port matches docker-compose.yml's default, which is deliberately
+# not 5432 -- see the comment there. CI sets CLEAT_PORTS_DSN explicitly because
+# its postgres service does bind 5432.
+PG_PORT="${CLEAT_PORTS_PG_PORT:-5442}"
+export CLEAT_PORTS_DSN="${CLEAT_PORTS_DSN:-postgres://postgres:postgres@localhost:$PG_PORT/cleat_ports?sslmode=disable}"
 
 mkdir -p "$ROOT/.port-results"
 LOG="$ROOT/.port-results/$PORT.log"

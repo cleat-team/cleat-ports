@@ -64,6 +64,12 @@ jobs:
       - name: Install pinned cleat
         run: make install-cleat
       - name: Run port
+        # Set explicitly rather than relying on run-port.sh's default, which is
+        # 5442 so that a local run does not collide with cleat's own dev
+        # compose. The service container above binds 5432, so CI is the one
+        # place the default is wrong.
+        env:
+          CLEAT_PORTS_PG_PORT: "5432"
         run: make port PORT=${{ matrix.port }}
       - name: Upload log
         if: always()
