@@ -112,6 +112,9 @@ class Cleat:
     def get(self, run_id: str):
         return self._req("GET", f"/api/workflows/{run_id}")
 
+    def cancel(self, run_id: str, reason: str = "port test"):
+        return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
+
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
 
@@ -167,6 +170,11 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
     if deployed.returncode != 0:
         pytest.fail(f"deploying {workflow_name} failed:\n{deployed.stderr[-2000:]}")
     return workflow_name
+
+
+@pytest.fixture(scope="session")
+def cancellable_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("cancellation", "cancellable")
 
 
 @pytest.fixture(scope="session")
