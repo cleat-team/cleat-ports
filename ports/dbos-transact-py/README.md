@@ -28,11 +28,11 @@ each file says about an *engine* as opposed to an application or a web framework
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 12 |
+| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 15 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 0 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **34** |
+| **Total in scope** | **495** | | **37** |
 
 ## What this port deliberately skips, and why
 
@@ -49,7 +49,7 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**34 ported, 31 passing, 3 skipped.** The inventory above is the work plan; the
+**37 ported, 33 passing, 4 skipped.** The inventory above is the work plan; the
 `Ported` column is the progress metric. Priority 1 first, and all four priority-1
 files are now started.
 
@@ -69,7 +69,9 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
 | `test_signals.py` | 1 | `test_dbos.py` — `recv` with a timeout |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
-| `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key | It is not a
+| `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
+| `test_signals.py` (cross-workflow) | 1 | `test_dbos.py` — `send` between workflows |
+| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart | It is not a
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 
@@ -82,6 +84,7 @@ assertion a reader expects is where they expect it:
 | `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit; a blocked start is rejected rather than deferred |
 | `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
+| `test_the_workflow_id_survives_the_transition` | continue-as-new starts an unlinked new run, so the caller cannot follow the chain to its result (cleat#826) |
 
 ### What the port has found so far
 
@@ -96,6 +99,8 @@ suite was green throughout.
 | #771 / #808 | `cleat build` dropped a project's own SDK replace and compiled against the module proxy |
 | #811 | replay never advanced the checksum chain, so any workflow recording an event after resuming died with a checksum mismatch |
 | #812 | the worker never wired the promise store, so every await hung forever and `workflow_promises` had never held a row |
+| #827 | continue-as-new wrote a raw result into a JSON column, so the feature failed outright on PostgreSQL — `coerceResultJSON` was called from one write path out of three |
+| #826 | a continue-as-new chain is unfollowable: the caller sees `{}` and nothing links to the successor |
 | #824 | a single-string entry point silently receives the raw input JSON, and the failure names whatever the argument was later used for |
 | #813 | a promise was keyed by its creator, so no other workflow could settle one — which is the only thing a promise is for |
 | #814 | a promise await re-armed its deadline every wake, so its timeout never fired — generation 3130 for a 5s timeout, now 2 |

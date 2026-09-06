@@ -20,6 +20,8 @@ instead of writing the probe again.
 """
 
 import json
+import time
+import uuid
 
 import pytest
 
@@ -49,3 +51,66 @@ def test_a_signal_await_times_out_when_nothing_arrives(cleat, signal_timeout_wor
         "out leaves the workflow waiting forever, which is what cleat#814 was "
         "on the promise side."
     )
+
+
+def _wait_until(predicate, timeout, what):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.5)
+    pytest.fail(f"timed out after {timeout}s waiting for {what}")
+
+
+def test_a_workflow_can_signal_another_and_the_payload_arrives(
+    cleat, signal_pair, fixture_calls
+):
+    """The cross-workflow path, which is where promises were entirely broken.
+
+    A sender returning success proves nothing on its own -- the promise settler
+    ran to completion, reported `{"settled":"resolved"}`, and had no effect at
+    all, for three defects in a row. So the assertion is the RECEIVER's result:
+    it must come back `signalled`, with the payload the sender was given.
+    """
+    receiver_name, sender_name = signal_pair
+    key = f"sig-{uuid.uuid4().hex[:8]}"
+    payload = f"payload-{uuid.uuid4().hex[:6]}"
+
+    status, receiver = cleat.start(receiver_name, {"key": key, "timeoutMs": 60_000})
+    assert status == 201, f"receiver start rejected: {status} {receiver}"
+    target = receiver["id"]
+
+    # Only signal once the receiver is known to be waiting. Delivery to a run
+    # that has not reached its await is a different question -- whether an
+    # early signal is held -- and mixing them would leave a failure unable to
+    # say which case broke.
+    _wait_until(
+        lambda: fixture_calls(f"{key}-waiting") == 1,
+        timeout=60.0,
+        what="the receiver to reach its await",
+    )
+
+    status, sender = cleat.start(sender_name, {"targetRunID": target, "payload": payload})
+    assert status == 201, f"sender start rejected: {status} {sender}"
+    sent = cleat.await_terminal(sender["id"], timeout=60.0)
+    assert sent["status"] == "done", f"the sender did not complete: {sent!r}"
+    assert _body(sent)["outcome"] == "sent", f"the sender reported {_body(sent)!r}"
+
+    final = cleat.await_terminal(target, timeout=90.0)
+    assert final["status"] == "done", (
+        f"the receiver did not complete: {final!r}. It was waiting on a signal "
+        "the sender reported delivering."
+    )
+
+    body = _body(final)
+    assert body["outcome"] == "signalled", (
+        f"the receiver reported {body!r}. `timedout` here means the sender "
+        "succeeded and delivered nothing, which is exactly how promise "
+        "settlement failed before cleat#813."
+    )
+    assert body["payload"] == payload, (
+        f"the payload did not survive delivery: sent {payload!r}, received "
+        f"{body['payload']!r}. A signal that arrives empty wakes the waiter and "
+        "loses what it was waiting for."
+    )
+    assert body["name"] == "go", f"the signal name did not survive: {body!r}"
