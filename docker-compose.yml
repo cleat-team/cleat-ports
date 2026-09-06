@@ -12,7 +12,14 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: cleat_ports
     ports:
-      - "5432:5432"
+      # Host port is 5442, not 5432, and configurable. Cleat's own
+      # docker-compose.dev.yml binds 5432, so on any machine already running a
+      # cleat dev environment -- which is every machine a contributor is likely
+      # to run this on -- "5432:5432" fails with "port is already allocated"
+      # before a single test runs. Overriding the *host* side only; the
+      # container still listens on 5432, so the image pin above stays the point
+      # of comparison with core.
+      - "${CLEAT_PORTS_PG_PORT:-5442}:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
