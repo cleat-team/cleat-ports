@@ -239,6 +239,19 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def continue_as_new_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("continueasnew", "continue_as_new")
+
+
+@pytest.fixture(scope="session")
+def signal_pair(cleat: Cleat) -> tuple[str, str]:
+    """Deploy the signal receiver and sender, returning both names."""
+    receiver = _build_and_deploy("signalreceiver", "signal_receiver")
+    sender = _build_and_deploy("signalsender", "signal_sender")
+    return receiver, sender
+
+
+@pytest.fixture(scope="session")
 def lock_workflows(cleat: Cleat) -> tuple[str, str]:
     """Deploy the lock holder and the lock attempt, returning both names."""
     holder = _build_and_deploy("lockholder", "lock_holder")
