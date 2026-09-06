@@ -28,11 +28,11 @@ each file says about an *engine* as opposed to an application or a web framework
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 7 |
+| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 8 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 0 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **27** |
+| **Total in scope** | **495** | | **28** |
 
 ## What this port deliberately skips, and why
 
@@ -49,7 +49,7 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**27 ported, 21 passing, 6 skipped.** The inventory above is the work plan; the
+**28 ported, 23 passing, 5 skipped.** The inventory above is the work plan; the
 `Ported` column is the progress metric. Priority 1 first, and all four priority-1
 files are now started.
 
@@ -66,7 +66,8 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_children.py` | 4 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_send.py` | 2 | `test_dbos.py` — `send` delivery semantics |
-| `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` | It is not a
+| `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
+| `test_signals.py` | 1 | `test_dbos.py` — `recv` with a timeout | It is not a
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 
@@ -81,7 +82,6 @@ assertion a reader expects is where they expect it:
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
 | `test_a_promise_resolved_by_another_workflow_releases_the_waiter` | a promise is keyed by its creator, so no other workflow can settle one (cleat#813) |
 | `test_a_rejected_promise_does_not_come_back_as_a_value` | same scoping defect (cleat#813) |
-| `test_an_unsettled_promise_times_out` | an await re-arms its deadline every wake, so a timeout never fires (cleat#814) |
 
 ### What the port has found so far
 
@@ -96,7 +96,8 @@ suite was green throughout.
 | #771 / #808 | `cleat build` dropped a project's own SDK replace and compiled against the module proxy |
 | #811 | replay never advanced the checksum chain, so any workflow recording an event after resuming died with a checksum mismatch |
 | #812 | the worker never wired the promise store, so every await hung forever and `workflow_promises` had never held a row |
-| #813, #814 | promises cannot be settled across workflows, and an await's timeout never fires |
+| #813 | promises cannot be settled across workflows |
+| #814 | a promise await re-armed its deadline every wake, so its timeout never fired — generation 3130 for a 5s timeout, now 2 |
 | #775, #777, #787, #796 | earlier findings from the same harness |
 
 ## Running
