@@ -239,6 +239,11 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def send_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("send", "send")
+
+
+@pytest.fixture(scope="session")
 def recovery_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("recovery", "recovery")
 

@@ -28,11 +28,11 @@ each file says about an *engine* as opposed to an application or a web framework
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 2 |
+| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 4 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 0 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **22** |
+| **Total in scope** | **495** | | **24** |
 
 ## What this port deliberately skips, and why
 
@@ -49,7 +49,7 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**22 ported, 19 passing, 3 skipped.** The inventory above is the work plan; the
+**24 ported, 21 passing, 3 skipped.** The inventory above is the work plan; the
 `Ported` column is the progress metric. Priority 1 first, and all four priority-1
 files are now started.
 
@@ -64,7 +64,8 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_cancellation.py` | 4 | `test_workflow_management.py` |
 | `test_detached.py` | 3 | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_children.py` | 4 | `test_concurrency.py` — concurrent execution and isolation |
-| `test_replay.py` | 2 | `test_dbos.py` | It is not a
+| `test_replay.py` | 2 | `test_dbos.py` |
+| `test_send.py` | 2 | `test_dbos.py` — `send` delivery semantics | It is not a
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 
