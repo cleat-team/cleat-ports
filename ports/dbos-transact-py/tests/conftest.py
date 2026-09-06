@@ -173,6 +173,18 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
 
 
 @pytest.fixture(scope="session")
+def fanout_workflow(cleat: Cleat) -> str:
+    """Deploy both halves of the fan-out pair and return the parent's name.
+
+    The child is deployed first: the parent spawns it by name, so a parent
+    deployed against a missing child fails at run time with "start failed"
+    rather than at deploy time.
+    """
+    _build_and_deploy("childleaf", "child_leaf")
+    return _build_and_deploy("parentfanout", "fanout")
+
+
+@pytest.fixture(scope="session")
 def cancellable_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("cancellation", "cancellable")
 
