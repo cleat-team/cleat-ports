@@ -59,6 +59,10 @@ func HandleReplayIdentity(h cleat.HostCalls, ms int) (string, error) {
 	h.DurableLog("replay-identity: cached " + cached)
 	h.DurableSleepMs(int64(ms))
 
+	// Read AFTER the sleep and before any new event is recorded. Until
+	// cleat#804's companion fix this returned the pre-sleep instant, because
+	// Now() preferred the last recorded event's timestamp over the advance a
+	// completed sleep had already made to the virtual clock.
 	fresh := fmt.Sprintf("%d", h.Now().UnixMilli())
 	h.DurableLog("replay-identity: fresh " + fresh)
 

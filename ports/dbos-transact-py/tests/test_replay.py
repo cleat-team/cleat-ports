@@ -93,12 +93,42 @@ def test_a_captured_value_survives_the_replay(cleat, replay_identity_workflow):
         assert int(v) > 1_700_000_000_000, f"not a plausible epoch-ms value: {v}"
 
 
-@pytest.mark.skip(
-    reason="OPEN: h.Now() does not advance across a suspension. Measured "
-           "fresh - cached = 3ms across a 3000ms sleep, because Now() returns "
-           "the previous event's timestamp and the sleep event is stamped when "
-           "the sleep begins. Asserting elapsed virtual time is the natural way "
-           "to write this test and it does not hold. Reported on cleat#776."
-)
-def test_the_virtual_clock_advances_across_a_sleep():
-    """Left visible rather than dropped: it is the assertion a reader expects."""
+def test_the_virtual_clock_advances_across_a_sleep(cleat, replay_identity_workflow):
+    """The durable clock must move by the duration the workflow asked for.
+
+    `h.Now()` read after a suspension and BEFORE any new event is recorded must
+    already reflect the sleep. It did not until the fix that accompanies
+    cleat#804: a sleep records no event and advances the virtual clock in
+    memory, but Now() preferred the last recorded event's timestamp, so it
+    handed back a pre-sleep instant. Measured at 163ms of apparent elapsed time
+    across a 3000ms sleep.
+
+    The window matters because it is where a workflow naturally looks at the
+    clock: immediately on waking, to decide what to do next.
+    """
+    status, started = cleat.start(replay_identity_workflow, {"ms": SLEEP_MS})
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=90.0)
+    assert final["status"] == "done", f"run did not complete: {final!r}"
+
+    body = _body(final)
+    cached, fresh = int(body["cached"]), int(body["fresh"])
+    advanced = fresh - cached
+
+    assert advanced >= SLEEP_MS * 0.8, (
+        f"the virtual clock advanced {advanced}ms across a {SLEEP_MS}ms sleep. "
+        "A durable clock read on waking must already include the wait; a value "
+        "near zero means it returned the pre-suspension anchor."
+    )
+
+    # Bounded on both sides. The lower bound alone would pass on a clock that
+    # jumped to some far-future wall-clock instant, which is the same defect
+    # class -- a read that is not the durable anchor -- pointing the other way.
+    # The slack above SLEEP_MS is the real time the resumed execution takes;
+    # measured at ~165ms.
+    assert advanced <= SLEEP_MS * 2, (
+        f"the virtual clock advanced {advanced}ms across a {SLEEP_MS}ms sleep, "
+        "far more than was asked for. The clock should carry the sleep plus the "
+        "cost of resuming, not an unrelated wall-clock reading."
+    )
