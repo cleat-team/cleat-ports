@@ -239,6 +239,19 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def lock_workflows(cleat: Cleat) -> tuple[str, str]:
+    """Deploy the lock holder and the lock attempt, returning both names."""
+    holder = _build_and_deploy("lockholder", "lock_holder")
+    tryer = _build_and_deploy("locktry", "lock_try")
+    return holder, tryer
+
+
+@pytest.fixture(scope="session")
+def determinism_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("determinism", "determinism")
+
+
+@pytest.fixture(scope="session")
 def signal_timeout_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("signaltimeout", "signal_timeout")
 
