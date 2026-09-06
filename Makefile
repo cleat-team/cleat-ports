@@ -38,11 +38,20 @@ install-cleat: ## Install the cleat toolchain at CLEAT_REF (default: pinned)
 port: ## Run one port: make port PORT=dbos-transact-py
 	@test -n "$(PORT)" || { echo "usage: make port PORT=<name>  (have: $(PORTS))" >&2; exit 2; }
 	@test -d "ports/$(PORT)" || { echo "no such port: $(PORT)" >&2; exit 2; }
-	./scripts/run-port.sh "$(PORT)"
+	@trap './scripts/worker.sh stop' EXIT INT TERM; ./scripts/run-port.sh "$(PORT)"
+
+.PHONY: worker-up
+worker-up: ## Start the shared cleat worker (normally done for you by `make port`)
+	./scripts/worker.sh ensure
+
+.PHONY: worker-down
+worker-down: ## Stop the shared cleat worker
+	./scripts/worker.sh stop
 
 .PHONY: all-ports
 all-ports: ## Run every port; keeps going on failure and fails at the end
-	@rc=0; for p in $(PORTS); do \
+	@trap './scripts/worker.sh stop' EXIT INT TERM; \
+	rc=0; for p in $(PORTS); do \
 	  echo "=== $$p"; ./scripts/run-port.sh "$$p" || rc=1; \
 	done; exit $$rc
 

@@ -10,14 +10,22 @@ DIR="$ROOT/ports/$PORT"
 [ -x "$ROOT/bin/cleat" ] || { echo "cleat not installed — run: make install-cleat" >&2; exit 2; }
 
 export PATH="$ROOT/bin:$PATH"
-# Default host port matches docker-compose.yml's default, which is deliberately
-# not 5432 -- see the comment there. CI sets CLEAT_PORTS_DSN explicitly because
-# its postgres service does bind 5432.
-PG_PORT="${CLEAT_PORTS_PG_PORT:-5442}"
-export CLEAT_PORTS_DSN="${CLEAT_PORTS_DSN:-postgres://postgres:postgres@localhost:$PG_PORT/cleat_ports?sslmode=disable}"
+# Defaults live in scripts/env.sh so the DSN and the compose port cannot drift
+# apart again. CI overrides CLEAT_PORTS_PG_PORT because its service binds 5432.
+# shellcheck source=scripts/env.sh
+. "$ROOT/scripts/env.sh"
 
 mkdir -p "$ROOT/.port-results"
 LOG="$ROOT/.port-results/$PORT.log"
+
+# One worker, shared by every port in this run. `ensure` is idempotent, so the
+# first port starts it and the rest reuse it. Teardown is the Makefile's job
+# (it traps), not this script's -- stopping here would give each port its own
+# worker, which is what we are deliberately not doing.
+"$ROOT/scripts/worker.sh" ensure
+CLEAT_PORTS_API="$("$ROOT/scripts/worker.sh" url)"
+CLEAT_PORTS_API_KEY="$(cat "$ROOT/.port-results/api-key")"
+export CLEAT_PORTS_API CLEAT_PORTS_API_KEY
 
 echo "--- $PORT: $(cat "$ROOT/bin/.cleat-build" 2>/dev/null | tr '\n' ' ')"
 set +e
