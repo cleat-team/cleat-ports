@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start / stop the one cleat worker that every port in a run shares.
+# Start / stop / crash the one cleat worker that every port in a run shares.
 #
 # One worker per `make` invocation, not one per port and not a long-lived
 # daemon. Per-port workers would make a concurrency test meaningless -- cleat's
@@ -69,6 +69,31 @@ stop_fixture() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     rm -f "$FIXPID"
   fi
+}
+
+# Kill the worker the way a crash does: SIGKILL, no graceful shutdown, no
+# chance to release its claims or finalize anything in flight. A workflow it
+# was running stays `running` in the database with a heartbeat that stops
+# advancing, which is exactly the state a machine losing power produces -- and
+# the state the reaper exists to resolve.
+#
+# stop_worker below is deliberately NOT this: it signals first and only
+# escalates, so a worker asked to stop gets to clean up. A recovery test that
+# used it would be testing shutdown, not crash.
+#
+# The fixture service is left running on purpose. It holds the per-key call
+# counts the recovery assertion reads, and those must survive the crash to be
+# evidence of anything.
+crash_worker() {
+  if running; then
+    pid="$(cat "$PIDFILE")"
+    kill -9 "$pid" 2>/dev/null || true
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    echo "worker killed (pid $pid)"
+  else
+    echo "no worker running to kill" >&2
+  fi
+  rm -f "$PIDFILE"
 }
 
 stop_worker() {
@@ -143,7 +168,7 @@ start() {
   exit 1
 }
 
-case "${1:?usage: worker.sh <ensure|stop|url>}" in
+case "${1:?usage: worker.sh <ensure|crash|stop|url>}" in
   ensure)
     # Health of the endpoint, not ownership of the pidfile, is what decides.
     # A worker left by an earlier run serves fine and starting a second one
@@ -166,10 +191,13 @@ case "${1:?usage: worker.sh <ensure|stop|url>}" in
       start
     fi
     ;;
+  crash)
+    crash_worker
+    ;;
   stop)
     stop_worker
     stop_fixture
     ;;
   url) echo "$API_URL" ;;
-  *) echo "usage: worker.sh <ensure|stop|url>" >&2; exit 2 ;;
+  *) echo "usage: worker.sh <ensure|crash|stop|url>" >&2; exit 2 ;;
 esac
