@@ -97,11 +97,6 @@ def test_a_rejected_promise_does_not_come_back_as_a_value(cleat, promise_workflo
     assert body["outcome"] in ("error", "timedout"), f"unexpected outcome: {body!r}"
 
 
-@pytest.mark.skip(
-    reason="GAP: an await re-arms its deadline on every wake, so the timeout "
-           "never fires. Measured: a 5s timeout still ready at generation 31 "
-           "three minutes later, burning a worker slot per wake. cleat#814."
-)
 def test_an_unsettled_promise_times_out(cleat, promise_workflow):
     """The control. Without it the two tests above are not evidence.
 

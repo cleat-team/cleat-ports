@@ -239,6 +239,11 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def signal_timeout_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("signaltimeout", "signal_timeout")
+
+
+@pytest.fixture(scope="session")
 def promise_workflow(cleat: Cleat) -> str:
     """Deploy the settler first: the parent spawns it by name, so a parent that
     started before the child was deployed would fail on a missing workflow
