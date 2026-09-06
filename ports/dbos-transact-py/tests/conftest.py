@@ -94,7 +94,14 @@ class Cleat:
         `{"intervalms": ...}`. (An earlier version of this docstring said
         "lowercased", which only looked right because the first workflow's
         parameter was `ms`. A mis-cased key binds nothing and the parameter is
-        left at its zero value.) Passing a bare
+        left at its zero value.)
+
+        One exception, measured: a workflow with a SINGLE string parameter
+        receives the raw input JSON instead of a named field, so
+        `{"input": {"key": "ABC"}}` arrives as the string `{"key": "ABC"}`.
+        testdata/minimal-wf names that parameter `input` for exactly this
+        reason. Give such a workflow a second parameter if you want binding by
+        name. Passing a bare
         scalar is not an error: unmatched parameters are left at their zero
         value and the run completes normally. Every test in this port was
         briefly passing `{"input": 1500}` and therefore running with ms=0 --
@@ -203,6 +210,17 @@ def fixture_calls():
             return json.loads(resp.read())["attempts"]
 
     return count
+
+
+@pytest.fixture(scope="session")
+def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
+    """Deploy the detached-execution workflow.
+
+    Depends on retry_workflow because the detached run IS that workflow: it is
+    already deployed, already calls the fixture, and takes a key — so the test
+    can observe a detached run without a second fixture-calling workflow.
+    """
+    return _build_and_deploy("detached", "detached")
 
 
 @pytest.fixture(scope="session")
