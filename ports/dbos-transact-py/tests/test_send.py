@@ -91,3 +91,45 @@ def test_a_send_is_not_repeated_when_the_workflow_replays(
         "once on replay after it -- and the send must be served from history "
         "the second time."
     )
+
+
+def test_a_send_after_a_suspension_still_arrives(cleat, send_after_sleep_workflow, fixture_calls):
+    """The half of `send` that a durable engine has to get right.
+
+    DBOS's send is available anywhere in a workflow, including after a step
+    that made it wait, and a send that a resumed run silently drops is worse
+    than one that fails: the history records that it happened.
+
+    Both keys are asserted, and the early one is why. It is the same call in
+    the same workflow, differing only in which side of the suspension it falls
+    on -- so if the late send is missing while the early one arrived, the
+    difference is the suspension and nothing else. A test that asserted only
+    the late send could not tell "sends after a sleep are dropped" from "the
+    fixture is down".
+
+    cleat#835: DurableSend's replay branch returned success for a step past the
+    end of recorded history without recording an event or dispatching. Measured
+    before the fix: 0 arrivals in 3 runs for the late send, 3 of 3 for the
+    early one.
+    """
+    early = f"early-{uuid.uuid4().hex[:8]}"
+    late = f"late-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(send_after_sleep_workflow, {
+        "earlyKey": early, "lateKey": late, "sleepMs": SLEEP_MS,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=60.0)
+    assert final["status"] == "done", f"run did not complete: {final!r}"
+
+    _wait_until(
+        lambda: fixture_calls(early) >= 1,
+        timeout=30.0,
+        what="the send made before the suspension to reach the fixture service",
+    )
+    _wait_until(
+        lambda: fixture_calls(late) >= 1,
+        timeout=30.0,
+        what="the send made after the suspension to reach the fixture service",
+    )
