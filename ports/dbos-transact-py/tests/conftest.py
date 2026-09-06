@@ -185,6 +185,11 @@ def fanout_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def retry_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("retry", "retrycall")
+
+
+@pytest.fixture(scope="session")
 def cancellable_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("cancellation", "cancellable")
 
