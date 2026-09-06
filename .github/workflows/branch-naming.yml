@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# Branch Naming Check — validates PR source branches follow gitflow convention
+#
+# Prefixes match cleat-team/cleat's list, not cleat-bench's. The two already
+# disagree -- bench rejects `docs/`, core accepts it -- so a contributor moving
+# between repos hits an arbitrary difference. Following the core repo is the
+# choice that surprises the fewest people. See cleat-team/cleat-bench#9.
+# ---------------------------------------------------------------------------
+name: Branch Naming Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: read
+
+jobs:
+  branch-name:
+    name: Validate branch name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch naming convention
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const author = context.payload.pull_request.user.login;
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+
+            if (author === 'dependabot[bot]' || labels.includes('bot')) {
+              console.log(`Exempt: ${author} (bot PR)`);
+              return;
+            }
+
+            const validPrefixes = ['feature/', 'bugfix/', 'fix/', 'docs/', 'release/', 'hotfix/'];
+
+            if (!validPrefixes.some(p => branch.startsWith(p))) {
+              // `return` after setFailed, deliberately. cleat-bench's copy omits
+              // it and falls through to the success log, so the last line of a
+              // failed run reads "follows convention". See cleat-team/cleat-bench#9.
+              core.setFailed(
+                `BRANCH NAME: ${branch}\n\n` +
+                `Branch names must follow the gitflow convention with one of these prefixes:\n\n` +
+                `  feature/   — new functionality        (e.g. feature/dbos-queue-tests)\n` +
+                `  bugfix/    — bug fixes                 (e.g. bugfix/worker-restart)\n` +
+                `  fix/       — CI, config, tooling fixes (e.g. fix/postgres-port)\n` +
+                `  docs/      — documentation only        (e.g. docs/adding-a-port)\n` +
+                `  release/   — release preparation       (e.g. release/v1.2.0)\n` +
+                `  hotfix/    — critical production fix   (e.g. hotfix/harness-hang)\n\n` +
+                `Use lowercase, hyphens (not underscores), and keep names concise.`
+              );
+              return;
+            }
+
+            console.log(`Branch name "${branch}" follows convention.`);
