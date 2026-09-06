@@ -89,8 +89,12 @@ class Cleat:
     def start(self, name: str, payload, concurrency_key: str | None = None):
         """Start a workflow. `payload` must be a dict keyed by parameter name.
 
-        Entry-point arguments bind by *lowercased parameter name*, so a
-        workflow `Handle(h, ms int)` takes `{"ms": 1500}`. Passing a bare
+        Entry-point arguments bind by the EXACT Go parameter name, camelCase
+        included: `Handle(h, intervalMs int)` takes `{"intervalMs": 400}`, not
+        `{"intervalms": ...}`. (An earlier version of this docstring said
+        "lowercased", which only looked right because the first workflow's
+        parameter was `ms`. A mis-cased key binds nothing and the parameter is
+        left at its zero value.) Passing a bare
         scalar is not an error: unmatched parameters are left at their zero
         value and the run completes normally. Every test in this port was
         briefly passing `{"input": 1500}` and therefore running with ms=0 --
@@ -182,6 +186,28 @@ def fanout_workflow(cleat: Cleat) -> str:
     """
     _build_and_deploy("childleaf", "child_leaf")
     return _build_and_deploy("parentfanout", "fanout")
+
+
+@pytest.fixture(scope="session")
+def fixture_calls():
+    """Read the fixture service's per-key call counter.
+
+    Lets a test assert how many times the service was actually reached, which
+    is the only direct evidence of a retry -- wall-clock timing shows that
+    waiting happened, not that the call was repeated.
+    """
+    base = os.environ.get("CLEAT_PORTS_FIXTURE_URL", "http://127.0.0.1:8098")
+
+    def count(key: str) -> int:
+        with urllib.request.urlopen(f"{base}/calls/{key}", timeout=10) as resp:
+            return json.loads(resp.read())["attempts"]
+
+    return count
+
+
+@pytest.fixture(scope="session")
+def retry_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("retry", "retrycall")
 
 
 @pytest.fixture(scope="session")

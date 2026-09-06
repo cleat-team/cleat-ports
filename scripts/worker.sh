@@ -18,6 +18,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/env.sh"
 SRC="$ROOT/.cleat-src"
 PIDFILE="$ROOT/.port-results/worker.pid"
+FIXPID="$ROOT/.port-results/fixture.pid"
+FIXLOG="$ROOT/.port-results/fixture.log"
 KEYFILE="$ROOT/.port-results/api-key"
 LOGFILE="$ROOT/.port-results/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
@@ -42,6 +44,31 @@ mint_key() {
       -generate-api-key "$CLEAT_PORTS_TENANT" 2>/dev/null ) \
     | sed -n 's/^Key: *//p' | tr -d '[:space:]' > "$KEYFILE"
   [ -s "$KEYFILE" ] || { echo "failed to mint an API key" >&2; rm -f "$KEYFILE"; exit 1; }
+}
+
+fixture_healthy() { curl -sf -m 2 "$CLEAT_PORTS_FIXTURE_URL/healthz" >/dev/null 2>&1; }
+
+start_fixture() {
+  fixture_healthy && return 0
+  mkdir -p "$ROOT/.port-results"
+  python3 "$ROOT/scripts/fixture-service.py" "$CLEAT_PORTS_FIXTURE_PORT" \
+    >"$FIXLOG" 2>&1 &
+  echo $! > "$FIXPID"
+  for _ in $(seq 1 40); do
+    fixture_healthy && return 0
+    sleep 0.25
+  done
+  echo "fixture service did not become healthy; log follows:" >&2
+  tail -20 "$FIXLOG" >&2
+  return 1
+}
+
+stop_fixture() {
+  if [ -f "$FIXPID" ]; then
+    pid="$(cat "$FIXPID" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    rm -f "$FIXPID"
+  fi
 }
 
 stop_worker() {
@@ -89,10 +116,13 @@ start() {
   # regression in it. A port that ever asserts tenant isolation must switch to
   # cleat_app first, or it will pass on a connection where isolation is not in
   # force at all.
+  start_fixture || exit 1
+
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
       -api-addr "127.0.0.1:$API_PORT" \
       -rls-check off \
+      -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
       >"$LOGFILE" 2>&1 ) &
   echo $! > "$PIDFILE"
 
@@ -121,6 +151,7 @@ case "${1:?usage: worker.sh <ensure|stop|url>}" in
     # process logged "address already in use", exited, and took the run with
     # it while the healthy first worker sat there unused.
     if healthy; then
+      start_fixture || exit 1
       echo "worker already serving $API_URL${PIDFILE:+ (pid $(cat "$PIDFILE" 2>/dev/null || echo unknown))}"
       mint_key
     elif running; then
@@ -137,6 +168,7 @@ case "${1:?usage: worker.sh <ensure|stop|url>}" in
     ;;
   stop)
     stop_worker
+    stop_fixture
     ;;
   url) echo "$API_URL" ;;
   *) echo "usage: worker.sh <ensure|stop|url>" >&2; exit 2 ;;
