@@ -239,6 +239,15 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def promise_workflow(cleat: Cleat) -> str:
+    """Deploy the settler first: the parent spawns it by name, so a parent that
+    started before the child was deployed would fail on a missing workflow
+    rather than on anything this port is testing."""
+    _build_and_deploy("promisesettler", "promise_settler")
+    return _build_and_deploy("promiseparent", "promise_parent")
+
+
+@pytest.fixture(scope="session")
 def send_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("send", "send")
 
