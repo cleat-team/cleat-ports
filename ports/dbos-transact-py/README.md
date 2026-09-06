@@ -49,7 +49,7 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**28 ported, 23 passing, 5 skipped.** The inventory above is the work plan; the
+**28 ported, 25 passing, 3 skipped.** The inventory above is the work plan; the
 `Ported` column is the progress metric. Priority 1 first, and all four priority-1
 files are now started.
 
@@ -80,8 +80,6 @@ assertion a reader expects is where they expect it:
 | `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit; a blocked start is rejected rather than deferred |
 | `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
-| `test_a_promise_resolved_by_another_workflow_releases_the_waiter` | a promise is keyed by its creator, so no other workflow can settle one (cleat#813) |
-| `test_a_rejected_promise_does_not_come_back_as_a_value` | same scoping defect (cleat#813) |
 
 ### What the port has found so far
 
@@ -96,7 +94,7 @@ suite was green throughout.
 | #771 / #808 | `cleat build` dropped a project's own SDK replace and compiled against the module proxy |
 | #811 | replay never advanced the checksum chain, so any workflow recording an event after resuming died with a checksum mismatch |
 | #812 | the worker never wired the promise store, so every await hung forever and `workflow_promises` had never held a row |
-| #813 | promises cannot be settled across workflows |
+| #813 | a promise was keyed by its creator, so no other workflow could settle one — which is the only thing a promise is for |
 | #814 | a promise await re-armed its deadline every wake, so its timeout never fired — generation 3130 for a 5s timeout, now 2 |
 | #775, #777, #787, #796 | earlier findings from the same harness |
 

@@ -55,11 +55,6 @@ def _run(cleat, workflow, mode, timeout_ms=TIMEOUT_MS):
     return _body(final)
 
 
-@pytest.mark.skip(
-    reason="GAP: a promise is keyed by the workflow that created it, so the "
-           "settler child writes under its own id and the parent's row stays "
-           "pending. The child runs to done and has no effect. cleat#813."
-)
 def test_a_promise_resolved_by_another_workflow_releases_the_waiter(
     cleat, promise_workflow
 ):
@@ -76,11 +71,6 @@ def test_a_promise_resolved_by_another_workflow_releases_the_waiter(
     )
 
 
-@pytest.mark.skip(
-    reason="GAP: same scoping defect as the resolve case -- the rejection is "
-           "written under the settler's workflow id and never reaches the "
-           "waiter. cleat#813."
-)
 def test_a_rejected_promise_does_not_come_back_as_a_value(cleat, promise_workflow):
     """Rejection must be distinguishable from resolution.
 
