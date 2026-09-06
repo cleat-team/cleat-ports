@@ -9,9 +9,14 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # develop as well as main. develop became the default branch when this repo
+    # adopted the same gitflow as cleat and cleat-bench, and this filter still
+    # said [main] -- so the first PR opened against develop merged with the port
+    # suite never having run. A branch filter that silently matches nothing is
+    # indistinguishable from a passing run.
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -78,3 +83,31 @@ jobs:
           name: log-${{ matrix.port }}
           path: .port-results/
           if-no-files-found: ignore
+
+  # A single, stable check for branch protection to require.
+  #
+  # The per-port jobs are matrix-generated from the contents of ports/, so their
+  # names change whenever a port is added or renamed. Requiring them by name
+  # would either go stale or, worse, leave them un-required -- and a port suite
+  # that is not required is a port suite that can go red without blocking a
+  # merge, which is the failure this repo exists to avoid.
+  #
+  # `needs` + an explicit result check, not `if: success()`: a skipped or
+  # cancelled dependency does not make this job fail on its own, so the result
+  # is inspected rather than inferred.
+  ports-gate:
+    name: All ports
+    needs: [discover, port]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every port job succeeded
+        run: |
+          echo "discover: ${{ needs.discover.result }}"
+          echo "port:     ${{ needs.port.result }}"
+          if [ "${{ needs.discover.result }}" != "success" ] || \
+             [ "${{ needs.port.result }}" != "success" ]; then
+            echo "::error::one or more port jobs did not succeed"
+            exit 1
+          fi
+          echo "all ports passed"
