@@ -239,5 +239,45 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def recovery_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("recovery", "recovery")
+
+
+@pytest.fixture(scope="session")
+def worker():
+    """Crash and restart the shared worker.
+
+    The worker is shared by every port in a run, so a test that kills it is
+    borrowing something the rest of the suite needs back. `restart` is
+    therefore not optional cleanup -- it is part of the operation, and the
+    fixture restarts on teardown as well in case a test fails between the two.
+
+    `crash` is SIGKILL. A graceful stop lets the worker release its claims,
+    which would make a recovery test into a shutdown test: the interesting
+    state is a workflow still marked running, owned by a worker that is never
+    coming back, which only an ungraceful death produces.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    script = str(root / "scripts" / "worker.sh")
+
+    def run(action: str) -> None:
+        done = subprocess.run([script, action], capture_output=True, text=True)
+        if done.returncode != 0:
+            pytest.fail(f"worker.sh {action} failed:\n{done.stderr[-2000:]}")
+
+    class Worker:
+        def crash(self) -> None:
+            run("crash")
+
+        def restart(self) -> None:
+            run("ensure")
+
+    w = Worker()
+    yield w
+    # Whatever the test did, the next one needs a worker.
+    w.restart()
+
+
+@pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")

@@ -24,15 +24,15 @@ each file says about an *engine* as opposed to an application or a web framework
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 0 |
-| `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 0 |
-| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 0 |
-| `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 0 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 0 |
+| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 4 |
+| `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
+| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
+| `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
+| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 2 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 0 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **0** |
+| **Total in scope** | **495** | | **22** |
 
 ## What this port deliberately skips, and why
 
@@ -49,8 +49,47 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**Scaffolded. No tests ported yet.** The inventory above is the work plan; the
-`Ported` column is the progress metric. Start with priority 1.
+**22 ported, 19 passing, 3 skipped.** The inventory above is the work plan; the
+`Ported` column is the progress metric. Priority 1 first, and all four priority-1
+files are now started.
+
+The `Ported` column counts cases in *this* suite that carry an upstream
+assertion, mapped to the upstream file the assertion came from:
+
+| This suite | Cases | Mapped to |
+|---|---:|---|
+| `test_concurrency.py` | 4 | `test_queue.py` — concurrency keys are cleat's dedup surface |
+| `test_retries.py` | 4 | `test_failures.py` |
+| `test_recovery.py` | 1 | `test_failures.py` — recovery counts after a crash |
+| `test_cancellation.py` | 4 | `test_workflow_management.py` |
+| `test_detached.py` | 3 | `test_workflow_management.py` — the nearest thing cleat has to fork |
+| `test_children.py` | 4 | `test_concurrency.py` — concurrent execution and isolation |
+| `test_replay.py` | 2 | `test_dbos.py` | It is not a
+percentage of upstream: many upstream cases test the DBOS decorator API rather
+than an engine property, and those have nothing to port.
+
+The three skips are not unfinished work. Each is a cleat gap this port found,
+left visible in the suite with the reason attached rather than deleted, so the
+assertion a reader expects is where they expect it:
+
+| Skipped | Gap |
+|---|---|
+| `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit; a blocked start is rejected rather than deferred |
+| `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
+| `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
+
+### What the port has found so far
+
+Every defect below was reachable only by running a compiled workflow against a
+real database. None was visible from reading cleat's source, and cleat's own
+suite was green throughout.
+
+| cleat issue | Defect |
+|---|---|
+| #776 / #804 | the durable clock stopped for the length of every sleep, and a replay read a different clock than the original execution |
+| #799 / #806 | `DurableSend`, `ResolvePromise` and `RejectPromise` were unreachable from a Go workflow |
+| #771 / #808 | `cleat build` dropped a project's own SDK replace and compiled against the module proxy |
+| #775, #777, #787, #796 | earlier findings from the same harness |
 
 ## Running
 
