@@ -183,4 +183,11 @@ def test_awaiting_one_child_survives_the_parent_suspending(cleat, await_one_chil
     child = body["child"]
     if isinstance(child, str):
         child = json.loads(child)
-    assert child["tag"] == tag, f"the child's result did not round-trip: {body!r}"
+    # .get, not [], deliberately: an absent key must fail this assertion and
+    # print the body, not raise KeyError while evaluating it. Written as
+    # child["tag"] this failed in CI and reported only the name of the missing
+    # key -- the one run where the payload mattered is the one that discarded
+    # it.
+    assert isinstance(child, dict) and child.get("tag") == tag, (
+        f"the child's result did not round-trip: {body!r}"
+    )

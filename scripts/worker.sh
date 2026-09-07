@@ -41,6 +41,7 @@ mint_key() {
   [ -s "$KEYFILE" ] && return 0
   ( cd "$SRC" && "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
+      -driver "$CLEAT_PORTS_DIALECT" \
       -generate-api-key "$CLEAT_PORTS_TENANT" 2>/dev/null ) \
     | sed -n 's/^Key: *//p' | tr -d '[:space:]' > "$KEYFILE"
   [ -s "$KEYFILE" ] || { echo "failed to mint an API key" >&2; rm -f "$KEYFILE"; exit 1; }
@@ -143,8 +144,12 @@ start() {
   # force at all.
   start_fixture || exit 1
 
+  # -driver as well as -db. The worker defaults to postgres and will hand a
+  # MySQL or SQL Server DSN to lib/pq without it, which fails with a message
+  # about SSL or about a missing "=" rather than about dialect.
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
+      -driver "$CLEAT_PORTS_DIALECT" \
       -api-addr "127.0.0.1:$API_PORT" \
       -rls-check off \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
