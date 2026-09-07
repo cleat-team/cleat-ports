@@ -116,14 +116,6 @@ def test_a_workflow_can_signal_another_and_the_payload_arrives(
     assert body["name"] == "go", f"the signal name did not survive: {body!r}"
 
 
-@pytest.mark.skip(
-    reason="cleat#882: PollSignal is not replayed. It re-queries the store live on "
-    "every execution, so after a suspension the first poll runs again, finds the "
-    "signal that has since arrived, and returns true -- carrying a payload that did "
-    "not exist when that line first ran. Verified against engine/signaller.go:150, "
-    "which has no isReplay check at all, unlike SignalWorkflow directly below it. "
-    "Remove the skip when #882 lands; the assertions below are already correct."
-)
 def test_polling_finds_nothing_before_a_signal_and_finds_it_after(
     cleat, poll_signal_pair, fixture_calls
 ):

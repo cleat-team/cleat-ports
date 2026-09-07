@@ -148,6 +148,18 @@ class Cleat:
         """
         return self._req("GET", path)
 
+    def dead_letters(self):
+        return self._req("GET", "/api/dead-letters")
+
+    def dlq_op(self, run_id: str, op: str):
+        """reprocess or terminate a dead-lettered run.
+
+        Under /api/dead-letters/, NOT /api/workflows/ -- the latter 404s for
+        both. There is also a /api/workflows/{id}/retry, which is a different
+        endpoint answering 400 "workflow is not dead-lettered" for a live run.
+        """
+        return self._req("POST", f"/api/dead-letters/{run_id}/{op}", {})
+
     def signal(self, run_id: str, signal_name: str, payload: str = "{}"):
         """Deliver a signal over HTTP.
 
@@ -455,3 +467,9 @@ def poll_signal_pair(cleat: Cleat) -> tuple[str, str]:
 def min_version_workflow(cleat: Cleat) -> str:
     """Deploy the workflow that reports Version and MinVersion across a suspension."""
     return _build_and_deploy("minversion", "min_version")
+
+
+@pytest.fixture(scope="session")
+def dead_letter_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that exhausts its retries and propagates the error."""
+    return _build_and_deploy("deadletter", "dead_letter")
