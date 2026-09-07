@@ -28,11 +28,11 @@ each file says about an *engine* as opposed to an application or a web framework
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 15 |
+| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
-| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 0 |
+| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 4 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **37** |
+| **Total in scope** | **495** | | **53** |
 
 ## What this port deliberately skips, and why
 
@@ -49,9 +49,14 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**37 ported, 33 passing, 4 skipped.** The inventory above is the work plan; the
-`Ported` column is the progress metric. Priority 1 first, and all four priority-1
-files are now started.
+**53 ported, 48 passing, 5 skipped** (counted 2026-09-07 with
+`grep -cE '^def test_' tests/test_*.py`). The inventory above is the work plan;
+the `Ported` column is the progress metric. Priority 1 first, and all four
+priority-1 files are started.
+
+This line said **"scaffolded — no tests ported yet"** in `ports/README.md` until
+2026-09-07, by which point the port had 53 cases and had found 19 defects. A
+status line is a claim with a date on it; this one had neither.
 
 The `Ported` column counts cases in *this* suite that carry an upstream
 assertion, mapped to the upstream file the assertion came from:
@@ -71,13 +76,22 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_signals.py` (cross-workflow) | 1 | `test_dbos.py` — `send` between workflows |
-| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart | It is not a
+| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
+| `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
+| `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
+| `test_scheduling.py` | 4 | `test_scheduler.py` — cron and delayed invocation |
+| `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
+| `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension | It is not a
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 
-The three skips are not unfinished work. Each is a cleat gap this port found,
+The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
 assertion a reader expects is where they expect it:
+
+(This sentence said "three" while the table below listed four and the suite had
+five. A count in prose beside the list it counts is a claim that rots twice —
+derive it, or do not write it.)
 
 | Skipped | Gap |
 |---|---|
@@ -85,6 +99,7 @@ assertion a reader expects is where they expect it:
 | `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
 | `test_the_workflow_id_survives_the_transition` | continue-as-new starts an unlinked new run, so the caller cannot follow the chain to its result (cleat#826) |
+| `test_polling_finds_nothing_before_a_signal_and_finds_it_after` | `PollSignal` is not replayed: it re-queries live, so the first poll re-answers `true` after a suspension (cleat#882) |
 
 ### What the port has found so far
 

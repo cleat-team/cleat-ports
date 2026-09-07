@@ -6,7 +6,7 @@ upstream test *cases* re-expressed, not files touched — see
 
 | Port | Upstream | Upstream license | Covers | Status |
 |---|---|---|---|---|
-| [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **scaffolded — no tests ported yet** |
+| [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **53 cases, 48 passing, 5 skipped** (2026-09-07) — 19 findings, 14 fixed |
 
 ## Planned
 
@@ -18,7 +18,7 @@ upstream test *cases* re-expressed, not files touched — see
 
 | Upstream | Reason | Where it goes instead |
 |---|---|---|
-| [temporalio/features](https://github.com/temporalio/features) | **No LICENSE file** — all rights reserved | Reimplement from its per-feature spec READMEs into `cleat-team/cleat`'s `tests/conformance/` |
+| [temporalio/features](https://github.com/temporalio/features) | **No LICENSE file** — all rights reserved | Reimplement from its per-feature spec READMEs into `cleat-team/cleat`, as a test in the package it guards |
 | [PeerDB-io/peerdb](https://github.com/PeerDB-io/peerdb) | AGPL-3.0 | GitHub fork under `cleat-team/`, keeping AGPL |
 | [flexprice/flexprice](https://github.com/flexprice/flexprice) | AGPL-3.0 | GitHub fork under `cleat-team/`, keeping AGPL |
 
