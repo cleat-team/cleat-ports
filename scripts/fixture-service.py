@@ -60,6 +60,55 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        # Ollama's chat endpoint, so the llm plugin can be exercised without a
+        # model or an API key. The llm plugin's ollama provider POSTs to
+        # {base_url}/api/chat, and worker.sh points base_url here.
+        #
+        # This is the only provider of the six that takes a base_url and no
+        # credential, which is what makes a hermetic plugin test possible at
+        # all -- see ports/dbos-transact-py/tests/test_plugins.py.
+        if self.path == "/api/chat":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                req = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "invalid JSON body"})
+            # Echo the prompt back. A canned constant would pass even if the
+            # request never left the workflow, so the reply has to depend on
+            # what was sent.
+            messages = req.get("messages") or []
+            prompt = messages[-1].get("content", "") if messages else ""
+
+            # Streaming uses the same endpoint with "stream": true, and answers
+            # NDJSON -- one JSON object per line, the last carrying done=true.
+            # The reply is split into one chunk per word so the test can assert
+            # that MORE THAN ONE event was recorded and that they arrive in
+            # order; a single-chunk stream would pass against an implementation
+            # that only ever delivers the last one.
+            if req.get("stream"):
+                words = f"echo:{prompt}".split(" ")
+                lines = [
+                    json.dumps({"message": {"role": "assistant", "content": w if i == 0 else " " + w},
+                                "done": False})
+                    for i, w in enumerate(words)
+                ]
+                lines.append(json.dumps({"message": {"content": ""}, "done": True}))
+                body = ("\n".join(lines) + "\n").encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
+
+            return self._send(200, {
+                "model": req.get("model", ""),
+                "message": {"role": "assistant", "content": f"echo:{prompt}"},
+                "done": True,
+                "prompt_eval_count": 1,
+                "eval_count": 1,
+            })
+
         if not self.path.startswith("/call/"):
             return self._send(404, {"error": "not found"})
 

@@ -147,12 +147,28 @@ start() {
   # -driver as well as -db. The worker defaults to postgres and will hand a
   # MySQL or SQL Server DSN to lib/pq without it, which fails with a message
   # about SSL or about a missing "=" rather than about dialect.
+  # Plugin config. The only plugin linked into cleat-worker is `llm`, and the
+  # only one of its providers that takes a base URL and no credential is
+  # ollama -- so pointing ollama at the fixture service is what makes a plugin
+  # call testable without a model, an API key or a network. The fixture
+  # answers /api/chat, which is the path the provider POSTs to.
+  #
+  # Written every start rather than once: the fixture port comes from env.sh
+  # and a stale file would point a later run at the wrong port, which surfaces
+  # as a connection refused inside the plugin rather than as a config problem.
+  PLUGIN_CONFIG="$ROOT/.port-results/plugin-config.json"
+  mkdir -p "$ROOT/.port-results"
+  cat > "$PLUGIN_CONFIG" <<JSON
+{"providers":{"ollama":{"base_url":"$CLEAT_PORTS_FIXTURE_URL","enabled":true,"default_model":"llama3.2"}}}
+JSON
+
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
       -driver "$CLEAT_PORTS_DIALECT" \
       -api-addr "127.0.0.1:$API_PORT" \
       -rls-check off \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
+      -plugin-config "$PLUGIN_CONFIG" \
       >"$LOGFILE" 2>&1 ) &
   echo $! > "$PIDFILE"
 

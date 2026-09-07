@@ -114,3 +114,67 @@ def test_a_workflow_can_signal_another_and_the_payload_arrives(
         "loses what it was waiting for."
     )
     assert body["name"] == "go", f"the signal name did not survive: {body!r}"
+
+
+@pytest.mark.skip(
+    reason="cleat#882: PollSignal is not replayed. It re-queries the store live on "
+    "every execution, so after a suspension the first poll runs again, finds the "
+    "signal that has since arrived, and returns true -- carrying a payload that did "
+    "not exist when that line first ran. Verified against engine/signaller.go:150, "
+    "which has no isReplay check at all, unlike SignalWorkflow directly below it. "
+    "Remove the skip when #882 lands; the assertions below are already correct."
+)
+def test_polling_finds_nothing_before_a_signal_and_finds_it_after(
+    cleat, poll_signal_pair, fixture_calls
+):
+    """PollSignal is non-blocking: it returns immediately, then sees a later signal.
+
+    Both polls are asserted and the FIRST is the load-bearing one. A poll that
+    always reported found=true would satisfy a test checking only the second,
+    and one that always suspended would never reach the announcement at all.
+    The pair separates "polling works" from "a signal eventually arrives".
+
+    The workflow announces itself between the two polls, so this waits for that
+    before sending. Without it the test races the workflow, and a signal
+    arriving before the first poll makes that poll return true -- a failure
+    about test timing rather than about the code.
+    """
+    poller, sender = poll_signal_pair
+    key = f"poll-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(poller, {"key": key, "sleepMs": 4000})
+    assert status == 201, f"start rejected: {status} {started}"
+
+    # Wait for the first poll to have happened.
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        if fixture_calls(f"{key}-polled") > 0:
+            break
+        time.sleep(0.2)
+    else:
+        pytest.fail(
+            f"the poller never announced itself, so the first poll never completed. "
+            f"A PollSignal that suspends instead of returning would look exactly like this."
+        )
+
+    payload = "sent-after-the-first-poll"
+    status, sent = cleat.start(sender, {"targetRunID": started["id"], "payload": payload})
+    assert status == 201, f"sender start rejected: {status} {sent}"
+    cleat.await_terminal(sent["id"], timeout=30.0)
+
+    final = cleat.await_terminal(started["id"], timeout=60.0)
+    assert final["status"] == "done", (
+        f"the poller did not complete: {final.get('error') or final!r}"
+    )
+
+    body = _body(final)
+    assert body["before"] is False, (
+        f"the first poll reported a signal before one was sent: {body!r}"
+    )
+    assert body["after"] is True, (
+        f"the second poll did not see a signal that had been delivered: {body!r}. "
+        f"A poll that never records anything looks like this."
+    )
+    assert body["payload"] == payload, (
+        f"the polled payload did not round-trip: {body!r}"
+    )

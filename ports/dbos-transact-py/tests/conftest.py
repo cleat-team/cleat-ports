@@ -375,3 +375,23 @@ def worker():
 @pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")
+
+
+@pytest.fixture(scope="session")
+def plugincall_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that calls the `llm` plugin through the worker."""
+    return _build_and_deploy("plugincall", "plugin_call")
+
+
+@pytest.fixture(scope="session")
+def pluginstream_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that calls the `llm` plugin's streaming function."""
+    return _build_and_deploy("pluginstream", "plugin_stream")
+
+
+@pytest.fixture(scope="session")
+def poll_signal_pair(cleat: Cleat) -> tuple[str, str]:
+    """Deploy the polling receiver and reuse the existing sender."""
+    poller = _build_and_deploy("pollsignal", "poll_signal")
+    sender = _build_and_deploy("signalsender", "signal_sender")
+    return poller, sender
