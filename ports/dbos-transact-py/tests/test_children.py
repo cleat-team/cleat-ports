@@ -24,6 +24,7 @@ Hence the per-child result assertions below rather than a count.
 """
 
 import json
+import uuid
 
 import pytest
 
@@ -129,3 +130,57 @@ def test_children_actually_ran_as_separate_workflows(cleat, fanout_workflow):
             "reported its result"
         )
         assert child["def_name"] == "child_leaf"
+
+
+# The child must outlast the parent's first segment. AwaitChild has an
+# "already completed" path that records the result and never suspends, so a
+# fast child never reaches the case below.
+SLOW_CHILD_MS = 2500
+
+
+def test_awaiting_one_child_survives_the_parent_suspending(cleat, await_one_child_workflow):
+    """`AwaitChild` — the singular call, which nothing else here exercises.
+
+    DBOS's single-child case is `handle.get_result()`, and the natural port of
+    it is `AwaitAllChildren([runID])` — which is what
+    test_a_single_child_round_trips above does. So cleat's `AwaitChild` had no
+    coverage at all, under a name that sounds like it did, and cleat#845 lived
+    there: when the child completed, the engine wrote its result into the
+    **parent's** `await_child` event row and left that row's checksum stale, so
+    the parent failed its next segment with a checksum mismatch and never
+    resumed. Measured before the fix: 3 runs of 3 failed with
+
+        checksum verification failed: verify events: workflow <id> step 1:
+        checksum mismatch (expected a0212ee0fc7b6167, got d66082e106bc2725)
+
+    The event type the injection matched, `await_child`, is written by this
+    call and by no other — which is why every fan-out test passed throughout.
+    """
+    tag = f"aoc-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(await_one_child_workflow, {"ms": SLOW_CHILD_MS, "tag": tag})
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=60.0)
+    assert final["status"] == "done", (
+        f"the parent did not complete: {final.get('error') or final!r}. "
+        "A checksum mismatch here means something rewrote the parent's recorded "
+        "events while it was suspended."
+    )
+
+    # The parent must actually have suspended, or this test proves nothing:
+    # a child that finished inside the first segment takes AwaitChild's
+    # "already completed" path and the defect above is never reached. A
+    # suspension bumps the generation, so generation > 1 is the evidence that
+    # the run went through resume rather than straight through.
+    assert final.get("generation", 1) > 1, (
+        f"the parent completed in one segment (generation {final.get('generation')}), "
+        f"so it never suspended and this test did not exercise the resume path. "
+        f"Raise SLOW_CHILD_MS above {SLOW_CHILD_MS}."
+    )
+
+    body = _body(final)
+    child = body["child"]
+    if isinstance(child, str):
+        child = json.loads(child)
+    assert child["tag"] == tag, f"the child's result did not round-trip: {body!r}"

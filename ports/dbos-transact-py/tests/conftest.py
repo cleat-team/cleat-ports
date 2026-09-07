@@ -299,6 +299,18 @@ def send_after_sleep_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def query_state_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("querystate", "query_state")
+
+
+@pytest.fixture(scope="session")
+def await_one_child_workflow(cleat: Cleat) -> str:
+    """Deploy the child first: the parent spawns it by name."""
+    _build_and_deploy("childleaf", "child_leaf")
+    return _build_and_deploy("awaitonechild", "await_one_child")
+
+
+@pytest.fixture(scope="session")
 def worker():
     """Crash and restart the shared worker.
 
