@@ -133,6 +133,31 @@ class Cleat:
     def get(self, run_id: str):
         return self._req("GET", f"/api/workflows/{run_id}")
 
+    def api(self, path: str):
+        """GET any API path, for endpoints without a dedicated helper.
+
+        The per-run sub-resources are split across TWO prefixes, which is not
+        guessable and costs a 404 to discover:
+
+            /api/instances/{id}/events    /api/instances/{id}/state
+            /api/workflows/{id}/history   /api/workflows/{id}/promises
+            /api/workflows/{id}/dag
+
+        Measured, not read off the route table -- `/api/workflows/{id}/events`
+        and `/api/instances/{id}/history` both answer 404.
+        """
+        return self._req("GET", path)
+
+    def signal(self, run_id: str, signal_name: str, payload: str = "{}"):
+        """Deliver a signal over HTTP.
+
+        The body field is `signal_name`, not `name`; `name` is a 400 that says
+        `signal_name is required`, which is clear once seen and invisible
+        beforehand.
+        """
+        return self._req("POST", f"/api/workflows/{run_id}/signal",
+                         {"signal_name": signal_name, "payload": payload})
+
     def admin(self, run_id: str, op: str, body: dict | None = None,
               confirm: str | None = None):
         """Call an operator endpoint on a run.
