@@ -57,9 +57,25 @@ sample is.
 
 ## Status
 
-**Scaffolded. No cases ported yet.**
+**6 cases, 6 passing** (2026-09-07) — 2 findings, 0 fixed.
 
-This file will carry an honest count once cases exist, derived with the command
-beside it — the DBOS port's status line read "scaffolded — no tests ported yet"
-for two days while 53 cases existed, which is the failure this sentence is
-written to avoid repeating.
+Derived, not asserted:
+
+```
+$ go test ./tests/ -list '.*' | grep -c '^Test'
+6
+```
+
+The DBOS port's status line read "scaffolded — no tests ported yet" for two days
+while 53 cases existed. Hence the command beside the number.
+
+| upstream area | cases | file |
+|---|---:|---|
+| `saga/` | 6 | `tests/saga_test.go` |
+
+One of the six is a control on the instrument rather than on cleat
+(`TestTheFixtureRecordsAFailedCallToo`): every other assertion reads the
+fixture's ordered call log, and the entries that matter are calls that
+*failed*, so "does the log record a failure at all" has to be checked
+separately or the expected sequences would be wrong in a way that looked like
+an engine defect.

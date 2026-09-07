@@ -25,6 +25,18 @@ between tests or between runs.
 
     GET /healthz          liveness, so the runner can wait rather than sleep
     GET /calls/<key>      how many times that key has been called
+    GET /log/<key>        WHICH operations that key saw, in arrival order
+
+The ordered log exists for the saga port. A compensation test has to prove the
+compensating calls happened IN REVERSE, and a counter cannot tell "withdraw
+then deposit" from "deposit then withdraw" -- both are two calls. The samples-go
+port asserts on the sequence, so the sequence has to be recorded.
+
+`fail_permanently` is the saga port's other need: a step that fails ONCE and
+stops. `fail_times` failures are 503/TRANSIENT and are retried, so a saga
+triggered with them compensates only after the retry budget drains, and the
+test would be measuring the retry policy rather than the compensation. A 400 is
+PERMANENT to cleat and fails the step immediately.
 
 Deliberately stdlib-only: the port venv installs the cleat SDK and pytest, and a
 fixture that needed a web framework would make the harness depend on something
@@ -38,6 +50,7 @@ from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _counts = defaultdict(int)
+_log = defaultdict(list)
 _lock = threading.Lock()
 
 
@@ -57,6 +70,10 @@ class Handler(BaseHTTPRequestHandler):
             key = self.path[len("/calls/"):]
             with _lock:
                 return self._send(200, {"key": key, "attempts": _counts[key]})
+        if self.path.startswith("/log/"):
+            key = self.path[len("/log/"):]
+            with _lock:
+                return self._send(200, {"key": key, "calls": list(_log[key])})
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -126,9 +143,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "key is required"})
         fail_times = int(req.get("fail_times") or 0)
 
+        # "/call/{service}/{operation}" -> "service.operation". Recorded before
+        # the failure branches, so a call that FAILS still appears in the log --
+        # a saga's failing step is part of the sequence under test.
+        op = ".".join(self.path[len("/call/"):].split("/")[:2])
+
         with _lock:
             _counts[key] += 1
             attempts = _counts[key]
+            _log[key].append(op)
+
+        if req.get("fail_permanently"):
+            # 400: PERMANENT to cleat, so the step fails once instead of
+            # draining a retry budget first.
+            return self._send(400, {
+                "error": "deliberate permanent failure",
+                "key": key,
+                "operation": op,
+            })
 
         if attempts <= fail_times:
             # 503: TRANSIENT, so the caller's RetryPolicy applies.
@@ -138,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
                 "attempts": attempts,
             })
 
-        self._send(200, {"ok": True, "key": key, "attempts": attempts})
+        self._send(200, {"ok": True, "key": key, "attempts": attempts, "operation": op})
 
     def log_message(self, fmt, *args):
         sys.stderr.write("fixture: " + (fmt % args) + "\n")

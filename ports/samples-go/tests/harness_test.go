@@ -1,0 +1,250 @@
+// Package tests drives a running cleat worker over HTTP.
+//
+// The DBOS port's equivalent is tests/conftest.py, and this file deliberately
+// repeats the parts of it that were expensive to learn -- which route prefix
+// each sub-resource lives under, that the idempotency key is a header while
+// priority is a body field, that entry-point arguments bind by the EXACT Go
+// parameter name. Repeating them as executable code rather than as a comment
+// pointing at the other port means a change to the API breaks both.
+package tests
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+var (
+	apiBase    string
+	apiKey     string
+	fixtureURL string
+	repoRoot   string
+)
+
+// TestMain reads the environment scripts/run-port.sh sets and fails loudly if
+// it is absent, rather than skipping.
+//
+// Skipping is the wrong default here and the reason is on the record: the DBOS
+// port once reported green for its whole existence because a DSN pointed at a
+// service container with no published port, so every database subtest skipped.
+// A port that cannot reach its worker has not passed; it has not run.
+func TestMain(m *testing.M) {
+	apiBase = strings.TrimRight(os.Getenv("CLEAT_PORTS_API"), "/")
+	apiKey = os.Getenv("CLEAT_PORTS_API_KEY")
+	fixtureURL = strings.TrimRight(os.Getenv("CLEAT_PORTS_FIXTURE_URL"), "/")
+
+	// `go test -list` must work without a database. The count it prints is
+	// what ../README.md's status line is derived from, and a status line whose
+	// derivation only runs inside the harness is one nobody will re-run.
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "-test.list") {
+			os.Exit(m.Run())
+		}
+	}
+
+	var missing []string
+	for _, v := range []string{"CLEAT_PORTS_API", "CLEAT_PORTS_API_KEY", "CLEAT_PORTS_DSN"} {
+		if os.Getenv(v) == "" {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"samples-go: %s unset -- run this port via `make port PORT=samples-go` from the\n"+
+				"repository root, which starts PostgreSQL, the worker and the fixture service.\n",
+			strings.Join(missing, ", "))
+		os.Exit(2)
+	}
+	if fixtureURL == "" {
+		fixtureURL = "http://127.0.0.1:8098"
+	}
+
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "samples-go: cannot locate the repository root: %v\n", err)
+		os.Exit(2)
+	}
+	repoRoot = strings.TrimSpace(string(out))
+
+	os.Exit(m.Run())
+}
+
+// ---- the client ----
+
+type response struct {
+	Status int
+	Body   map[string]any
+	Raw    string
+}
+
+// call is deliberately not a wrapper that fails the test on a non-2xx status.
+// Several assertions in this port are ABOUT the status code -- a refused start
+// is the behaviour under test, not an error -- and a client that treated 409 as
+// a failure would make the interesting case the awkward one to write.
+func call(t *testing.T, method, path string, body any, headers map[string]string) response {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshalling request body: %v", err)
+		}
+		rdr = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, apiBase+path, rdr)
+	if err != nil {
+		t.Fatalf("building %s %s: %v", method, path, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	out := response{Status: resp.StatusCode, Raw: string(raw), Body: map[string]any{}}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out.Body)
+	}
+	return out
+}
+
+// start launches a workflow.
+//
+// `input` must be a map keyed by the EXACT Go parameter name, camelCase
+// included: Handle(h, intervalMs int) takes {"intervalMs": 400}. A mis-cased
+// key binds nothing and the parameter keeps its zero value, silently -- the
+// DBOS port ran a whole suite that way once, and every assertion still held,
+// for weaker reasons than it claimed.
+func start(t *testing.T, name string, input map[string]any) response {
+	t.Helper()
+	return call(t, http.MethodPost, "/api/workflows/"+name+"/start",
+		map[string]any{"input": input}, nil)
+}
+
+func startedRunID(t *testing.T, r response) string {
+	t.Helper()
+	if r.Status != http.StatusOK && r.Status != http.StatusCreated && r.Status != http.StatusAccepted {
+		t.Fatalf("start answered %d: %s", r.Status, r.Raw)
+	}
+	for _, k := range []string{"run_id", "id", "workflow_id", "instance_id"} {
+		if v, ok := r.Body[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	t.Fatalf("start answered %d with no run id: %s", r.Status, r.Raw)
+	return ""
+}
+
+// awaitTerminal polls until the run stops moving.
+//
+// The four terminal statuses are listed rather than "not running": a status
+// this port has not seen before should hang and report the status it is stuck
+// on, not be silently treated as finished.
+func awaitTerminal(t *testing.T, runID string, timeout time.Duration) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last map[string]any
+	for time.Now().Before(deadline) {
+		r := call(t, http.MethodGet, "/api/workflows/"+runID, nil, nil)
+		last = r.Body
+		switch last["status"] {
+		case "done", "failed", "terminated", "cancelled":
+			return last
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not reach a terminal status within %s; last status %v",
+		runID, timeout, last["status"])
+	return nil
+}
+
+// ---- the fixture service ----
+
+// fixtureCalls returns the operations a key saw, in arrival order, as
+// "service.operation" strings. This is the only direct evidence of WHICH calls
+// happened and in what order; a run's own result says only that it failed.
+func fixtureCalls(t *testing.T, key string) []string {
+	t.Helper()
+	resp, err := http.Get(fixtureURL + "/log/" + key)
+	if err != nil {
+		t.Fatalf("reading the fixture call log for %q: %v", key, err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Calls []string `json:"calls"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding the fixture call log for %q: %v", key, err)
+	}
+	return out.Calls
+}
+
+// ---- deployment ----
+
+// deploy builds one workflow package to WASM and deploys it under a name.
+//
+// deploy-workflow, not `cleat deploy`: the CLI's DB-touching subcommands are
+// PostgreSQL-only by design and refuse a MySQL or SQL Server DSN, so the CLI
+// path would work on one dialect and be assumed on the other two.
+func deploy(t *testing.T, pkg, workflowName string) string {
+	t.Helper()
+	outDir := filepath.Join(repoRoot, ".port-results", "wasm", "samples-go", pkg)
+	pkgDir := filepath.Join(repoRoot, "ports", "samples-go", "workflows", pkg)
+
+	built := exec.Command(filepath.Join(repoRoot, "scripts", "build-workflow.sh"), pkgDir, outDir)
+	wasm, err := built.Output()
+	if err != nil {
+		stderr := ""
+		var ee *exec.ExitError
+		if ok := asExitError(err, &ee); ok {
+			stderr = tail(string(ee.Stderr), 2000)
+		}
+		t.Fatalf("building %s failed: %v\n%s", pkg, err, stderr)
+	}
+
+	deployed := exec.Command(filepath.Join(repoRoot, "bin", "deploy-workflow"),
+		"-db", os.Getenv("CLEAT_PORTS_DSN"),
+		"-driver", envOr("CLEAT_PORTS_DIALECT", "postgres"),
+		workflowName, strings.TrimSpace(string(wasm)))
+	if out, err := deployed.CombinedOutput(); err != nil {
+		t.Fatalf("deploying %s as %q failed: %v\n%s", pkg, workflowName, err, tail(string(out), 2000))
+	}
+	return workflowName
+}
+
+func asExitError(err error, target **exec.ExitError) bool {
+	ee, ok := err.(*exec.ExitError)
+	if ok {
+		*target = ee
+	}
+	return ok
+}
+
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "..." + s[len(s)-n:]
+}

@@ -4,22 +4,20 @@
 .PHONY: setup test clean
 
 setup: ## install this port's dependencies
-	@echo "samples-go: no dependencies yet (cases are Go tests driving the HTTP API)"
+	@# Nothing to install. The test module is stdlib-only on purpose (see
+	@# go.mod), and the workflow packages get their dependencies from the
+	@# cleat checkout that scripts/build-workflow.sh stages them into.
+	@go version
 
-# Exits 0 with ZERO cases, deliberately, and says so loudly.
-#
-# CI discovers ports from the directory listing (.github/workflows), so a
-# scaffold that exits 1 breaks the pipeline for every other port. Exiting 0
-# while reporting nothing would be worse in the other direction -- a port that
-# reads as passing while covering nothing is the exact failure ports/README.md
-# spent two days claiming about dbos-transact-py.
-#
-# So: succeed, and print the count. When the first case lands, this target runs
-# it and the count stops being zero.
 test: ## run this port against the cleat toolchain on PATH
-	@echo "samples-go: 0 cases ported. Scaffolded 2026-09-07; see README.md for the"
-	@echo "            priority order. This target passes because there is nothing"
-	@echo "            to run, NOT because anything was verified."
+	@# -count=1 defeats the test cache. These tests deploy WASM to a live
+	@# database and read a service's call log; a cached PASS from an earlier
+	@# toolchain would be reported as a result for this one.
+	@# -p 1 and no t.Parallel(): the fixture's call log is shared state keyed
+	@# per test, but the WORKER is one process shared by every port in a run,
+	@# and "did compensation run" is not a question you want to answer while
+	@# another test is filling the same worker's queue.
+	go test ./tests/ -v -count=1 -p 1 -timeout 15m
 
 clean: ## remove build artifacts
 	@rm -rf out
