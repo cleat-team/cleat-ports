@@ -1,0 +1,27 @@
+project:  Temporal Go samples
+url:      https://github.com/temporalio/samples-go
+license:  Apache-2.0
+commit:   3c8a12e407354af125d86e654bd38621452d5714
+derived:  2026-09-07
+
+# Upstream source is not vendored. This port re-expresses the assertions of the
+# upstream samples against cleat's Go SDK. See ../../docs/licensing.md.
+#
+# THE LICENCE FIELD WAS WRONG IN THIS REPO BEFORE THIS PORT EXISTED.
+# ports/README.md listed this upstream as MIT. It is Apache-2.0.
+#
+# Worth recording how the error survived, because the check that would catch it
+# is the one people trust:
+#
+#     gh api repos/temporalio/samples-go --jq .license.spdx_id
+#     NOASSERTION
+#
+# GitHub cannot classify the file, because LICENSE is a short-form Apache
+# NOTICE -- "Licensed under the Apache License, Version 2.0" plus the URL --
+# rather than the full licence text its classifier matches against. So the
+# programmatic answer is "Other", the table said MIT, and the file says
+# Apache-2.0. Three answers; only reading the file settles it.
+#
+# Both wrong answers are dangerous in different directions: NOASSERTION reads
+# as "no licence" and would have excluded a permissively licensed upstream,
+# and MIT reads as permissive-and-checked when nobody had checked.
