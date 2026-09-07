@@ -13,11 +13,15 @@ same call through the harness proves nothing about it. That distinction is
 narrower than "plugin calls do not work", and it is what this is written
 around.
 
-The hermetic path: `llm` is the only plugin cmd/cleat-worker links (its
-pgvector import sits commented out, needing an extension). Of llm's six
-providers, ollama alone takes a base URL and no credential -- so scripts/
-worker.sh points ollama's base_url at the port fixture service, which answers
-/api/chat. No model, no API key, no network.
+The hermetic path: of the plugins cmd/cleat-worker links, `llm` is the one that
+can be driven without credentials -- ollama alone among its providers takes a
+base URL and no API key, so scripts/worker.sh points ollama's base_url at the
+port fixture service, which answers /api/chat. No model, no API key, no network.
+
+(This said "llm is the only plugin cleat-worker links", which was true when
+written and is being changed by cleat#891, which links 20. The reason llm is
+used here is the credential-free provider, not the size of the import block, so
+the sentence is phrased to survive that.)
 """
 
 import json

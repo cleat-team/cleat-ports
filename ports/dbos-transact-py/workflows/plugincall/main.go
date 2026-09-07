@@ -18,11 +18,12 @@ import (
 // this covers is exactly one hop: a plugin registering itself in a compiled
 // cleat-worker via init(), and a deployed WASM workflow reaching it.
 //
-// `llm` is the only plugin linked into cmd/cleat-worker (main.go imports it
-// blank; the pgvector import beside it is commented out because it needs an
-// extension). Of its providers, ollama is the only one taking a base URL and
-// no credential, so worker.sh points that base URL at the port fixture
-// service, which answers /api/chat. Nothing here reaches the network.
+// `llm` is used because ollama, alone among its providers, takes a base URL and
+// no credential -- so worker.sh points that base URL at the port fixture
+// service, which answers /api/chat. Nothing here reaches the network. (It was
+// also the only plugin cleat-worker linked when this was written; cleat#891
+// changes that, which is why the reason given here is the credential, not the
+// import block.)
 func HandlePluginCall(h cleat.HostCalls, prompt string, seq int) (string, error) {
 	_ = seq
 

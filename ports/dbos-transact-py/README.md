@@ -24,15 +24,15 @@ each file says about an *engine* as opposed to an application or a web framework
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 6 |
+| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 10 |
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 5 |
-| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 7 |
+| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 12 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
 | `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 4 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 0 |
-| **Total in scope** | **495** | | **53** |
+| **Total in scope** | **495** | | **62** |
 
 ## What this port deliberately skips, and why
 
@@ -49,8 +49,8 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**53 ported, 48 passing, 5 skipped** (counted 2026-09-07 with
-`grep -cE '^def test_' tests/test_*.py`). The inventory above is the work plan;
+**62 ported, 57 passing, 5 skipped** (counted 2026-09-07 with
+`grep -hcE '^def test_' tests/test_*.py | awk '{t+=$1} END{print t}'`). The inventory above is the work plan;
 the `Ported` column is the progress metric. Priority 1 first, and all four
 priority-1 files are started.
 
@@ -81,6 +81,8 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
 | `test_scheduling.py` | 4 | `test_scheduler.py` — cron and delayed invocation |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
+| `test_queues.py` | 4 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
+| `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension | It is not a
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.

@@ -147,11 +147,20 @@ start() {
   # -driver as well as -db. The worker defaults to postgres and will hand a
   # MySQL or SQL Server DSN to lib/pq without it, which fails with a message
   # about SSL or about a missing "=" rather than about dialect.
-  # Plugin config. The only plugin linked into cleat-worker is `llm`, and the
-  # only one of its providers that takes a base URL and no credential is
-  # ollama -- so pointing ollama at the fixture service is what makes a plugin
-  # call testable without a model, an API key or a network. The fixture
-  # answers /api/chat, which is the path the provider POSTs to.
+  # -enable-admin-api is off by default and the operator endpoints answer 404
+  # without it -- the same 404 as an unknown run, from a different line
+  # (cmd/cleat-worker/api_admin.go:20 rather than :133). A port test that does
+  # not set it measures the flag, not the endpoint.
+  #
+  # Plugin config. `llm`'s ollama provider is the one plugin path drivable with
+  # no credential -- it takes a base URL and no API key -- so pointing it at the
+  # fixture service is what makes a plugin call testable without a model, an API
+  # key or a network. The fixture answers /api/chat, which is the path the
+  # provider POSTs to.
+  #
+  # The config is a single JSON blob handed to every plugin, each of which
+  # unmarshals its own shape, so this stays valid as more plugins are linked
+  # (cleat#891 takes the count from 1 to 20).
   #
   # Written every start rather than once: the fixture port comes from env.sh
   # and a stale file would point a later run at the wrong port, which surfaces
@@ -169,6 +178,7 @@ JSON
       -rls-check off \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
       -plugin-config "$PLUGIN_CONFIG" \
+      -enable-admin-api \
       >"$LOGFILE" 2>&1 ) &
   echo $! > "$PIDFILE"
 
