@@ -6,7 +6,7 @@ upstream test *cases* re-expressed, not files touched — see
 
 | Port | Upstream | Upstream license | Covers | Status |
 |---|---|---|---|---|
-| [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **62 cases, 57 passing, 5 skipped** (2026-09-07) — 19 findings, 14 fixed |
+| [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **73 cases, 70 passing, 3 skipped** (2026-09-07) — 23 findings, 18 fixed |
 
 ## Planned
 

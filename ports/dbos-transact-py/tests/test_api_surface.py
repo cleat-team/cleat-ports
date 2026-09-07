@@ -226,16 +226,11 @@ def test_an_unknown_run_is_a_clean_404_on_every_read_path(cleat):
         )
 
 
-@pytest.mark.skip(
-    reason="cleat#899: /api/workflows/{id}/dag returns a raw SQL driver error for "
-    "any workflow with a NULL dag_spec -- which is every workflow that is not a "
-    "DAG. json.RawMessage cannot scan a NULL; MySQL and SQL Server use *[]byte "
-    "and are correct. Fixed in PR #899; remove this skip once it lands on develop."
-)
 def test_a_workflow_without_a_dag_reports_no_dag_rather_than_an_error(cleat, retry_workflow):
     """A non-DAG workflow answers cleanly rather than leaking a scan error.
 
-    This is the assertion that found #899. The endpoint returned
+    This is the assertion that found #899, and it is kept now that the fix has
+    landed rather than deleted: the endpoint returned
 
         load dag_spec: sql: Scan error on column index 0, name "dag_spec":
         unsupported Scan, storing driver.Value type <nil> into type *jsontext.Value

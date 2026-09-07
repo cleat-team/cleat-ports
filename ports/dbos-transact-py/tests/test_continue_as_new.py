@@ -63,21 +63,30 @@ def test_a_workflow_can_continue_as_new_and_every_iteration_runs(
     )
 
 
-@pytest.mark.skip(
-    reason="GAP: continue-as-new inserts a NEW instance row with a fresh "
-           "gen_random_uuid() and nothing links it to its predecessor. The "
-           "caller's run completes with {} and there is no way to reach the run "
-           "carrying the real result -- parent_workflow_id is null on the "
-           "continuation. DBOS and Temporal both preserve the workflow identity "
-           "across the transition. cleat#826."
-)
-def test_the_workflow_id_survives_the_transition(
+def test_the_chain_is_followable_to_the_run_carrying_the_result(
     cleat, continue_as_new_workflow, fixture_calls
 ):
-    """Continue-as-new starts a new RUN of the same WORKFLOW.
+    """A caller can reach the outcome of a continue-as-new chain.
 
-    Left visible rather than deleted: this is the assertion a reader expects,
-    and it is the one that says whether a caller can follow the chain at all.
+    This test was skipped as a GAP (cleat#826) and asserted the opposite:
+    that the workflow ID survives the transition, as it does in DBOS and
+    Temporal. It does not, and that is now a decision rather than an omission.
+
+    What was chosen instead: `GetWorkflowByID` keeps meaning "the row with this
+    id", and a separate `GET /api/workflows/{id}/terminal` walks the
+    `continued_from` chain forward. Making the existing read follow the chain
+    was the other option and was rejected deliberately -- four call sites and
+    the admin dashboard would have started receiving a different row, with a
+    different id, than they asked for.
+
+    So BOTH halves are asserted, and the first is not a residue:
+
+      - polling the original id still reports done with an empty result,
+        because that is what that row honestly contains
+      - /terminal from the same id returns the run that carries the result
+
+    A change that made the first line return the successor's result would be
+    the rejected option arriving by the back door, and would fail here.
     """
     key = f"can-id-{uuid.uuid4().hex[:8]}"
 
@@ -87,13 +96,60 @@ def test_the_workflow_id_survives_the_transition(
     final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"the chain did not complete: {final!r}"
 
+    # The row the caller named. Its result is empty because a run that
+    # continues never returned a value -- correct, and useless on its own.
     body = _body(final)
-    assert body["outcome"] == "finished", (
-        f"the last iteration reported {body!r}. `continue-did-not-take-effect` "
-        "means ContinueAsNew returned without ending the run, so the workflow "
-        "carried on and returned from the wrong place."
+    assert body == {} or body.get("outcome") != "finished", (
+        f"the original run reported a finished outcome: {body!r}. The run that "
+        f"finishes is a later one in the chain; this row returning its result "
+        f"would mean GetWorkflowByID had started following the chain, which was "
+        f"the rejected option."
     )
-    assert body["workflowId"] == started["id"], (
-        f"the workflow id changed across continue-as-new: started {started['id']!r}, "
-        f"finished as {body['workflowId']!r}"
+
+    # The run that actually finished, reached from the id the caller holds.
+    #
+    # POLLED, not read once, and the reason is worth stating because the first
+    # version of this test got it wrong for a documented reason.
+    #
+    # /terminal returns the last link recorded SO FAR, which while the chain is
+    # still running is the link currently executing: status 'running', empty
+    # result. The interface doc shipped in #896 said it returns "the one
+    # carrying the result the caller is waiting for", which is false for most of
+    # the window in which a caller would call it. This test read .result
+    # immediately, believed that sentence, and dereferenced a nil.
+    #
+    # I first diagnosed that as a timing bug in this test. It is one -- but the
+    # reason the timing was surprising is that the method was documented as
+    # returning an OUTCOME when it returns a POSITION. WS-3 corrected the doc in
+    # three places once this surfaced.
+    #
+    # The trap underneath it: THE FIRST RUN OF A CHAIN REACHES A TERMINAL STATUS
+    # THE INSTANT IT CONTINUES. So await_terminal on the id you started returns
+    # almost immediately and says nothing about whether the work finished --
+    # which is the whole reason /terminal exists.
+    terminal = None
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
+        code, terminal = cleat.api(f"/api/workflows/{started['id']}/terminal")
+        assert code == 200, (
+            f"/terminal answered {code}: {terminal!r}. This is the endpoint that "
+            f"makes a continue-as-new chain retrievable at all (cleat#887)."
+        )
+        if terminal.get("status") == "done" and terminal.get("result"):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(
+            f"the chain never reached a run carrying a result within 90s; last "
+            f"terminal run was {terminal!r}"
+        )
+    assert terminal.get("id") != started["id"], (
+        f"/terminal returned the run that was asked for rather than the last in "
+        f"the chain: {terminal!r}"
+    )
+
+    result = terminal.get("result")
+    result = json.loads(result) if isinstance(result, str) else result
+    assert result.get("outcome") == "finished", (
+        f"the terminal run does not carry the finished result: {result!r}"
     )
