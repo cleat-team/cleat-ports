@@ -126,6 +126,13 @@ class Cleat:
     def cancel(self, run_id: str, reason: str = "port test"):
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
 
+    def schedules(self):
+        """List cron schedules. Used by the scheduling tests."""
+        return self._req("GET", "/api/schedules")
+
+    def delete_schedule(self, name: str):
+        return self._req("DELETE", f"/api/schedules/{name}")
+
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
 
@@ -296,6 +303,18 @@ def defer_workflow(cleat: Cleat) -> str:
 @pytest.fixture(scope="session")
 def send_after_sleep_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("sendaftersleep", "send_after_sleep")
+
+
+@pytest.fixture(scope="session")
+def cron_workflows(cleat: Cleat) -> str:
+    """Deploy the cron target first: the schedule starts it by name."""
+    _build_and_deploy("crontarget", "cron_target")
+    return _build_and_deploy("cronscheduler", "cron_scheduler")
+
+
+@pytest.fixture(scope="session")
+def schedule_invoke_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("scheduleinvoke", "schedule_invoke")
 
 
 @pytest.fixture(scope="session")
