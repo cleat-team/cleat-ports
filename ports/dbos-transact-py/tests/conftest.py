@@ -180,9 +180,17 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
     if built.returncode != 0:
         pytest.fail(f"building {pkg_name} failed:\n{built.stderr[-2000:]}")
 
+    # deploy-workflow, not `cleat deploy`. The CLI's DB-touching subcommands are
+    # PostgreSQL-only and refuse a MySQL or SQL Server DSN on purpose --
+    # cmd/cleat/db.go's openPostgresDB says so and names this binary as the one
+    # multi-dialect entry point. Used on every dialect rather than only the two
+    # that need it: one path exercised everywhere beats a conditional exercised
+    # on one dialect and assumed on the others.
     deployed = subprocess.run(
-        [str(root / "bin" / "cleat"), "--db", os.environ["CLEAT_PORTS_DSN"],
-         "deploy", "--name", workflow_name, built.stdout.strip()],
+        [str(root / "bin" / "deploy-workflow"),
+         "-db", os.environ["CLEAT_PORTS_DSN"],
+         "-driver", os.environ.get("CLEAT_PORTS_DIALECT", "postgres"),
+         workflow_name, built.stdout.strip()],
         capture_output=True, text=True,
     )
     if deployed.returncode != 0:

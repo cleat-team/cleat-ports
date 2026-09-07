@@ -25,3 +25,74 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+
+  # MySQL and SQL Server, for the multi-dialect runs. Both are OPT-IN via
+  # profiles: `docker compose up -d --wait` still starts PostgreSQL alone, so
+  # the default run costs nothing extra, and a contributor who only wants the
+  # PostgreSQL suite is not made to pull a 1.5GB SQL Server image.
+  #
+  #   make deps                      -> postgres only
+  #   make deps DIALECT=mysql        -> postgres + mysql
+  #   make deps DIALECT=mssql        -> postgres + mssql
+  #
+  # Host ports are deliberately not the defaults. Every machine likely to run
+  # this already has cleat dev containers on 3306/1433, and other work in
+  # progress may hold 3307/3308/1434 -- the PostgreSQL service above documents
+  # the same reasoning for 5442. Container-side ports are untouched, so the
+  # image pins stay the point of comparison with core.
+  mysql:
+    profiles: ["mysql"]
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: cleat
+      MYSQL_DATABASE: cleat_ports
+    ports:
+      - "${CLEAT_PORTS_MYSQL_PORT:-3309}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "--password=cleat"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  mssql:
+    profiles: ["mssql"]
+    # The real SQL Server, not azure-sql-edge. Edge is a subset of the product
+    # and a green run on it would bound what the suite proves; the real image
+    # runs here, so there is no reason to accept that bound.
+    #
+    # It is x86-only, so on an arm64 host it needs Rosetta. Under QEMU it does
+    # not start at all:
+    #
+    #   sqlservr: Invalid mapping of address 0x4005353000 in reserved address
+    #   space below 0x400000000000 ... (This is the expected behaviour if you
+    #   are running under QEMU)
+    #
+    # Docker Desktop: enable "Use Rosetta for x86_64/amd64 emulation".
+    # colima: the VM needs it at creation, e.g.
+    #
+    #   colima start cleat-ports --vm-type vz --vz-rosetta --cpu 4 --memory 6
+    #
+    # Check with: colima ssh --profile <p> -- ls /proc/sys/fs/binfmt_misc/
+    # `rosetta` must be listed. If only qemu-x86_64 is, this will not start.
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Cleat!Passw0rd"
+      MSSQL_PID: Developer
+    ports:
+      # 1436, not 1435. 1435 looked free in `docker ps` and was not: another
+      # colima VM on this machine held it as a host-level SSH forward, so
+      # connections to localhost:1435 were silently delivered to a DIFFERENT
+      # SQL Server and failed authentication against it. `docker ps` cannot
+      # show that -- the container is in another VM. `lsof -nP -iTCP:<port>
+      # -sTCP:LISTEN` can, and is worth running before picking a port here.
+      - "${CLEAT_PORTS_MSSQL_PORT:-1436}:1433"
+    healthcheck:
+      # A query, not a TCP probe. The port opens well before the server accepts
+      # logins, so a TCP check reports healthy while every connection is still
+      # refused -- which cost time here before this was a query.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
