@@ -48,7 +48,7 @@ reserved.
 So: do not fork it, and do not copy from it. Read the per-feature `README.md`
 specs — which describe publicly documented Temporal behaviour — and implement
 equivalent scenarios from scratch in `cleat-team/cleat` under
-`tests/conformance/`, where they gate every merge. Record the derivation in
+the package they guard, where they gate every merge. Record the derivation in
 `docs/conformance-provenance.md` in that repo.
 
 That work belongs in core, not here, because it is original cleat code that

@@ -22,7 +22,7 @@ checklist does.
 
    | Class | Promote? | Where it goes |
    |---|---|---|
-   | Bug — cleat violates a durability guarantee | **yes** | `tests/conformance/` regression test + core issue |
+   | Bug — cleat violates a durability guarantee | **yes** | regression test in the package it guards + core issue |
    | Missing API — the behaviour is unreachable | **yes** | Core issue first; test lands with the API |
    | Design difference — cleat is deliberately different | no | Stays in `ISSUES.md`; consider a note in `docs/migration/from-*.md` |
 
@@ -38,9 +38,22 @@ checklist does.
    flaky gate — `tier1-gate.yml` takes no known-failure list, and widening it to
    accommodate a failure is the one change that would make it worthless.
 
-4. **Open the core PR.** Test under `tests/conformance/`, referencing the port
-   and the upstream test by name in a comment. Cite the upstream *behaviour*,
-   never paste upstream code.
+4. **Open the core PR.** The gating test goes in **the package it guards** —
+   `engine/`, `wasm/`, `auth/`, `cmd/cleat-worker/` — beside the code it
+   protects. Reference the port and the upstream test by name in a comment.
+   Cite the upstream *behaviour*, never paste upstream code.
+
+   This step used to name a `tests/conformance/` directory. That directory was
+   never created, and all nineteen findings to date shipped their regression
+   test beside the code instead. Decided 2026-09-07 to describe what happens
+   rather than keep asking for what does not: a test next to its subject is
+   found when that subject is edited, and several of these are white-box —
+   `wasm/adapter_callback_param_test.go` reads `adapterDefs` directly and could
+   not live in a separate tree at all.
+
+   What a separate tree would have given is one place to see every guarantee a
+   port established. That is the port's `ISSUES.md`, which names the core PR for
+   each finding — so the index exists, it is just not a directory.
 
 5. **Close the loop here.** Mark the `ISSUES.md` entry with the core issue or PR
    number and its resolution date. A finding with no link is not yet promoted.
