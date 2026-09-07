@@ -64,6 +64,12 @@ mkdir -p "$OUT"
 # because a directory not listed in go.work is not a module of the workspace.
 ( cd "$STAGE" && GOWORK=off "$ROOT/bin/cleat" build -o "$OUT" . ) >&2
 
+# Remove the staging copy. It lives INSIDE the cleat checkout -- it has to, for
+# `cleat build` to find the SDK -- so leaving it behind puts untracked Go files
+# in that repo's working tree, where a `git add -A` sweeps them into a commit
+# and gofmt lints them. That has happened once; hence this line.
+rm -rf "$STAGE"
+
 WASM="$(find "$OUT" -maxdepth 1 -name '*.wasm' -print -quit)"
 [ -n "$WASM" ] || { echo "cleat build produced no .wasm in $OUT" >&2; exit 1; }
 echo "$WASM"

@@ -44,11 +44,11 @@ def test_second_start_under_the_same_key_is_rejected(cleat, holds_key_workflow):
     """
     key = _key()
 
-    status, first = cleat.start(holds_key_workflow, 3000, concurrency_key=key)
+    status, first = cleat.start(holds_key_workflow, {"ms": 3000}, concurrency_key=key)
     assert status == 201, f"first start should be accepted, got {status}: {first}"
     run_id = first["id"]
 
-    status, body = cleat.start(holds_key_workflow, 100, concurrency_key=key)
+    status, body = cleat.start(holds_key_workflow, {"ms": 100}, concurrency_key=key)
     assert status == 409, (
         f"second start under a held key should be refused with 409, got "
         f"{status}: {body}"
@@ -78,13 +78,13 @@ def test_key_is_released_when_the_holder_finishes(cleat, holds_key_workflow):
     """
     key = _key()
 
-    status, first = cleat.start(holds_key_workflow, 200, concurrency_key=key)
+    status, first = cleat.start(holds_key_workflow, {"ms": 200}, concurrency_key=key)
     assert status == 201, f"first start should be accepted, got {status}: {first}"
 
     final = cleat.await_terminal(first["id"])
     assert final["status"] == "done", f"holder did not complete: {final!r}"
 
-    status, second = cleat.start(holds_key_workflow, 100, concurrency_key=key)
+    status, second = cleat.start(holds_key_workflow, {"ms": 100}, concurrency_key=key)
     assert status == 201, (
         f"the key should be free once its holder reached a terminal state, "
         f"got {status}: {second}"
@@ -99,8 +99,8 @@ def test_distinct_keys_do_not_block_each_other(cleat, holds_key_workflow):
     but if starts were rejected for some unrelated reason, it would pass for
     the wrong reason. Two different keys must both be admitted.
     """
-    status_a, a = cleat.start(holds_key_workflow, 1500, concurrency_key=_key())
-    status_b, b = cleat.start(holds_key_workflow, 1500, concurrency_key=_key())
+    status_a, a = cleat.start(holds_key_workflow, {"ms": 1500}, concurrency_key=_key())
+    status_b, b = cleat.start(holds_key_workflow, {"ms": 1500}, concurrency_key=_key())
 
     assert status_a == 201, f"first key rejected: {status_a} {a}"
     assert status_b == 201, f"second, different key rejected: {status_b} {b}"

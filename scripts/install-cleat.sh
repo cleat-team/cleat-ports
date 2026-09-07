@@ -38,6 +38,17 @@ echo "cleat ref=$REF sha=$SHA"
 # analysed, or here linked, is not what ships.
 ( cd "$SRC" && CGO_ENABLED=1 go build -o "$BIN/cleat-worker" ./cmd/cleat-worker )
 
+# deploy-workflow, because `cleat deploy` is PostgreSQL-only and says so:
+# cmd/cleat/db.go routes every DB-touching subcommand through openPostgresDB,
+# which REFUSES a MySQL or SQL Server DSN by design rather than handing it to
+# lib/pq. Its own comment names cmd/deploy-workflow as the one multi-dialect
+# entry point, covering deploy and nothing else.
+#
+# So the ports use this binary for deployment on every dialect, not only the
+# two that need it. One path that works everywhere beats a conditional that is
+# exercised on one dialect and assumed on the others.
+( cd "$SRC" && CGO_ENABLED=0 go build -o "$BIN/deploy-workflow" ./cmd/deploy-workflow )
+
 # Recorded so a failing run can name the exact commit under test rather than a
 # branch name that has moved on by the time anyone reads the log.
 printf 'ref=%s\nsha=%s\n' "$REF" "$SHA" > "$ROOT/bin/.cleat-build"

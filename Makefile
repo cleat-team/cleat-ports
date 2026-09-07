@@ -21,9 +21,19 @@ help: ## Show this help
 	@echo
 	@echo "  ports: $(PORTS)"
 
+# DIALECT selects which database the ports run against: postgres (default),
+# mysql or mssql. It picks the compose profile, the DSN and the worker's
+# -driver flag together, because getting one of the three wrong produces an
+# error about SSL or about a missing "=" rather than about dialect.
+DIALECT ?= postgres
+
 .PHONY: deps
-deps: ## Start PostgreSQL for the ports to run against
-	docker compose up -d --wait
+deps: ## Start the database for DIALECT (default postgres): make deps DIALECT=mysql
+	@case "$(DIALECT)" in \
+	  postgres) docker compose up -d --wait postgres ;; \
+	  mysql|mssql) docker compose --profile $(DIALECT) up -d --wait postgres $(DIALECT) ;; \
+	  *) echo "DIALECT must be postgres, mysql or mssql (got: $(DIALECT))" >&2; exit 2 ;; \
+	esac
 
 .PHONY: deps-down
 deps-down: ## Stop and remove the PostgreSQL container and its volume
@@ -38,11 +48,11 @@ install-cleat: ## Install the cleat toolchain at CLEAT_REF (default: pinned)
 port: ## Run one port: make port PORT=dbos-transact-py
 	@test -n "$(PORT)" || { echo "usage: make port PORT=<name>  (have: $(PORTS))" >&2; exit 2; }
 	@test -d "ports/$(PORT)" || { echo "no such port: $(PORT)" >&2; exit 2; }
-	@trap './scripts/worker.sh stop' EXIT INT TERM; ./scripts/run-port.sh "$(PORT)"
+	@trap './scripts/worker.sh stop' EXIT INT TERM; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh "$(PORT)"
 
 .PHONY: worker-up
 worker-up: ## Start the shared cleat worker (normally done for you by `make port`)
-	./scripts/worker.sh ensure
+	CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/worker.sh ensure
 
 .PHONY: worker-down
 worker-down: ## Stop the shared cleat worker
@@ -52,7 +62,7 @@ worker-down: ## Stop the shared cleat worker
 all-ports: ## Run every port; keeps going on failure and fails at the end
 	@trap './scripts/worker.sh stop' EXIT INT TERM; \
 	rc=0; for p in $(PORTS); do \
-	  echo "=== $$p"; ./scripts/run-port.sh "$$p" || rc=1; \
+	  echo "=== $$p"; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh "$$p" || rc=1; \
 	done; exit $$rc
 
 .PHONY: new-port
