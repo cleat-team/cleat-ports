@@ -86,7 +86,8 @@ class Cleat:
             except json.JSONDecodeError:
                 return exc.code, {"body": raw.decode(errors="replace")[:200]}
 
-    def start(self, name: str, payload, concurrency_key: str | None = None):
+    def start(self, name: str, payload, concurrency_key: str | None = None,
+              idempotency_key: str | None = None, priority: int | None = None):
         """Start a workflow. `payload` must be a dict keyed by parameter name.
 
         Entry-point arguments bind by the EXACT Go parameter name, camelCase
@@ -117,11 +118,39 @@ class Cleat:
         headers = {}
         if concurrency_key:
             headers["Cleat-Concurrency-Key"] = concurrency_key
-        return self._req("POST", f"/api/workflows/{name}/start",
-                         {"input": payload}, headers)
+        if idempotency_key:
+            # A HEADER, not a body field. The start handler reads
+            # r.Header.Get("Idempotency-Key") (cmd/cleat-worker/server.go:515)
+            # while priority comes from the JSON body -- the two queue controls
+            # arrive by different routes, which is worth knowing before
+            # debugging why one of them appears to be ignored.
+            headers["Idempotency-Key"] = idempotency_key
+        body = {"input": payload}
+        if priority is not None:
+            body["priority"] = priority
+        return self._req("POST", f"/api/workflows/{name}/start", body, headers)
 
     def get(self, run_id: str):
         return self._req("GET", f"/api/workflows/{run_id}")
+
+    def admin(self, run_id: str, op: str, body: dict | None = None,
+              confirm: str | None = None):
+        """Call an operator endpoint on a run.
+
+        Two things this signature exists to make visible, both of which cost
+        time to rediscover from a 400:
+
+        - The confirmation header's VALUE is the operation name, not a constant:
+          `X-Confirm: force-complete`. A wrong value is a 400 that says so.
+        - These live under `/api/admin/instances/`, a different prefix from
+          `/api/workflows/`. Seven of these routes were once registered on a
+          table the binary never served, and the symptom was the SPA's HTML
+          fallback at 200 rather than a 404 (cleat#830) -- so a test here
+          should assert on the status, not merely that something came back.
+        """
+        headers = {"X-Confirm": confirm if confirm is not None else op}
+        return self._req("POST", f"/api/admin/instances/{run_id}/{op}",
+                         body if body is not None else {}, headers)
 
     def cancel(self, run_id: str, reason: str = "port test"):
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
@@ -395,3 +424,9 @@ def poll_signal_pair(cleat: Cleat) -> tuple[str, str]:
     poller = _build_and_deploy("pollsignal", "poll_signal")
     sender = _build_and_deploy("signalsender", "signal_sender")
     return poller, sender
+
+
+@pytest.fixture(scope="session")
+def min_version_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that reports Version and MinVersion across a suspension."""
+    return _build_and_deploy("minversion", "min_version")
