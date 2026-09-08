@@ -330,7 +330,8 @@ queues", which is a feature request, not something a test should pin. The
 
 **Class:** Deliberate difference (with one open question)
 **Upstream test:** `tests/test_workflow_management.py` — the `resume_workflow` cases
-**Status:** Open — recorded as a divergence cleat is right about, not a defect
+**Status:** Closed — a divergence cleat is right about, not a defect. One
+adjacent question (reprocess semantics) deliberately deferred; see below.
 
 **What upstream asserts**
 
@@ -391,10 +392,24 @@ is, and `tests/test_recovery.py::test_a_workflow_survives_the_loss_of_its_worker
 asserts that the pre-crash durable call is *not* repeated. The machinery exists
 and is tested. Reprocess-from-scratch is a choice, not a limitation.
 
-Either answer is defensible — from-scratch is safer if a step's side effect
-might be half-applied, from-checkpoint is cheaper and uses a guarantee cleat
-already makes. It should be a decision on the record rather than a consequence
-of which endpoint happened to be written first.
+**Deliberately deferred (2026-09-08), and the deferral is the decision.** Either
+answer is defensible — from-scratch is safer if a step's side effect might be
+half-applied, from-checkpoint is cheaper and uses a guarantee cleat already
+makes — and there is currently no evidence about which case actually arises.
+Choosing now would be picking on aesthetics.
+
+What is recorded here is that the current behaviour is a **choice**, not a
+limitation, so nobody re-derives it as a defect. Revisit when there is
+information the reading cannot supply:
+
+  - a workflow that dead-letters late in an expensive chain, where the cost of
+    repeating completed steps is real rather than theoretical
+  - a case where reprocess-from-scratch *causes* a problem — a step whose side
+    effect is not safely repeatable being redone on re-drive
+  - an operator asking for it
+
+Until one of those, from-scratch stands. The point of this entry is that the
+next person meets a documented decision rather than an accident.
 
 **The rest of the surface, for completeness**
 
