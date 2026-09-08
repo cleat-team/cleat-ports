@@ -192,6 +192,24 @@ class Cleat:
     def cancel(self, run_id: str, reason: str = "port test"):
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
 
+    def create_schedule(self, name: str, cron: str, def_name: str,
+                        entry_point: str, inp: dict, misfire: str = "",
+                        catch_up_limit: int = 0):
+        """POST /api/schedules.
+
+        misfire is passed through verbatim, including "" -- which the engine
+        reads as catch_up (engine/cron.go: "Empty is valid and means
+        MisfireCatchUp"). A test that wants the DEFAULT must be able to send
+        nothing rather than send the default's name, or it tests the name.
+        """
+        body = {"name": name, "cron": cron, "def_name": def_name,
+                "entry_point": entry_point, "input": inp}
+        if misfire:
+            body["misfire_policy"] = misfire
+        if catch_up_limit:
+            body["catch_up_limit"] = catch_up_limit
+        return self._req("POST", "/api/schedules", body)
+
     def schedules(self):
         """List cron schedules. Used by the scheduling tests."""
         return self._req("GET", "/api/schedules")

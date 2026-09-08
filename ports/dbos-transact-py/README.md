@@ -36,9 +36,9 @@ application or a web framework.
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
-| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
+| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 7 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **87** |
+| **Total in scope** | **371** | | **88** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -147,6 +147,29 @@ in the repo. Retracted before it reached this table.)
 - `test_conductor_lifecycle.py`, `test_telemetry.py`, `test_admin_server.py` —
   DBOS Conductor and its observability stack.
 
+### Cases left unported on purpose, with the reason
+
+Whole-file skips are above. These are individual cases assessed and declined,
+recorded so nobody re-derives them as oversights.
+
+- `test_scheduler.py::test_dynamic_scheduler_add_after_launch` — **covered, with
+  a known delta.** `test_scheduling.py::test_a_cron_schedule_actually_starts_its_workflow`
+  already creates a schedule while the worker is running and asserts it fires.
+  Upstream asserts it fires **twice**, which proves recurrence rather than a
+  one-shot; ours asserts once. That is a real difference and it is declined on
+  cost: cron granularity is a minute, so the second firing costs two more
+  minutes of suite time for a claim the first firing makes most of.
+- `test_scheduler.py::test_dynamic_scheduler_replace_schedule` — **measured, no
+  defect to pin.** Delete-then-recreate under one name is clean in cleat:
+  `DeleteSchedule` is a hard `DELETE`, the recreate inserts a fresh row, and the
+  new input is used with no policy or timing state carried across. Probing this
+  is what found cleat#995 and cleat#996, which are the results that came out of
+  it.
+- `test_scheduler.py::test_long_schedule_shutdown` — parked. It wants the
+  `worker.stop()` correction (that helper stops the API server and the fixture
+  service too), and `test_misfire.py` already exercises the stop/restart path
+  it would cover.
+
 ## Status
 
 **82 cases on `develop`**, re-derived 2026-09-08 with the command under the
@@ -181,6 +204,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
+| `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
 | `test_priority_order.py` | 2 | `test_queue.py` — priority is a queue control |
 | `test_promise_wakes.py` | 2 | none — cleat-specific: does the promise wake path share cleat#953's defect |
@@ -195,7 +219,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **93** (3 skipped outright) | **87** credited upstream, **6** cleat-specific |
+| **Total** | **94** (3 skipped outright) | **88** credited upstream, **6** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
