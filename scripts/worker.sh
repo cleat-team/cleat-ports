@@ -20,7 +20,23 @@ SRC="$ROOT/.cleat-src"
 PIDFILE="$ROOT/.port-results/worker.pid"
 FIXPID="$ROOT/.port-results/fixture.pid"
 FIXLOG="$ROOT/.port-results/fixture.log"
-KEYFILE="$ROOT/.port-results/api-key"
+# Per dialect, and that is the whole point of the suffix.
+#
+# The key lives in the database it was minted against -- api_keys is a table
+# like any other -- so a key minted on PostgreSQL means nothing on MySQL. A
+# single shared path made `make port DIALECT=mysql` after a postgres run fail
+# every test with
+#
+#     start answered 401: {"error":"invalid or revoked API key"}
+#
+# because mint_key returns early whenever the file is non-empty, and it was:
+# it held the postgres key. The 401 names authentication, which is the one
+# thing that was not wrong, and sends you looking at --require-auth.
+#
+# `worker.sh stop` does not remove it either, so stopping the worker and
+# starting it on another dialect reproduced the same failure -- which is what
+# makes this worth a suffix rather than a cleanup in stop.
+KEYFILE="$ROOT/.port-results/api-key.$CLEAT_PORTS_DIALECT"
 LOGFILE="$ROOT/.port-results/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
 API_URL="$CLEAT_PORTS_API"
@@ -147,12 +163,38 @@ start() {
   # -driver as well as -db. The worker defaults to postgres and will hand a
   # MySQL or SQL Server DSN to lib/pq without it, which fails with a message
   # about SSL or about a missing "=" rather than about dialect.
+  # -enable-admin-api is off by default and the operator endpoints answer 404
+  # without it -- the same 404 as an unknown run, from a different line
+  # (cmd/cleat-worker/api_admin.go:20 rather than :133). A port test that does
+  # not set it measures the flag, not the endpoint.
+  #
+  # Plugin config. `llm`'s ollama provider is the one plugin path drivable with
+  # no credential -- it takes a base URL and no API key -- so pointing it at the
+  # fixture service is what makes a plugin call testable without a model, an API
+  # key or a network. The fixture answers /api/chat, which is the path the
+  # provider POSTs to.
+  #
+  # The config is a single JSON blob handed to every plugin, each of which
+  # unmarshals its own shape, so this stays valid as more plugins are linked
+  # (cleat#891 takes the count from 1 to 20).
+  #
+  # Written every start rather than once: the fixture port comes from env.sh
+  # and a stale file would point a later run at the wrong port, which surfaces
+  # as a connection refused inside the plugin rather than as a config problem.
+  PLUGIN_CONFIG="$ROOT/.port-results/plugin-config.json"
+  mkdir -p "$ROOT/.port-results"
+  cat > "$PLUGIN_CONFIG" <<JSON
+{"providers":{"ollama":{"base_url":"$CLEAT_PORTS_FIXTURE_URL","enabled":true,"default_model":"llama3.2"}}}
+JSON
+
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
       -driver "$CLEAT_PORTS_DIALECT" \
       -api-addr "127.0.0.1:$API_PORT" \
       -rls-check off \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
+      -plugin-config "$PLUGIN_CONFIG" \
+      -enable-admin-api \
       >"$LOGFILE" 2>&1 ) &
   echo $! > "$PIDFILE"
 

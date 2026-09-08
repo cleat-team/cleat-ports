@@ -86,7 +86,8 @@ class Cleat:
             except json.JSONDecodeError:
                 return exc.code, {"body": raw.decode(errors="replace")[:200]}
 
-    def start(self, name: str, payload, concurrency_key: str | None = None):
+    def start(self, name: str, payload, concurrency_key: str | None = None,
+              idempotency_key: str | None = None, priority: int | None = None):
         """Start a workflow. `payload` must be a dict keyed by parameter name.
 
         Entry-point arguments bind by the EXACT Go parameter name, camelCase
@@ -117,11 +118,76 @@ class Cleat:
         headers = {}
         if concurrency_key:
             headers["Cleat-Concurrency-Key"] = concurrency_key
-        return self._req("POST", f"/api/workflows/{name}/start",
-                         {"input": payload}, headers)
+        if idempotency_key:
+            # A HEADER, not a body field. The start handler reads
+            # r.Header.Get("Idempotency-Key") (cmd/cleat-worker/server.go:515)
+            # while priority comes from the JSON body -- the two queue controls
+            # arrive by different routes, which is worth knowing before
+            # debugging why one of them appears to be ignored.
+            headers["Idempotency-Key"] = idempotency_key
+        body = {"input": payload}
+        if priority is not None:
+            body["priority"] = priority
+        return self._req("POST", f"/api/workflows/{name}/start", body, headers)
 
     def get(self, run_id: str):
         return self._req("GET", f"/api/workflows/{run_id}")
+
+    def api(self, path: str):
+        """GET any API path, for endpoints without a dedicated helper.
+
+        The per-run sub-resources are split across TWO prefixes, which is not
+        guessable and costs a 404 to discover:
+
+            /api/instances/{id}/events    /api/instances/{id}/state
+            /api/workflows/{id}/history   /api/workflows/{id}/promises
+            /api/workflows/{id}/dag
+
+        Measured, not read off the route table -- `/api/workflows/{id}/events`
+        and `/api/instances/{id}/history` both answer 404.
+        """
+        return self._req("GET", path)
+
+    def dead_letters(self):
+        return self._req("GET", "/api/dead-letters")
+
+    def dlq_op(self, run_id: str, op: str):
+        """reprocess or terminate a dead-lettered run.
+
+        Under /api/dead-letters/, NOT /api/workflows/ -- the latter 404s for
+        both. There is also a /api/workflows/{id}/retry, which is a different
+        endpoint answering 400 "workflow is not dead-lettered" for a live run.
+        """
+        return self._req("POST", f"/api/dead-letters/{run_id}/{op}", {})
+
+    def signal(self, run_id: str, signal_name: str, payload: str = "{}"):
+        """Deliver a signal over HTTP.
+
+        The body field is `signal_name`, not `name`; `name` is a 400 that says
+        `signal_name is required`, which is clear once seen and invisible
+        beforehand.
+        """
+        return self._req("POST", f"/api/workflows/{run_id}/signal",
+                         {"signal_name": signal_name, "payload": payload})
+
+    def admin(self, run_id: str, op: str, body: dict | None = None,
+              confirm: str | None = None):
+        """Call an operator endpoint on a run.
+
+        Two things this signature exists to make visible, both of which cost
+        time to rediscover from a 400:
+
+        - The confirmation header's VALUE is the operation name, not a constant:
+          `X-Confirm: force-complete`. A wrong value is a 400 that says so.
+        - These live under `/api/admin/instances/`, a different prefix from
+          `/api/workflows/`. Seven of these routes were once registered on a
+          table the binary never served, and the symptom was the SPA's HTML
+          fallback at 200 rather than a 404 (cleat#830) -- so a test here
+          should assert on the status, not merely that something came back.
+        """
+        headers = {"X-Confirm": confirm if confirm is not None else op}
+        return self._req("POST", f"/api/admin/instances/{run_id}/{op}",
+                         body if body is not None else {}, headers)
 
     def cancel(self, run_id: str, reason: str = "port test"):
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
@@ -132,6 +198,16 @@ class Cleat:
 
     def delete_schedule(self, name: str):
         return self._req("DELETE", f"/api/schedules/{name}")
+
+    def schedule_enabled(self, name: str, enabled: bool):
+        """Enable or disable a schedule.
+
+        POST /api/schedules/{name}/enable | /disable, both with no body.
+        Separate from delete_schedule because the difference is the point: a
+        disabled schedule is retained and can be resumed, a deleted one cannot.
+        """
+        action = "enable" if enabled else "disable"
+        return self._req("POST", f"/api/schedules/{name}/{action}", {})
 
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
@@ -211,6 +287,28 @@ def fanout_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def fixture_log():
+    """Read the fixture service's per-key call log, in arrival order.
+
+    Distinct from fixture_calls, which counts. A count cannot answer an
+    ORDERING question -- two workflows starting in either sequence are two
+    calls -- so the service records the operation names as they arrive and this
+    returns them as "service.operation" strings.
+
+    Added for the priority-dispatch test, which asks which workflows were
+    claimed first. Nothing else here needed order until something asked whether
+    the claim query's `ORDER BY priority` is observable.
+    """
+    base = os.environ.get("CLEAT_PORTS_FIXTURE_URL", "http://127.0.0.1:8098")
+
+    def log(key: str) -> list[str]:
+        with urllib.request.urlopen(f"{base}/log/{key}", timeout=10) as resp:
+            return json.loads(resp.read())["calls"]
+
+    return log
+
+
+@pytest.fixture(scope="session")
 def fixture_calls():
     """Read the fixture service's per-key call counter.
 
@@ -236,6 +334,12 @@ def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
     can observe a detached run without a second fixture-calling workflow.
     """
     return _build_and_deploy("detached", "detached")
+
+
+@pytest.fixture(scope="session")
+def priority_mark_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that records its own claim order."""
+    return _build_and_deploy("prioritymark", "priority_mark")
 
 
 @pytest.fixture(scope="session")
@@ -363,6 +467,18 @@ def worker():
         def crash(self) -> None:
             run("crash")
 
+        def stop(self) -> None:
+            """Graceful shutdown, as opposed to crash().
+
+            A test that wants to build a BACKLOG needs the worker gone without
+            claims left held: the API keeps accepting starts with no worker
+            running -- they land as `ready` rows -- and a graceful stop is what
+            makes the queue's contents entirely the test's doing. crash() would
+            leave whatever was in flight owned by a dead worker, which is the
+            right thing for a recovery test and the wrong thing here.
+            """
+            run("stop")
+
         def restart(self) -> None:
             run("ensure")
 
@@ -375,3 +491,35 @@ def worker():
 @pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")
+
+
+@pytest.fixture(scope="session")
+def plugincall_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that calls the `llm` plugin through the worker."""
+    return _build_and_deploy("plugincall", "plugin_call")
+
+
+@pytest.fixture(scope="session")
+def pluginstream_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that calls the `llm` plugin's streaming function."""
+    return _build_and_deploy("pluginstream", "plugin_stream")
+
+
+@pytest.fixture(scope="session")
+def poll_signal_pair(cleat: Cleat) -> tuple[str, str]:
+    """Deploy the polling receiver and reuse the existing sender."""
+    poller = _build_and_deploy("pollsignal", "poll_signal")
+    sender = _build_and_deploy("signalsender", "signal_sender")
+    return poller, sender
+
+
+@pytest.fixture(scope="session")
+def min_version_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that reports Version and MinVersion across a suspension."""
+    return _build_and_deploy("minversion", "min_version")
+
+
+@pytest.fixture(scope="session")
+def dead_letter_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that exhausts its retries and propagates the error."""
+    return _build_and_deploy("deadletter", "dead_letter")
