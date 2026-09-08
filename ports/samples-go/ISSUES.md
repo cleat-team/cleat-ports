@@ -383,6 +383,61 @@ computing, and it is worth having a test on.
 
 ---
 
+## 8. The same path segment means two different kinds of identifier
+
+**Class:** Design difference (with a silent failure mode)
+**Upstream sample:** none — found reading the route table while porting
+**Status:** Filed against cleat as #942
+
+**What upstream asserts**
+
+Nothing directly. In Temporal a workflow ID and a workflow TYPE are different
+things in different places: the type is registered on a worker, the ID addresses
+a run, and no API path takes either interchangeably.
+
+**What cleat does**
+
+Both live in the same path segment, disambiguated only by the suffix:
+
+```
+GET  /api/workflows/{id}/history      run id
+GET  /api/workflows/{id}/query        run id
+GET  /api/workflows/{id}/promises     run id
+GET  /api/workflows/{name}/routing    definition NAME
+GET  /api/workflows/{name}/tags       definition NAME
+POST /api/workflows/{name}/start      definition NAME
+```
+
+The namespaces never overlap — a run id is a UUID, a name is not — so passing
+the wrong kind produces a plausible empty answer rather than an error:
+
+```
+GET /api/workflows/00000000-0000-0000-0000-000000000000/routing
+200 []
+```
+
+byte-identical to a real definition that has no rules.
+
+**Assessment**
+
+Recorded rather than filed as a defect *here*, because 200 with an empty
+collection is defensible on its own terms: an empty routing table is the normal
+state for most definitions. What the answer cannot express is that the question
+was about the wrong kind of thing.
+
+`TestTheTwoIdentifierKindsAreNotInterchangeable` is the control, and it is what
+makes this an observation about cleat rather than about a made-up id: a
+definition name on a *run*-scoped read must 404. It does. If it did not, the two
+namespaces would genuinely overlap and the observation above would be wrong.
+
+A second session took the same structure further against the core repo and found
+a sharper form, filed as cleat#942: on these paths the **writer and the reader
+disagree**. `POST {name}/routing` and `PUT {name}/tags` both 409 for an unknown
+name; the corresponding GETs have no 404 branch at all. So the server already
+knows the name is not a definition and does not consult that on the way out.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>

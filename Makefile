@@ -27,6 +27,11 @@ help: ## Show this help
 # error about SSL or about a missing "=" rather than about dialect.
 DIALECT ?= postgres
 
+# Matches MSSQL_SA_PASSWORD in docker-compose.yml. Named here because `make deps`
+# has to connect as sa to create the user database SQL Server does not create
+# for itself.
+MSSQL_SA_PASSWORD ?= Cleat!Passw0rd
+
 .PHONY: deps
 deps: ## Start the database for DIALECT (default postgres): make deps DIALECT=mysql
 	@case "$(DIALECT)" in \
@@ -34,6 +39,34 @@ deps: ## Start the database for DIALECT (default postgres): make deps DIALECT=my
 	  mysql|mssql) docker compose --profile $(DIALECT) up -d --wait postgres $(DIALECT) ;; \
 	  *) echo "DIALECT must be postgres, mysql or mssql (got: $(DIALECT))" >&2; exit 2 ;; \
 	esac
+	@# SQL Server has no equivalent of POSTGRES_DB or MYSQL_DATABASE: the image
+	@# creates no user database, so a fresh container comes up with master only
+	@# and the worker fails at startup with
+	@#
+	@#   Cannot open database "cleat_ports" that was requested by the login.
+	@#   Using the user default database "master" instead.
+	@#
+	@# which names the database and not the fact that nothing ever created it.
+	@# The other two dialects get this from an environment variable in
+	@# docker-compose.yml, so the asymmetry is invisible until the container is
+	@# recreated -- and a long-lived container hides it indefinitely.
+	@# An API key lives in the database it was minted against, so a recreated
+	@# database invalidates it -- while .port-results/api-key.<dialect> survives,
+	@# and mint_key returns early on any non-empty file. The result is a 401 on
+	@# every test, which names authentication: the one thing that is not wrong.
+	@#
+	@# This is the same defect as the shared key file, one level deeper. There
+	@# the file's NAME did not distinguish two databases; here its EXISTENCE
+	@# stands in for the key still being valid. Tying the key's lifetime to the
+	@# database's is what actually removes the class.
+	@rm -f .port-results/api-key.$(DIALECT)
+	@if [ "$(DIALECT)" = "mssql" ]; then \
+	  echo "==> ensuring the cleat_ports database exists on SQL Server"; \
+	  docker compose exec -T mssql /opt/mssql-tools18/bin/sqlcmd \
+	    -S localhost -U sa -P "$(MSSQL_SA_PASSWORD)" -C \
+	    -Q "IF DB_ID('cleat_ports') IS NULL CREATE DATABASE cleat_ports;" \
+	    || { echo "failed to create the cleat_ports database" >&2; exit 1; }; \
+	fi
 
 .PHONY: deps-down
 deps-down: ## Stop and remove the PostgreSQL container and its volume
