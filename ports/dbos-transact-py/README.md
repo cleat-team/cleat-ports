@@ -19,20 +19,61 @@ cleat claims to hold rather than on a known gap.
 
 ## Upstream test inventory
 
-Counts are `def test_*` in the pinned upstream commit. Priority reflects how much
-each file says about an *engine* as opposed to an application or a web framework.
+Counts are the cases pytest collects from the pinned upstream commit — `test_*`
+at module scope or in a `Test*` class. A bare `def test_*` count is wrong: DBOS
+defines workflows and steps *inside* test bodies with names like `test_step` and
+`test_workflow`, which inflates `test_queue.py` from 77 to 103. Re-run with
+`scripts/count-queue-cases.py`, which documents the method and its caveats.
+
+Priority reflects how much each file says about an *engine* as opposed to an
+application or a web framework.
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
-| `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 9 |
-| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 15 |
-| `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
-| `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
-| `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
-| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
-| `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 4 |
-| **Total in scope** | **495** | | **79** |
+| `tests/test_queue.py` | 77 | **1** — concurrency limits, rate limits, dedup, priority | 10 ‡ |
+| `tests/test_failures.py` | 43 † | **1** — retries, error classification, recovery | 9 † |
+| `tests/test_workflow_management.py` | 44 † | **1** — cancel, resume, fork, list, restart | 15 † |
+| `tests/test_concurrency.py` | 21 † | **1** — concurrent execution and isolation | 4 † |
+| `tests/test_dbos.py` | 138 † | 2 — broad core surface, mixed with SDK ergonomics | 24 † |
+| `tests/test_async.py` | 57 † | 2 — async workflow and step semantics | 0 |
+| `tests/test_scheduler.py` | 35 † | 2 — cron and scheduled workflows | 6 † |
+| `tests/test_client.py` | 54 † | 3 — client API surface, largely DBOS-specific | 4 † |
+| **Total in scope** | **469 †** | | **see below †** |
+
+† **Not verified — do not quote these.** The `Cases` rows were counted by
+`grep '^def test_'`, the method that inflated `tests/test_queue.py` from 77 to
+103 by sweeping in helper functions defined inside test bodies. Only
+`tests/test_queue.py` has been counted by collection. **469 is 495 − 26** — it
+carries that one correction and nothing else, so it is arithmetic, not a
+measurement.
+
+The `Ported` column has a different problem, and it is not the counting method:
+our own test files contain no inner helpers and no `Test*` classes, so both
+methods agree on them exactly. It is that the column, its total, and the
+per-file table below **disagree with each other and with the tree**:
+
+| | |
+|---|---|
+| sum of the `Ported` cells above | 74 |
+| the total this table used to state | 79 |
+| collectible cases actually on `develop` | **82** |
+
+Re-derive the last of those, rather than trusting any of the first two:
+
+    for f in ports/dbos-transact-py/tests/test_*.py; do python3 -c "
+    import ast,sys
+    print(len([n for n in ast.parse(open(sys.argv[1]).read()).body
+               if isinstance(n,ast.FunctionDef) and n.name.startswith('test_')]))" "$f"; done \
+      | awk '{t+=$1} END{print t}'
+
+Per-file `Ported` figures should be **generated rather than hand-maintained** —
+eight cases drifted across four files without anyone noticing, which is what
+hand-maintained tables do.
+
+‡ 10 = 9 active and 1 skipped
+(`test_concurrency.py::test_blocked_task_runs_after_the_holder_finishes`, which
+asserts a deferral cleat does not implement — see ISSUES.md #20). A skipped case
+is not coverage.
 
 ## What this port deliberately skips, and why
 
@@ -49,8 +90,16 @@ each file says about an *engine* as opposed to an application or a web framework
 
 ## Status
 
-**73 ported, 70 passing, 3 skipped** (counted 2026-09-07 with
-`grep -hcE '^def test_' tests/test_*.py | awk '{t+=$1} END{print t}'`). The inventory above is the work plan;
+**82 cases on `develop`**, re-derived 2026-09-08 with the command under the
+inventory table. The figure this line carried until then — *"73 ported, 70
+passing, 3 skipped"* — was produced by `grep -hcE '^def test_'`, the same
+inflating method corrected above, and disagreed with both the table's total (79)
+and the tree (82).
+
+**The pass/skip split is deliberately not published here.** It is not a property
+of this port: it depends on which cleat ref the suite runs against, and it moves
+whenever a fix lands or a skip retires itself. Run the suite and read it from
+there. The inventory above is the work plan;
 the `Ported` column is the progress metric. Priority 1 first, and all four
 priority-1 files are started.
 
