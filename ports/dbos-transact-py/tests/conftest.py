@@ -208,6 +208,16 @@ class Cleat:
         """
         action = "enable" if enabled else "disable"
         return self._req("POST", f"/api/schedules/{name}/{action}", {})
+    def resolve_promise(self, run_id: str, promise_id: str, result: str = "{}"):
+        """Resolve a promise from outside the workflow.
+
+        Under /api/workflows/{runID}/promises/{promiseID}/resolve. The run id is
+        the OWNING workflow, not the promise's own -- the promise id alone is
+        not addressable.
+        """
+        return self._req("POST",
+                         f"/api/workflows/{run_id}/promises/{promise_id}/resolve",
+                         {"result": result})
 
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
@@ -427,6 +437,12 @@ def cron_workflows(cleat: Cleat) -> str:
 @pytest.fixture(scope="session")
 def schedule_invoke_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("scheduleinvoke", "schedule_invoke")
+
+
+@pytest.fixture(scope="session")
+def promise_chain_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that awaits several promises in sequence."""
+    return _build_and_deploy("promisechain", "promise_chain")
 
 
 @pytest.fixture(scope="session")
