@@ -28,7 +28,7 @@ import json
 import time
 import uuid
 
-import pytest
+from conftest import wait_until
 
 
 def test_the_workflow_list_contains_a_run_that_was_started(cleat, retry_workflow):
@@ -121,21 +121,43 @@ def test_recorded_events_are_readable_while_a_workflow_is_suspended(
     status, started = cleat.start(receiver, {"key": key, "timeoutMs": 30000})
     assert status == 201, f"start rejected: {status} {started}"
 
-    # The receiver announces itself before awaiting, so this waits for the
-    # segment that carries the announcement to have ended.
-    deadline = time.time() + 30.0
-    while time.time() < deadline:
-        if fixture_calls(f"{key}-waiting") > 0:
-            break
-        time.sleep(0.2)
-    else:
-        pytest.fail("the receiver never announced itself, so nothing has been recorded yet")
+    # Wait for the ANNOUNCEMENT first: it proves the workflow got far enough to
+    # make a durable call, so a later empty history means the events were lost
+    # rather than never generated.
+    wait_until(
+        lambda: fixture_calls(f"{key}-waiting") > 0,
+        timeout=30.0,
+        what="the receiver to announce itself before awaiting",
+    )
 
-    code, events = cleat.api(f"/api/instances/{started['id']}/events")
-    assert code == 200, f"the event list answered {code}: {events!r}"
-    assert events, (
-        "a suspended workflow that made a durable call before suspending has no "
-        "recorded events"
+    # Then wait for the events to become READABLE, which is a separate moment.
+    #
+    # This used to read immediately after the announcement, on the comment
+    # "this waits for the segment that carries the announcement to have ended".
+    # That was wrong, and it flaked in CI on a docs-only PR while develop was
+    # green at identical code. The fixture call happens DURING the segment; the
+    # events are flushed by FinalizeWorkflowSegment when the segment ENDS, after
+    # the workflow goes on to await its signal. So observing the call proves the
+    # segment started, never that it finished, and the read landed in between.
+    #
+    # Polling here does not weaken the assertion. If the events never become
+    # readable this fails with the same meaning as before -- a suspended
+    # workflow that made a durable call has no recorded history -- it just no
+    # longer fails when they are merely slower than one round trip.
+    events = []
+
+    def _readable():
+        nonlocal events
+        code, body = cleat.api(f"/api/instances/{started['id']}/events")
+        assert code == 200, f"the event list answered {code}: {body!r}"
+        events = body
+        return bool(body)
+
+    wait_until(
+        _readable,
+        timeout=30.0,
+        what=("a suspended workflow that made a durable call before suspending "
+              "to have readable events"),
     )
 
     steps = [e["step"] for e in events]
