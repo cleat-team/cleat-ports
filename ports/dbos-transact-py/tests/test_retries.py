@@ -22,6 +22,11 @@ import pytest
 # Large enough that a single retry could not hide in scheduling noise: the
 # measured no-retry path completes in ~220ms.
 INTERVAL_MS = 2000
+
+# Used only by test_a_permanently_failing_call_is_not_retried, which
+# discriminates "was it retried" by wall clock and therefore needs the interval
+# to dominate fixed overhead rather than merely exceed it. See that test.
+PERMANENT_PROBE_INTERVAL_MS = 15000
 ATTEMPTS = 5
 
 
@@ -34,10 +39,35 @@ def test_a_permanently_failing_call_is_not_retried(cleat, retry_workflow):
     """A call that cannot ever succeed must not burn its retry budget.
 
     The fixture rejects a request with no `key` as a 400, and cleat classifies
-    a 4xx from a forwarded service as PERMANENT (408 and 429 excepted). With
-    MaxAttempts=5 and a 2s interval, retrying even once would cost at least 2s;
-    not retrying costs ~250ms. The wall clock is the discriminator and the
-    margin is wide rather than tight.
+    a 4xx from a forwarded service as PERMANENT (408 and 429 excepted). Retrying
+    even once costs at least one interval; not retrying costs a few hundred ms.
+    The wall clock is the discriminator.
+
+    IT USES ITS OWN INTERVAL, much larger than the suite's, and that is the
+    point rather than an inconsistency.
+
+    This test previously used the shared INTERVAL_MS of 2000 and asserted the
+    run finished inside it, on the reasoning that "the margin is wide rather
+    than tight". It was not. On a slower machine the run took 2309ms WITHOUT
+    retrying -- start-up, deploy check and HTTP round trips -- while one retry
+    would have cost 2000ms plus that same overhead. The two hypotheses
+    overlapped, so the assertion could no longer tell them apart and failed on
+    the honest case.
+
+    Measured when it failed: 2309ms observed for no-retry, against a ~2250ms
+    floor for one-retry. A margin that is 8x on paper can be 0x in practice
+    once fixed overhead is comparable to the thing being measured.
+
+    With a 15s interval the floor for one retry is 15s and the no-retry case is
+    hundreds of ms, so the two cannot overlap on any machine this suite runs
+    on. A fully-retried run would take 4 x 15s = 60s, still inside
+    await_terminal's 90s, so a real regression fails THIS assertion with its
+    message rather than timing out with a vaguer one.
+
+    The direct measurement is not available here: the fixture only produces a
+    permanent 400 for a request with NO key, and it counts calls BY key, so
+    fixture_calls cannot see this one. The sibling test below uses the counter
+    precisely because it can.
 
     Note this cannot use an unresolvable service name any more. Once the
     harness sets --bench-svc-url, every unrecognised service is forwarded, so
@@ -49,7 +79,7 @@ def test_a_permanently_failing_call_is_not_retried(cleat, retry_workflow):
     started_at = time.monotonic()
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": "", "attempts": ATTEMPTS,
-        "intervalMs": INTERVAL_MS, "failTimes": 0,
+        "intervalMs": PERMANENT_PROBE_INTERVAL_MS, "failTimes": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -61,8 +91,8 @@ def test_a_permanently_failing_call_is_not_retried(cleat, retry_workflow):
     assert body["outcome"] == "failed", (
         f"a request the fixture rejects with 400 did not fail: {body!r}"
     )
-    assert elapsed_ms < INTERVAL_MS, (
-        f"the run took {elapsed_ms:.0f}ms with a {INTERVAL_MS}ms retry interval "
+    assert elapsed_ms < PERMANENT_PROBE_INTERVAL_MS, (
+        f"the run took {elapsed_ms:.0f}ms with a {PERMANENT_PROBE_INTERVAL_MS}ms retry interval "
         f"and MaxAttempts={ATTEMPTS}, so a permanent failure was retried. A call "
         "that cannot succeed should fail immediately rather than consume its "
         "budget."

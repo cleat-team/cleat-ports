@@ -20,7 +20,7 @@ Apache-2.0, BSD. Each port is cleat code written against an upstream test's
 |---|---|---|
 | MIT / Apache-2.0 / BSD suites | **here**, under `ports/` | Compatible with this repo's Apache-2.0 license |
 | Copyleft (AGPL, GPL) real apps | a **GitHub fork** in `cleat-team/`, keeping the upstream license | Fork preserves history and license; no copyleft code may enter this repo |
-| Upstream with **no LICENSE file** | nowhere — reimplement from its prose spec into `cleat-team/cleat`'s `tests/conformance/` | No license means all rights reserved. See [docs/licensing.md](docs/licensing.md) |
+| Upstream with **no LICENSE file** | nowhere — reimplement from its prose spec into `cleat-team/cleat` | No license means all rights reserved. See [docs/licensing.md](docs/licensing.md) |
 
 `docs/licensing.md` is the binding version of that table. Read it before adding
 a port.
@@ -29,7 +29,7 @@ a port.
 
 A port's job is **discovery**, not protection. When a port surfaces a real cleat
 defect, that defect's permanent home is a hermetic regression test in
-`cleat-team/cleat` under `tests/conformance/` — where it gates every merge.
+`cleat-team/cleat`, in the package it guards — where it gates every merge.
 Once promoted, the port has done its job and may go stale without costing
 anything.
 

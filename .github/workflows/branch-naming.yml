@@ -10,7 +10,10 @@ name: Branch Naming Check
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `edited` for the same reason ci.yml has it: a retargeted PR should be
+    # re-checked against the branch rules for its NEW base, and a base change
+    # fires no other trigger.
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
