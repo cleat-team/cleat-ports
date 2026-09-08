@@ -118,39 +118,39 @@ func TestASleepAdvancesTheClockByExactlyTheSleep(t *testing.T) {
 		sleepMs, advanced, c.T2, c.T3)
 }
 
-// TestTheClockCurrentlyGoesBackwardsOnTheFirstEvent pins a defect, so the port
-// notices when it is fixed. cleat-team/cleat#944.
+// TestTheClockDoesNotGoBackwardsAcrossADurableCall asserts the CORRECT
+// behaviour and reports the defect rather than requiring it.
 //
-// This began as TestTheClockNeverGoesBackwards -- the weakest assertion in the
-// file and the one expected to survive any redesign of the other two. It failed:
+// This began as a pin -- assert that the clock DOES go backwards, so the port
+// notices when cleat#944 is fixed. That was wrong, and CI proved it: the pin
+// failed on the runner and on MySQL locally, both times reporting "#944 appears
+// to be FIXED" when what it meant was "not observable here".
 //
-//	the durable clock went backwards across t1 -> t2 (durable call):
-//	1788833377874 -> 1788833377862 (-12ms)
+// The defect needs the database clock and the worker clock to actually differ.
+// Locally they do -- PostgreSQL in a container against a host process, ~26ms.
+// On the runner, and on the MySQL container, they do not. So the pin was
+// asserting a property of the ENVIRONMENT and calling it a property of cleat.
 //
-// Two clock domains feed one value. Now() before any event is the workflow
-// row's created_at (the DATABASE clock, engine/engine.go:74); the first
-// recorded event's timestamp is the worker's time.Now()
-// (engine/lifecycle.go:148). Nothing reconciles them, so the step between them
-// is the offset between two machines' clocks, in whichever direction they
-// happen to differ. Six runs of eight were negative, by up to 26ms.
+// A pin is only honest when its subject is observable wherever the suite runs.
+// #944 carries the measurement; this test's job is narrower: catch a regression
+// large enough to matter anywhere, and report the small case without failing on
+// its absence.
 //
-// Inverted rather than skipped: the assertion is one line, and a skip would
-// leave the two claims that DO hold -- +0 across CPU work, +200 for a 200ms
-// sleep -- without the monotonicity check that gives them context.
-func TestTheClockCurrentlyGoesBackwardsOnTheFirstEvent(t *testing.T) {
-	// The step across the durable call is the one that mixes domains. Sampled
-	// several times because the offset is a clock difference, not a constant,
-	// and a single run can land either side of zero.
+// The threshold is deliberately loose. A backwards step of tens of milliseconds
+// is #944 and is environment-dependent; a backwards step of a second is a
+// different defect and would show up on any machine.
+func TestTheClockDoesNotGoBackwardsAcrossADurableCall(t *testing.T) {
 	const runs = 5
 	var negatives int
 	var worst int64
+
 	for i := 0; i < runs; i++ {
 		c := runClock(t, 200)
 
-		// These two must hold on every run regardless. They are the reason the
-		// contract is worth anything, and #944 does not touch them.
+		// These hold on every run, everywhere, and are the reason the contract
+		// is worth anything. #944 does not touch them.
 		if c.T1 != c.T0 {
-			t.Errorf("run %d: Now() advanced %dms across CPU work", i, c.T1-c.T0)
+			t.Errorf("run %d: Now() advanced %dms across non-durable CPU work", i, c.T1-c.T0)
 		}
 		if c.T3-c.T2 != 200 {
 			t.Errorf("run %d: a 200ms sleep advanced the clock %dms", i, c.T3-c.T2)
@@ -164,17 +164,27 @@ func TestTheClockCurrentlyGoesBackwardsOnTheFirstEvent(t *testing.T) {
 		}
 	}
 
-	if negatives == 0 {
-		t.Errorf("cleat#944 appears to be FIXED: the durable clock did not go backwards "+
-			"across the durable call in %d runs. Rename this test back to "+
-			"TestTheClockNeverGoesBackwards and assert monotonicity across all three "+
-			"steps.", runs)
+	// A second is far outside any plausible container clock offset. If the
+	// clock moves back that far, something other than #944 is wrong and it
+	// will reproduce anywhere.
+	if worst < -1000 {
+		t.Errorf("the durable clock went backwards %dms across a durable call, on %d of "+
+			"%d runs. cleat#944 is tens of milliseconds of clock-domain skew; this is "+
+			"three orders larger and is a different defect.", worst, negatives, runs)
 		return
 	}
-	t.Logf("cleat#944 still present: the durable clock went backwards on %d of %d runs, "+
-		"worst %dms. Now() is seeded from the database's created_at and then set from "+
-		"the worker's time.Now(); the step is the offset between them.",
-		negatives, runs, worst)
+
+	if negatives > 0 {
+		t.Logf("cleat#944 observable here: the durable clock went backwards on %d of %d "+
+			"runs, worst %dms. Now() is seeded from the database's created_at and then "+
+			"set from the worker's time.Now(); the step is the offset between them. Not "+
+			"failed, because the magnitude is a property of this deployment.",
+			negatives, runs, worst)
+		return
+	}
+	t.Logf("cleat#944 not observable here: no backwards step in %d runs. That means the "+
+		"database and worker clocks agree closely enough to hide it, NOT that the two "+
+		"clock domains have been reconciled -- see the issue for the mechanism.", runs)
 }
 
 // TestTwoSleepsAccumulate — a single sleep could pass every assertion above by

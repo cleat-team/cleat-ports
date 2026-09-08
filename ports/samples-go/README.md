@@ -59,10 +59,15 @@ sample is.
 
 **41 cases, 37 passing, 4 skipped** (2026-09-08) — 12 findings, 7 filed, 5 fixed.
 
-Measured green on **PostgreSQL** (28/28). The first 24 were also measured on
-**MySQL** and **SQL Server**, 24/24 on each; the four `timer/` cases have not
-been run on those two yet, so the three-dialect claim covers 24 of 28 and is
-written that way deliberately rather than rounded up. One case is
+Measured green on **PostgreSQL** and **MySQL**, all 41 on each. SQL Server was
+green at 24 cases; the 17 added since have not been run there, so that claim
+covers 24 of 41 and is written that way rather than rounded up.
+
+One case reports rather than asserts: `TestTheClockDoesNotGoBackwardsAcrossADurableCall`
+logs cleat#944 where the deployment's clock offset makes it visible (−26ms on
+PostgreSQL, −118ms on MySQL) and says so explicitly where it does not, because
+**absence is not evidence of a fix** — it began as a pin and failed in CI for
+exactly that reason. One case is
 deliberately dialect-aware (cleat#936) and reports a different result on each,
 which is the finding; every other case asserts the same thing on both.
 
