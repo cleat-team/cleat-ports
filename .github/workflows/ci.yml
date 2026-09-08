@@ -9,6 +9,24 @@ name: CI
 
 on:
   pull_request:
+    # `edited` is here for the base-branch case, and it is the second time this
+    # filter has silently matched nothing.
+    #
+    # The default types are [opened, synchronize, reopened]. Changing a PR's
+    # BASE fires `edited`, which is in none of them -- so a PR opened against a
+    # feature branch (where the branches filter below excludes it) and later
+    # retargeted to main never runs this workflow at all. Not on open, because
+    # the base did not match; not on retarget, because that is not a trigger.
+    #
+    # Measured on #32: mergeStateStatus CLEAN, one check, "Validate branch
+    # name". branch-naming.yml had run at open time because it has no branches
+    # filter. So the PR reported the best status GitHub has while its entire
+    # test suite had never been queued.
+    #
+    # `edited` also fires on title and body edits, which re-runs the suite for
+    # nothing. That is the right trade: the concurrency group below cancels a
+    # superseded run, and a wasted run is cheaper than a silent one.
+    types: [opened, synchronize, reopened, edited]
     # develop as well as main. develop became the default branch when this repo
     # adopted the same gitflow as cleat and cleat-bench, and this filter still
     # said [main] -- so the first PR opened against develop merged with the port
