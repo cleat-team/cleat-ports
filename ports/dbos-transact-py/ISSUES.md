@@ -446,6 +446,55 @@ Method: the cleat column is read from the route dispatch in
 not from grep, which has already missed a column in this repo once. The DBOS
 column is from the published API reference rather than from memory or source.
 
+**Two upstream races this decision forecloses, found while classifying the file**
+
+Recorded here because both are engine-level correctness cases, and reading them
+turns #21 from "cleat lacks a feature" into "cleat's model removes a class of
+bug". That is a stronger claim and it should not be left implicit.
+
+`test_active_id_released_before_outcome_write` asserts that an executor's
+active-workflow-ID entry is released *before* the terminal outcome write becomes
+durable. Its own comment gives the failure it prevents:
+
+> run 1's stale write is in flight, a client observes CANCELLED and resumes,
+> this same executor dequeues the resumed workflow, but the dispatch finds the
+> stale active-ID entry, takes the non-owner path, and waits forever on a row
+> nobody is executing.
+
+Every step of that needs a resume. cleat has no cancelled state and no resume,
+so the sequence cannot begin. **Unportable because the bug is unreachable**, not
+because a control is missing — the opposite of #20's case.
+
+`test_workflow_outcome_is_owned_by_the_pending_row` asserts a run may record its
+outcome only while its status row is still `PENDING`; any other status means the
+run lost ownership and the recorded outcome wins over the one the run computed.
+Upstream lists four ways ownership is lost, and two of them — a recovery race
+and dead-lettering — exist in cleat, so the property survives the reduction.
+
+**cleat's answer is stronger than the property upstream tests.** The outcome
+write is fenced on both owner and generation, on all three dialects
+(`engine/store_lifecycle.go:382`, `engine/mysql_lifecycle.go:419`,
+`engine/mssql_lifecycle.go:599`):
+
+    UPDATE workflow_instances
+    SET status = 'done', ...
+    WHERE id = $1 AND assigned_to = $2 AND generation = $5
+
+Zero rows affected returns `ErrFenceLost` and **rolls back rather than
+commits**, with a comment giving the reason: the idempotency-key write and the
+post-commit cleanup below it are not safe to run on the new owner's behalf. A
+status check answers "is this run still current"; a generation fence answers it
+without a window between the check and the write.
+
+**Not portable in this harness, and that is a harness limit rather than a
+verdict.** Provoking it needs a stale-but-living run: worker A stalls, the
+reaper reassigns, worker B completes, then A wakes and writes. The port harness
+runs exactly one worker and **that worker is the API server** — see
+`conftest.py`'s `worker.stop()` — so freezing A freezes the API and nothing can
+be observed during the outage. A second worker sharing the database would unlock
+this and the cross-worker cases generally; it is the highest-value harness change
+available and is not attempted here.
+
 ## 22. Concurrent steps inside a workflow are refused by the determinism analyzer
 
 **Class:** Deliberate difference
