@@ -171,6 +171,31 @@ CI reported one, because the unattributed count had drifted to 615 against a 616
 allowance. Trusting the delta produces a count that agrees with itself and is
 wrong about the tree.
 
+**A guard that states its own limits is worth more than one that is merely
+correct.** The two paragraphs above were not deduced — `check-skip-budget.sh`
+says it, in its own output: a local run can confirm the line you just added does
+not error, and cannot vouch for the file. That sentence is why nobody has
+"fixed" the Rust line. Most guards leave you to work this out from a confusing
+failure; this one hands it to you at the moment you need it, and the habit is
+worth copying into anything we write that behaves differently in CI.
+
+**Sweep the class, not the instance — especially right after proving the class
+is easy to get wrong.** The engine package runs under two ledger keys,
+`test-go/engine` and `cluster`, so a dialect-gated test costs its skips **twice**
+and every such line already appears under both keys. A PR fixing #996 attributed
+its two skips under one key, went green on that gate, and failed the identical
+check for the other — the author had copied a two-line pattern and taken half of
+it. Note that the delta was **1 against a true cost of 2, under each key**, so a
+delta-based attribution would have under-recorded by two while every individual
+gate eventually passed.
+
+The repair that mattered was not the missing line. It was sweeping the whole
+file: group every `test-go/engine` and `cluster` row by its regex, and count the
+ones present under only one key. That count is now the check, and it is 0. Adding
+the single line would have left the class untested by an author who had just
+demonstrated the class was easy to miss — which is the moment the class is most
+worth testing, not least.
+
 ## One shared daemon: isolation is now a convention, not a boundary
 
 Until 2026-09-08 each session ran its own colima VM, so container names and host
@@ -287,3 +312,25 @@ someone else's before starting anything.
 `make clean` removes only this run's subdirectory. A bare `rm -rf
 .port-results` would delete every concurrent session's state at once, which is
 a worse version of the bug this layout exists to prevent.
+
+## Giving the worker different flags
+
+`scripts/worker.sh` starts the worker with the flags every port needs. A test
+that needs a differently-configured worker — a short
+`-completed-workflow-retention-days`, a faster `-poll` — had no way to ask, so
+that behaviour was unreachable from the suite no matter how the test was
+written.
+
+    CLEAT_PORTS_WORKER_EXTRA_FLAGS="-completed-workflow-retention-days 1 -poll 250ms"
+
+The value is word-split, so several flags can be passed and **a value containing
+whitespace cannot**. That is the documented limit rather than an oversight: an
+array would carry it and an array cannot survive an environment variable, which
+is the interface a pytest fixture actually has.
+
+`worker.sh` echoes the extra flags when it starts. A worker started with
+different flags is a different worker, and a run that cannot say which one it
+had is not reproducible.
+
+Restarting the worker to change flags means stopping it first — `ensure` reuses
+a healthy worker and will not notice that you wanted a different one.
