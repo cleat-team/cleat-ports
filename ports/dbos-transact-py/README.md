@@ -32,7 +32,7 @@ application or a web framework.
 |---|---:|---|---:|
 | `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
 | `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 21 |
-| `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, restart | 12 |
+| `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |

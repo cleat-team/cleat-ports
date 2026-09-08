@@ -325,3 +325,96 @@ and DBOS's queue suite is almost entirely about the third.
 The 45 blocked cases should not be written. They would fail for "cleat has no
 queues", which is a feature request, not something a test should pin. The
 32 portable cases are tracked in the README table; 10 are done.
+
+## 21. Cancellation is a flag, not a state — so there is nothing to resume
+
+**Class:** Deliberate difference (with one open question)
+**Upstream test:** `tests/test_workflow_management.py` — the `resume_workflow` cases
+**Status:** Open — recorded as a divergence cleat is right about, not a defect
+
+**What upstream asserts**
+
+DBOS's `cancel_workflow` "sets its status to `CANCELLED`, removes it from its
+queue and preempts its execution (interrupting it at the beginning of its next
+step)". `resume_workflow` then "immediately starts it from its last completed
+step", and the documentation is explicit that this covers "workflows that are
+cancelled **or have exceeded their maximum recovery attempts**".
+
+**What cleat does**
+
+Cancellation is **cooperative and is not a state transition**. `POST
+/api/workflows/:id/cancel` runs
+
+    UPDATE workflow_instances SET cancellation_requested = 1, cancellation_reason = ?
+
+and nothing else. A workflow observes it by calling `h.PollCancellation()` and
+decides what to do; one that never asks runs to completion, and the endpoint
+answers 200 either way. There is no `cancelled` status — the engine writes
+`ready`, `running`, `done`, `failed`, `terminated`, `terminating` and
+`dead_lettered`. A workflow that observed its cancellation and returned ends in
+`done`, the same status as one that succeeded.
+
+Both facts are already pinned by `tests/test_cancellation.py`.
+
+**Assessment: this is a deliberate difference and cleat has the better of it.**
+
+`resume` is not an endpoint cleat is missing. It is an operation with **no state
+to act on**: there is no paused run to restart, so adding `/resume` would close
+nothing.
+
+And resume-after-cancel is not merely unnecessary here, it is **unsound in the
+presence of compensations**. If a saga is cancelled at step 5 and its
+compensations run, the history records step 5 as completed while the world has
+had it undone. "Start from the last completed step" then resumes into a state
+that has been compensated away. cleat's saga port exists because compensation is
+a first-class pattern, so this is not a hypothetical.
+
+A weaker but real second reason: if cancel is reversible, an operator can never
+say "I stopped it", only "I stopped it for now".
+
+**The open question is somewhere else, and it is worth deciding on the record.**
+
+DBOS puts two operations behind one verb, and only one of them is about cancel.
+The other — resuming work that **exceeded its recovery attempts** — is cleat's
+dead-letter queue, where the *system* gave up rather than an operator, and none
+of the objections above apply.
+
+cleat has that re-drive, and `test_reprocessing_starts_a_new_run_and_leaves_the_original`
+pins its shape: reprocess creates a **fresh run** with a new id and leaves the
+original `dead_lettered`. So a workflow that dead-lettered at step 9 of 10
+repeats eight steps of completed durable work. Where those steps are a payment,
+a transfer or an expensive model call, that is the cost that matters.
+
+**What makes this a real question rather than a feature request: cleat already
+does checkpoint resumption.** It is exactly what recovery after a worker crash
+is, and `tests/test_recovery.py::test_a_workflow_survives_the_loss_of_its_worker`
+asserts that the pre-crash durable call is *not* repeated. The machinery exists
+and is tested. Reprocess-from-scratch is a choice, not a limitation.
+
+Either answer is defensible — from-scratch is safer if a step's side effect
+might be half-applied, from-checkpoint is cheaper and uses a guarantee cleat
+already makes. It should be a decision on the record rather than a consequence
+of which endpoint happened to be written first.
+
+**The rest of the surface, for completeness**
+
+| DBOS | cleat | verdict |
+|---|---|---|
+| `cancel_workflow` | `POST /cancel` | present, different semantics (above) |
+| `resume_workflow` | nothing | no state to resume; see above |
+| `fork_workflow` (new id, start from step N) | nothing | absent, low priority — an operator patching tool that does not touch the durability contract |
+| `delete_workflow` | nothing | absent. Retention purges exist internally (`deleteCompletedWorkflowsBatch`) but no API reaches them |
+| `list_workflows` | `GET /api/workflows` | present |
+| `list_workflow_steps` | `GET /:id/history` | present |
+| `update_workflow_attributes` | **not** `/:id/update` | **name collision, not a counterpart.** DBOS replaces a searchable custom-attributes dictionary. cleat's `/update` is a Temporal-style workflow *update* (`poll_update` / `complete_update`) — an entirely different mechanism that maps cleanly on a grep and not at all in behaviour |
+
+Two corrections to earlier notes, recorded so they are not repeated: **DBOS has
+no `restart_workflow` and no `pause_workflow`.** Neither appears in the Python
+API or in `DBOSClient`. This port's README described `test_workflow_management.py`
+as covering "cancel, resume, fork, list, restart"; the last of those does not
+exist.
+
+Method: the cleat column is read from the route dispatch in
+`cmd/cleat-worker/server.go:297-470`, which is the only place routing happens —
+not from grep, which has already missed a column in this repo once. The DBOS
+column is from the published API reference rather than from memory or source.
