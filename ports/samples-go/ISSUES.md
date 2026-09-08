@@ -119,7 +119,7 @@ runs tells you when it stops being true.
 
 **Class:** Bug (silent divergence) + validation gap
 **Upstream sample:** `child-workflow/`
-**Status:** Filed — cleat-team/cleat#936
+**Status:** Fixed — cleat-team/cleat#936, closed by #938 on 2026-09-08
 
 **What upstream asserts**
 
@@ -163,11 +163,26 @@ PostgreSQL silently stops terminating children.
 **The two defects mask each other**, which is why one dialect could not have
 found this. On MySQL the mis-cased policy "works", so the validation gap is
 invisible. On PostgreSQL it falls through to ABANDON, so the collation
-difference is invisible. The test is therefore dialect-aware rather than
-asserting one answer — a single-dialect version would have reported the other
-dialect's correct-for-itself behaviour as a regression.
+difference is invisible.
 
 Note what found it: not a new test, but an existing one run somewhere else.
+
+**Fixed at the write boundary, not in the queries.** cleat#938 refuses an
+unrecognised policy when the child starts, so the value can no longer reach a
+column three databases disagree about. A `COLLATE` clause on the predicates
+would have fixed the comparison and left the mis-cased value in the column,
+still meaning different things to different readers — including to a human
+running a `SELECT`.
+
+Rejecting rather than normalising was a deliberate call. Upper-casing would also
+close the divergence and would keep working anyone relying on lower-case
+matching on MySQL — which is the objection to it, not a mitigation: that
+behaviour is a bug they cannot know they depend on, and making it official on
+three databases makes it permanent.
+
+The test was dialect-aware while the defect was open and is not any more. That
+is the clearest statement of what the fix did: there is nothing left for the
+dialects to disagree about.
 
 **What is not wrong.** TERMINATE and REQUEST_CANCEL both work. An earlier
 version of these tests reported "a TERMINATE child completed anyway", which was

@@ -57,9 +57,9 @@ sample is.
 
 ## Status
 
-**21 cases, 17 passing, 4 skipped** (2026-09-07) — 7 findings, 3 filed, 1 fixed.
+**22 cases, 18 passing, 4 skipped** (2026-09-08) — 7 findings, 3 filed, 3 fixed.
 
-Measured green on **PostgreSQL and MySQL**, all 21 on each. One case is
+Measured green on **PostgreSQL and MySQL**, all 22 on each. One case is
 deliberately dialect-aware (cleat#936) and reports a different result on each,
 which is the finding; every other case asserts the same thing on both.
 
@@ -67,7 +67,7 @@ Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-21
+22
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -76,7 +76,7 @@ while 53 cases existed. Hence the command beside the number.
 | upstream area | cases | file |
 |---|---:|---|
 | `saga/` | 6 | `tests/saga_test.go` |
-| `child-workflow/` | 5 | `tests/child_workflow_test.go` |
+| `child-workflow/` | 7 | `tests/child_workflow_test.go` |
 | `await-signals/` | 6 | `tests/await_signals_test.go` |
 | `query/`, `query-workflow/` | 4 | `tests/query_test.go` |
 

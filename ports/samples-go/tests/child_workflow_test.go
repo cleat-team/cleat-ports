@@ -185,74 +185,83 @@ func TestARequestCancelChildIsAskedToStop(t *testing.T) {
 	}
 }
 
-// TestAnUnrecognisedPolicyMeansDifferentThingsOnDifferentDialects is two
-// findings that were only visible together.
+// TestAMisCasedPolicyIsRefused is what cleat#936 turned into, and the history
+// is the point of the test rather than a footnote.
 //
-// THE VALIDATION GAP. enforceParentClosePolicy matches exact string literals
-// and ABANDON has no arm -- it is the ABSENCE of an update -- so a value that
-// is not one of the recognised spellings silently means ABANDON.
-// ParentClosePolicy is a string type, so the typed constants are easy to
-// bypass, and the column DEFAULTs to 'ABANDON', so a wrong value and a missing
-// one are indistinguishable afterwards.
-//
-// THE DIVERGENCE, cleat-team/cleat#936. String equality is collation
-// dependent, and the dialects disagree:
+// It began as TestAnUnrecognisedPolicyIsTreatedAsAbandon, pinning a validation
+// gap: ABANDON is the ABSENCE of an arm, so an unrecognised policy silently
+// meant ABANDON. Running that same test on MySQL failed, and the reason was
+// worse than the gap:
 //
 //	mysql>      SELECT 'terminate' = 'TERMINATE';   1     (utf8mb4_0900_ai_ci)
 //	postgres=#  SELECT 'terminate' = 'TERMINATE';   f
 //
-// So the same workflow with the same policy string TERMINATES its children on
-// MySQL and ABANDONS them on PostgreSQL. Nothing in the workflow, the metadata
-// or the logs differs.
+// The same workflow with the same policy string terminated its children on one
+// database and abandoned them on the other. The two defects had masked each
+// other -- on MySQL the mis-cased policy "worked", so the gap was invisible; on
+// PostgreSQL it fell through, so the collation difference was invisible.
 //
-// The two mask each other, which is why this test is dialect-aware rather than
-// asserting one answer. On MySQL the mis-cased policy "works", so the
-// validation gap is invisible; on PostgreSQL it fails open, so the collation
-// difference is invisible. Only running both shows either -- and a
-// single-dialect version of this test would have reported the other dialect's
-// correct-for-itself behaviour as a regression.
-func TestAnUnrecognisedPolicyMeansDifferentThingsOnDifferentDialects(t *testing.T) {
+// cleat#938 closed both by refusing an unrecognised policy at the write
+// boundary rather than fixing the comparison, so the value can no longer reach
+// a column where three databases disagree about what it means.
+//
+// The test is no longer dialect-aware, and that IS the fix: there is nothing
+// left for the dialects to disagree about.
+func TestAMisCasedPolicyIsRefused(t *testing.T) {
 	k := key(t)
-	parentID, childID := runUnderPolicy(t, k, "terminate", 8000)
-	awaitParentCloseWithChildRunning(t, k, parentID)
+	parentID := startedRunID(t, start(t, childPair(t), map[string]any{
+		"key": k, "policy": "terminate", "childMs": 8000, "parentMs": 1500,
+	}))
 
-	child := awaitTerminal(t, childID, 30*time.Second)
-	got := fixtureCalls(t, k)
-	finished := false
-	for _, c := range got {
-		if c == "child.Finished" {
-			finished = true
+	final := awaitTerminal(t, parentID, 30*time.Second)
+	if final["status"] != "failed" {
+		t.Fatalf("a parent using policy %q ended %v, want failed. If it succeeded, the "+
+			"refusal from cleat#938 has been lost and a mis-cased policy is reaching the "+
+			"database again -- where MySQL and PostgreSQL disagree about it (cleat#936).",
+			"terminate", final["status"])
+	}
+
+	// The message must name the value AND the intended spelling. "must be one
+	// of ABANDON, TERMINATE, REQUEST_CANCEL" read beside "terminate" is a
+	// sentence people skim, which is why the SDK offers the near-miss.
+	errText, _ := final["error"].(string)
+	for _, want := range []string{"terminate", "TERMINATE", "sg_child_sleeper"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("the refusal does not mention %q: %q", want, errText)
 		}
 	}
 
-	// Case-insensitive collations honour the mis-cased value; case-sensitive
-	// ones do not. MySQL and SQL Server default to _ci_ / _CI_; PostgreSQL
-	// compares exactly.
-	caseInsensitive := dialect() == "mysql" || dialect() == "mssql"
+	// No child may exist. A refusal that still started the child would be worse
+	// than the original defect: a run nobody can see, under a policy nobody
+	// agreed on.
+	if calls := fixtureCalls(t, k); len(calls) != 0 {
+		t.Errorf("the child ran despite the refusal: %v", calls)
+	}
+}
 
-	if caseInsensitive {
-		if finished {
-			t.Errorf("on %s a mis-cased policy no longer matches TERMINATE: the child ran "+
-				"to completion (status %v, calls %v). If the predicate now compares "+
-				"case-sensitively, cleat#936 is half-fixed -- check the other dialect "+
-				"before updating this test.", dialect(), child["status"], got)
-		} else {
-			t.Logf("cleat#936 present on %s: policy %q matched TERMINATE through a "+
-				"case-insensitive collation; child status %v, calls %v.",
-				dialect(), "terminate", child["status"], got)
+// TestTheThreeLegalPoliciesAreStillAccepted is the control on the refusal.
+//
+// Without it, an over-broad validation that rejected every policy would pass
+// the test above -- and the three tests before it use ABANDON, TERMINATE and
+// REQUEST_CANCEL, so this states as an assertion what they depend on as a
+// precondition.
+func TestTheThreeLegalPoliciesAreStillAccepted(t *testing.T) {
+	for _, policy := range []string{"ABANDON", "TERMINATE", "REQUEST_CANCEL", ""} {
+		name := policy
+		if name == "" {
+			name = "unset"
 		}
-		return
+		t.Run(name, func(t *testing.T) {
+			k := key(t)
+			parentID := startedRunID(t, start(t, childPair(t), map[string]any{
+				"key": k, "policy": policy, "childMs": 300, "parentMs": 0,
+			}))
+			final := awaitTerminal(t, parentID, 30*time.Second)
+			if final["status"] != "done" {
+				t.Errorf("policy %q was refused: %v %v", policy, final["status"], final["error"])
+			}
+		})
 	}
-
-	if !finished {
-		t.Errorf("on %s a mis-cased policy now stops the child (status %v, calls %v). "+
-			"Either the policy is being validated or normalised at start -- which would "+
-			"close cleat#936 properly -- or the comparison changed. Update this test.",
-			dialect(), child["status"], got)
-		return
-	}
-	t.Logf("cleat#936 present on %s: policy %q fell through to ABANDON and the child "+
-		"completed; status %v, calls %v.", dialect(), "terminate", child["status"], got)
 }
 
 // TestTheChildIsReachableByIdFromOutsideTheParent is a control on the
