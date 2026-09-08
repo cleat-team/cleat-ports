@@ -14,8 +14,10 @@ import (
 // `service` selects the failure mode:
 //
 //	"no-such-service-for-port-tests"  unresolvable -> PERMANENT, never retried
-//	"flaky"                           the fixture  -> 503 while failing, so
-//	                                                 TRANSIENT and retried
+//	"flaky"                           the fixture  -> fails with failStatus
+//	                                                 (default 503) while
+//	                                                 failing, so the caller
+//	                                                 chooses the class
 //
 // The fixture counts calls by `key` and returns 503 for the first `failtimes`
 // of them, which is what makes the retryable half observable at all: an
@@ -25,8 +27,14 @@ import (
 // No CallOptions.Timeout, deliberately. That field takes an SDK path spawning a
 // goroutine and selecting on time.After (cleat 3.225), a determinism hazard and
 // a separate defect a retry test should not be entangled with.
-func HandleRetry(h cleat.HostCalls, service string, key string, attempts int, intervalMs int, failTimes int) (string, error) {
-	req := fmt.Sprintf(`{"key":%q,"fail_times":%d}`, key, failTimes)
+//
+// failStatus selects the HTTP status the fixture fails with, which is what
+// makes cleat's classification boundary observable from a port. Zero means the
+// fixture's default of 503, so a caller that omits it behaves exactly as before
+// this parameter existed -- the five tests written against the old signature
+// are unaffected rather than silently reclassified.
+func HandleRetry(h cleat.HostCalls, service string, key string, attempts int, intervalMs int, failTimes int, failStatus int) (string, error) {
+	req := fmt.Sprintf(`{"key":%q,"fail_times":%d,"fail_status":%d}`, key, failTimes, failStatus)
 
 	resp, err := h.DurableCallWithOptions(cleat.CallOptions{
 		Retry: &cleat.RetryPolicy{

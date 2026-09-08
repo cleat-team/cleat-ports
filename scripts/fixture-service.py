@@ -17,11 +17,18 @@ retryable half of DBOS's step-retry semantics is untestable.
 Protocol, one operation:
 
     POST /call/flaky/op   {"key": "<unique>", "fail_times": 2}
+    POST /call/flaky/op   {"key": "<unique>", "fail_times": 999,
+                           "fail_status": 429}
 
-Returns 503 for the first `fail_times` calls bearing that key, then 200 with
-{"attempts": n} where n counts every call including the failures. Keys are
-caller-supplied and expected to be unique per test, so counts never collide
-between tests or between runs.
+Returns `fail_status` (default 503) for the first `fail_times` calls bearing
+that key, then 200 with {"attempts": n} where n counts every call including the
+failures. Keys are caller-supplied and expected to be unique per test, so counts
+never collide between tests or between runs.
+
+`fail_status` exists so a test can drive cleat's classification table rather
+than only the one code this fixture used to hardcode. With `fail_times` set
+high, the call fails with that status on every attempt, and the call COUNT then
+says which class cleat assigned: 1 means permanent, MaxAttempts means transient.
 
     GET /healthz          liveness, so the runner can wait rather than sleep
     GET /calls/<key>      how many times that key has been called
@@ -163,8 +170,23 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if attempts <= fail_times:
-            # 503: TRANSIENT, so the caller's RetryPolicy applies.
-            return self._send(503, {
+            # `fail_status` lets a caller drive cleat's whole classification
+            # table, not just the two codes this fixture happened to hardcode.
+            #
+            # benchSvcStatusError (cmd/cleat-worker/setup.go) is:
+            #
+            #     4xx except 408 and 429  ->  PERMANENT, not retried
+            #     408, 429, every 5xx     ->  TRANSIENT, retried per policy
+            #
+            # 408 and 429 are carved out of the 4xx rule, so they are the two
+            # codes a refactor is most likely to get wrong -- dropping either
+            # `!=` clause turns a retryable failure into a permanent one, and
+            # nothing observed that until the boundary table in
+            # tests/test_retries.py existed.
+            #
+            # Zero means 503, so every caller written before this field keeps
+            # its old behaviour rather than being silently reclassified.
+            return self._send(int(req.get("fail_status") or 503), {
                 "error": f"deliberate failure {attempts} of {fail_times}",
                 "key": key,
                 "attempts": attempts,
