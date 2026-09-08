@@ -57,9 +57,17 @@ sample is.
 
 ## Status
 
-**22 cases, 18 passing, 4 skipped** (2026-09-08) — 7 findings, 3 filed, 3 fixed.
+**41 cases, 37 passing, 4 skipped** (2026-09-08) — 12 findings, 7 filed, 5 fixed.
 
-Measured green on **PostgreSQL and MySQL**, all 22 on each. One case is
+Measured green on **PostgreSQL** and **MySQL**, all 41 on each. SQL Server was
+green at 24 cases; the 17 added since have not been run there, so that claim
+covers 24 of 41 and is written that way rather than rounded up.
+
+One case reports rather than asserts: `TestTheClockDoesNotGoBackwardsAcrossADurableCall`
+logs cleat#944 where the deployment's clock offset makes it visible (−26ms on
+PostgreSQL, −118ms on MySQL) and says so explicitly where it does not, because
+**absence is not evidence of a fix** — it began as a pin and failed in CI for
+exactly that reason. One case is
 deliberately dialect-aware (cleat#936) and reports a different result on each,
 which is the finding; every other case asserts the same thing on both.
 
@@ -67,7 +75,7 @@ Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-22
+41
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -79,13 +87,16 @@ while 53 cases existed. Hence the command beside the number.
 | `child-workflow/` | 7 | `tests/child_workflow_test.go` |
 | `await-signals/` | 6 | `tests/await_signals_test.go` |
 | `query/`, `query-workflow/` | 4 | `tests/query_test.go` |
+| — (route shape, not a sample) | 4 | `tests/identifier_test.go` |
+| `timer/`, `sleepfor/` | 4 | `tests/timer_test.go` |
+| `signal-counter/` | 4 | `tests/signal_counter_test.go` |
+| `childworkflow-continueasnew/` | 3 | `tests/child_continue_as_new_test.go` |
+| `goroutine/`, `mutex/` (as refusals) | 4 | `tests/nondeterminism_test.go` |
 
-**The four skips are all one defect**, cleat-team/cleat#933 — a single signal
-delivery satisfies more than one `AwaitSignals`. They are skipped rather than
-inverted, because the assertions are what the sample actually guarantees and
-rewriting them to match the defect would mean writing each test twice.
-`TestOneDeliveryCurrentlySatisfiesTwoAwaits` pins the defect instead, so the
-port notices when it is fixed.
+**Four skips**: one on cleat#933 symptom A — a single signal delivery satisfying
+more than one `AwaitSignals`. Three of the original four were released when
+#950 fixed the checksum half of that issue, which is what the skips existed
+for.
 
 Two of the seventeen are controls on the instrument rather than on cleat
 `TestTheFixtureRecordsAFailedCallToo` — every other assertion reads the

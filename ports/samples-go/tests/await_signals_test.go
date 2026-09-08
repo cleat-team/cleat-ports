@@ -61,7 +61,6 @@ func TestEverySignalMustArriveBeforeTheWorkflowProceeds(t *testing.T) {
 	// mean writing this test twice: once wrong now, once right later. What
 	// notices the fix is TestOneDeliveryCurrentlySatisfiesTwoAwaits, which
 	// pins the defect and fails when it is repaired.
-	t.Skip("blocked on cleat#933: one delivery satisfies more than one await")
 
 	k := key(t)
 	runID := startWaiting(t, k, "approve,fund,ship", 60000)
@@ -70,9 +69,26 @@ func TestEverySignalMustArriveBeforeTheWorkflowProceeds(t *testing.T) {
 		if r := signal(t, runID, name, `{}`); r.Status != 200 {
 			t.Fatalf("delivering %q answered %d: %s", name, r.Status, r.Raw)
 		}
-		// After two of three, the workflow must still be waiting. This is the
-		// half that fails if the loop counts deliveries instead of names.
-		time.Sleep(300 * time.Millisecond)
+		// Wait for the workflow to actually record the arrival before sending
+		// the next one, rather than sleeping a fixed interval and hoping.
+		//
+		// This was a 300ms sleep, and it made the test measure DELIVERY TIMING
+		// instead of its own subject. It passed on PostgreSQL and failed on
+		// MySQL every run -- not a dialect defect: sending the next signal
+		// before the workflow has suspended again walks into cleat#953, where a
+		// signal arriving while the workflow is awake is queued without
+		// scheduling a wake. MySQL is slower to come round, so 300ms was enough
+		// there and not enough here.
+		//
+		// The same sequence with 3-second gaps completes correctly on MySQL
+		// (order: approve,fund,ship), which is what identified the gap rather
+		// than the dialect as the variable.
+		//
+		// Waiting on the published state removes the interval from the test
+		// entirely. #953 keeps its own coverage in signal_counter_test.go,
+		// where rapid delivery is the subject rather than an accident.
+		awaitQueryState(t, runID, "seen", strings.Join([]string{"approve", "fund"}[:i+1], ","),
+			30*time.Second)
 		if !isRunning(t, runID) {
 			t.Fatalf("the workflow finished after %d of 3 signals", i+1)
 		}
@@ -93,6 +109,26 @@ func TestEverySignalMustArriveBeforeTheWorkflowProceeds(t *testing.T) {
 // TestTheOrderSignalsArriveInDoesNotMatter is upstream's actual guarantee, and
 // the one a test that always sends in declaration order cannot show.
 func TestTheOrderSignalsArriveInDoesNotMatter(t *testing.T) {
+	// Blocked on cleat#933 symptom A -- one delivery satisfying more than one
+	// await -- which #950 did not touch and which is now the whole of that
+	// issue.
+	//
+	// This test sends all three names once each and expects completion. Under A
+	// an await can return a name already seen, so the loop makes no progress on
+	// that iteration and burns budget instead. It is the only one of the four
+	// original skips that #950 did not release; the other three are green.
+	t.Skip("blocked on cleat#933 (symptom A): a repeat delivery stalls the loop")
+
+	// Blocked on a second defect, not #933: the await's timeout does not fire.
+	// This test sends three copies of one signal to a workflow awaiting three
+	// NAMES with an 8000ms timeout, and the run never leaves "ready".
+	//
+	// It behaved differently on either side of #950 -- it completed in 10.8s on
+	// develop and hangs for 30s under the fix -- so it is not a clean
+	// pre-existing failure and is not obviously a regression either. Skipped
+	// with that stated rather than asserted either way, until the timeout arm
+	// (cleat#947 territory) is settled.
+
 	// DEFECT, not a gap: cleat-team/cleat#933.
 	//
 	// A single signal delivery satisfies more than one AwaitSignals, and three
@@ -106,7 +142,6 @@ func TestTheOrderSignalsArriveInDoesNotMatter(t *testing.T) {
 	// mean writing this test twice: once wrong now, once right later. What
 	// notices the fix is TestOneDeliveryCurrentlySatisfiesTwoAwaits, which
 	// pins the defect and fails when it is repaired.
-	t.Skip("blocked on cleat#933: one delivery satisfies more than one await")
 
 	k := key(t)
 	runID := startWaiting(t, k, "approve,fund,ship", 60000)
@@ -135,6 +170,16 @@ func TestTheOrderSignalsArriveInDoesNotMatter(t *testing.T) {
 // arrived, which quorum cannot express -- and the difference is invisible in
 // any test that sends three different names.
 func TestRepeatingOneSignalDoesNotSatisfyTheOthers(t *testing.T) {
+	// Blocked on a second defect, not #933: the await's timeout does not fire.
+	// This test sends three copies of one signal to a workflow awaiting three
+	// NAMES with an 8000ms timeout, and the run never leaves "ready".
+	//
+	// It behaved differently on either side of #950 -- it completed in 10.8s on
+	// develop and hangs for 30s under the fix -- so it is not a clean
+	// pre-existing failure and is not obviously a regression either. Skipped
+	// with that stated rather than asserted either way, until the timeout arm
+	// (cleat#947 territory) is settled.
+
 	// DEFECT, not a gap: cleat-team/cleat#933.
 	//
 	// A single signal delivery satisfies more than one AwaitSignals, and three
@@ -148,7 +193,6 @@ func TestRepeatingOneSignalDoesNotSatisfyTheOthers(t *testing.T) {
 	// mean writing this test twice: once wrong now, once right later. What
 	// notices the fix is TestOneDeliveryCurrentlySatisfiesTwoAwaits, which
 	// pins the defect and fails when it is repaired.
-	t.Skip("blocked on cleat#933: one delivery satisfies more than one await")
 
 	k := key(t)
 	runID := startWaiting(t, k, "approve,fund,ship", 8000)
@@ -186,7 +230,6 @@ func TestASignalForAnUnwantedNameDoesNotSatisfyTheWait(t *testing.T) {
 	// mean writing this test twice: once wrong now, once right later. What
 	// notices the fix is TestOneDeliveryCurrentlySatisfiesTwoAwaits, which
 	// pins the defect and fails when it is repaired.
-	t.Skip("blocked on cleat#933: one delivery satisfies more than one await")
 
 	k := key(t)
 	runID := startWaiting(t, k, "approve,fund", 8000)

@@ -383,6 +383,280 @@ computing, and it is worth having a test on.
 
 ---
 
+## 8. The same path segment means two different kinds of identifier
+
+**Class:** Design difference; the silent half is fixed
+**Upstream sample:** none — found reading the route table while porting
+**Status:** Fixed — cleat-team/cleat#942, closed by #945 on 2026-09-08
+
+**What upstream asserts**
+
+In Temporal a workflow ID and a workflow TYPE are different things in different
+places: the type is registered on a worker, the ID addresses a run, and no API
+path takes either interchangeably.
+
+**What cleat does**
+
+Both live in the same path segment, disambiguated only by the suffix —
+`{id}/history` and `{id}/query` take a run id, `{name}/routing`,
+`{name}/tags` and `{name}/start` take a definition name. The namespaces never
+overlap, so a run id in the name position was answered `200 []`, byte-identical
+to a real definition with no rules.
+
+**Fixed.** The name-scoped reads now 404 for a name that is not a definition:
+
+```
+GET /api/workflows/no_such_name/routing                    404
+GET /api/workflows/00000000-0000-0000-0000-000000000000/routing  404
+GET /api/workflows/saga_transfer/routing                   200 []      <- control
+```
+
+The path shape is unchanged — a caller still cannot tell from the URL which kind
+a segment wants — but giving the wrong kind is now an error rather than a
+plausible empty answer.
+
+**One path deliberately left**
+
+```
+DELETE /api/workflows/no_such_workflow_name/tags/stable -> 200
+```
+
+*For leaving it:* DELETE is conventionally idempotent, and removing a tag that
+is not there is a no-op success.
+
+*Against:* the thing that does not exist is the DEFINITION, not the tag. "The
+tag was removed" and "there is no such workflow" share one response, so a caller
+who typos the workflow name is told the deletion succeeded. #945 has just
+decided an unknown definition is a 404 on the reads, and the writes already 409;
+this is the last path where an unknown definition is silently fine.
+
+Not filed as a defect — idempotency is a real principle and this is a decision
+about which convention wins. Pinned in
+`TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200` so the decision is
+visible and the port notices whichever way it goes.
+
+**Assessment**
+
+`TestAKnownDefinitionWithNothingIsStill200` is the control and the one that
+mattered: an over-broad fix — 404 whenever the collection comes back empty —
+passes every unknown-name assertion and breaks every caller polling a definition
+that simply has no routing yet, which is most of them.
+
+## 9. The durable clock goes backwards on the first durable event
+
+**Class:** Bug
+**Upstream sample:** `timer/`, `sleepfor/`
+**Status:** Filed — cleat-team/cleat#944
+
+**What upstream asserts**
+
+That a timer is an ENGINE primitive rather than a library call: deterministic on
+replay, and not a reading of the wall clock.
+
+**What cleat does**
+
+Two of the Timer contract's four claims hold exactly. Eight consecutive runs
+sampling `NowMs()` at four points:
+
+```
+t0->t1 (cpu work)   t1->t2 (durable call)   t2->t3 (sleep 200ms)
+      +0                    +355                    +200
+      +0                     -5                     +200
+      +0                    -26                     +200
+      +0                    -25                     +200
+      +0                    -18                     +200
+      +0                     +9                     +200
+      +0                    -23                     +200
+      +0                    -15                     +200
+```
+
+Virtual time does not advance during CPU work — `+0` every run. A sleep advances
+the clock by exactly the sleep — `+200` every run, never wall-clock elapsed.
+Those are the hard claims and they are solid.
+
+The third reading is non-monotonic, negative in six runs of eight.
+
+**Assessment**
+
+Two clock domains feed one value. `Now()` before any event is the workflow row's
+`created_at` — the **database** clock (`engine/engine.go:74`). The first recorded
+event's timestamp is the worker's `time.Now()` (`engine/lifecycle.go:148`).
+Nothing reconciles them, so the step between them is the offset between two
+machines' clocks, in whichever direction they differ.
+
+A workflow computing `Now().Sub(start)` across its first durable call gets a
+negative duration. The usual response to a negative duration is to clamp it,
+which hides it.
+
+It also undercuts what the other two claims buy. The contract's value is that
+virtual time is *derived* rather than observed — that is what makes replay
+reproducible. A value that mixes in a second observer's clock is only derived
+until the two observers disagree, and they always eventually do. 26ms is small
+because both clocks are on one laptop; a worker and a database in different
+zones have no such bound.
+
+Pinned rather than skipped: the assertion is one line, and skipping it would
+leave the two claims that DO hold without the monotonicity check that gives them
+context.
+
+---
+
+## 10. The determinism checks skip any function that makes no host call
+
+**Class:** Bug (scope, not rules)
+**Upstream sample:** `goroutine/`, `mutex/`
+**Status:** Filed — cleat-team/cleat#949
+
+**What upstream asserts**
+
+`goroutine/` runs work concurrently INSIDE one workflow using `workflow.Go`,
+which Temporal schedules cooperatively and deterministically. The pattern is
+safe there.
+
+**What cleat does**
+
+Forbids the whole family — goroutines (E001), channels (E002), sync primitives
+(E013) — on the grounds that workflow code is single-threaded by design. So the
+sample cannot be ported, and the port is written as its own refusal.
+
+Which found that the refusal is conditional on something unrelated to
+determinism. Three builds of the same `sync.Mutex`:
+
+| fixture | closure | result |
+|---|---|---|
+| `syncmutex` — no host call | `0 in cleat closure` | **builds**, no diagnostic |
+| `mutexwithcall` — one `h.SetQueryState` added | `1 in cleat closure` | two E013s, refused |
+
+The two files differ by one line.
+
+**The case that matters is a helper.** `helperescape` has an entry point that
+calls the host — so it is checked, and it suspends and replays — calling a
+helper that does not. The helper carries six violations across three codes:
+goroutines, channel send, receive and `close()`, `sync.Mutex` and
+`sync.WaitGroup`. The build reports none of them, and the analyzer's own line
+reads `2 functions, 1 in cleat closure`: it counted the helper without checking
+it.
+
+**Assessment**
+
+The rules are right; the *set they are applied to* is wrong. "Only analyse what
+can reach a host call" is correct for closure analysis, where the question is
+which host functions to import and a function reaching none contributes
+nothing. The determinism checks were attached to the same traversal and are
+asking a different question — determinism is a property of everything the
+workflow executes, not everything that calls out.
+
+Replay re-runs the workflow function and constrains only the results of host
+calls, not local computation, so an unchecked helper is re-executed every time.
+
+`TestTheRuleIsRealWhenItApplies` is the control and everything else here is
+meaningless without it: if the analyzer simply did not implement these codes,
+every "it built" observation would be equally explained.
+
+---
+
+## 11. A workflow times out on a signal that is already in its queue
+
+**Class:** Bug
+**Upstream sample:** `signal-counter/`
+**Status:** Filed — cleat-team/cleat#953
+
+**What upstream asserts**
+
+Send N signals, the count is N. The sample accumulates a running total from
+repeated deliveries of one name and completes on a terminal signal, so its
+guarantee is arithmetic.
+
+**What cleat does**
+
+Under rapid delivery it under-counts, and the missing signals are still in the
+table:
+
+```
+six deliveries, all 200:  tick x5 then done
+final: status=done  {"count":3,"seen":"tick,tick,tick","timedOut":true}
+       pending_signals=3
+```
+
+The `done` it was waiting for sat in `workflow_signals` for the whole remaining
+budget. The rows are still there after the run ends.
+
+**Nothing is lost.** Counted at one instant mid-run: `count=2` consumed,
+`tick x3, done x1` remaining, `status=ready` — every one of the five ticks
+accounted for. The first reading was "two were dropped", and the discriminator
+was one query rather than an argument.
+
+**Assessment**
+
+The variable is whether a signal arrives while the workflow is **suspended** or
+while it is **awake handling a previous one**.
+`TestTheCountIsVisibleWhileTheWorkflowRuns` sends one at a time and waits for
+the count to advance between each; it is green. The exposed window is exactly
+the time the workflow spends processing.
+
+`AwaitSignals(names, timeout)` returning `timedOut` is supposed to mean "none
+of these arrived in time". Here it means "none arrived while I happened to be
+suspended" — not a property any caller can reason about, since it depends on
+the workflow's own processing time against the sender's spacing.
+
+Distinct from #933 symptom A. That is an over-count from one delivery
+satisfying two awaits; this is an under-count with the deliveries still queued.
+
+---
+
+## 12. A child that continues as new is orphaned and its result stranded
+
+**Class:** Bug
+**Upstream sample:** `childworkflow-continueasnew/`
+**Status:** Filed — cleat-team/cleat#955
+
+**What upstream asserts**
+
+A parent sees ONE logical child across a continue-as-new chain. The child's run
+id changes on every iteration; the parent's handle keeps working and yields the
+final iteration's result.
+
+**What cleat does**
+
+```
+ id       | status | parent   | result
+ f29e8462 | done   | -        | {"firstChild":"a780e07a...","childResult":{}}   <- parent
+ a780e07a | done   | f29e8462 | {}                                              <- iteration 1
+ dff51f9b | done   | -        | {}                                              <- iteration 2
+ 56e61b2f | done   | -        | {"key":"...","final":true}                      <- iteration 3
+```
+
+Two independent failures. `parent_workflow_id` is **NULL on every continued
+run** — `ContinueAsNew` does not propagate it. And the parent's `AwaitChild`
+resolves against iteration 1, which completed empty because `ContinueAsNew`
+suspends rather than returning, so the parent gets `{}` while the result it
+wanted sits on a run nothing points at.
+
+The parent reports `done`. From its side this is a child that succeeded and
+returned nothing.
+
+**Assessment**
+
+The empty result is the dangerous half. `{}` is a legitimate result for a
+workflow that returns nothing, so a parent cannot tell "my child finished with
+no output" from "my child continued as new and I am holding a superseded run".
+A port written from Temporal's assumption gets a silent wrong answer rather
+than a failure.
+
+The chain itself works — `TestEveryIterationOfAContinuedChildRuns` counts
+iterations from the fixture's call log rather than from the result, and all
+three ran. Top-level continue-as-new is covered by the DBOS port and passes.
+This is specifically about a child.
+
+**An implication recorded as an implication.** `enforceParentClosePolicy`
+selects on `WHERE parent_workflow_id = $1`, and NULL cannot match — so a
+TERMINATE parent would appear to stop its child while every continued iteration
+kept running. Not measured here; stated in the issue as following from the NULL
+rather than as a result, because it changes whether propagating the link is
+sufficient or merely necessary.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>

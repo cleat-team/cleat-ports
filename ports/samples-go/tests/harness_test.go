@@ -340,6 +340,24 @@ func deploy(t *testing.T, pkg, workflowName string) string {
 	return workflowName
 }
 
+// buildOnly compiles a workflow package and returns the toolchain's combined
+// output plus whether it succeeded. It does not deploy.
+//
+// Separate from deploy() because some workflows in this port exist to be
+// REFUSED, and deploy() calls t.Fatalf on a build failure -- which is right for
+// a workflow under test and exactly wrong for one whose refusal is the subject.
+func buildOnly(t *testing.T, pkg string) (string, bool) {
+	t.Helper()
+	outDir := filepath.Join(repoRoot, ".port-results", "wasm", "samples-go", "refused-"+filepath.Base(pkg))
+	pkgDir := filepath.Join(repoRoot, "ports", "samples-go", "workflows", pkg)
+	if _, err := os.Stat(pkgDir); err != nil {
+		t.Fatalf("no such workflow package %s: %v", pkg, err)
+	}
+	out, err := exec.Command(
+		filepath.Join(repoRoot, "scripts", "build-workflow.sh"), pkgDir, outDir).CombinedOutput()
+	return string(out), err == nil
+}
+
 func asExitError(err error, target **exec.ExitError) bool {
 	ee, ok := err.(*exec.ExitError)
 	if ok {
