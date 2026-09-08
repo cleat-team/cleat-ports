@@ -59,7 +59,7 @@ deps: ## Start the database for DIALECT (default postgres): make deps DIALECT=my
 	@# the file's NAME did not distinguish two databases; here its EXISTENCE
 	@# stands in for the key still being valid. Tying the key's lifetime to the
 	@# database's is what actually removes the class.
-	@rm -f .port-results/api-key.$(DIALECT)
+	@rm -f .port-results/$${COMPOSE_PROJECT_NAME:-default}/api-key.$(DIALECT)
 	@if [ "$(DIALECT)" = "mssql" ]; then \
 	  echo "==> ensuring the cleat_ports database exists on SQL Server"; \
 	  docker compose exec -T mssql /opt/mssql-tools18/bin/sqlcmd \
@@ -107,6 +107,11 @@ new-port: ## Scaffold a new port: make new-port PORT=<name>
 	@echo "see docs/adding-a-port.md"
 
 .PHONY: clean
-clean: ## Remove build artifacts from every port
+clean: ## Remove build artifacts from every port, for THIS run only
 	@for p in $(PORTS); do $(MAKE) -C "ports/$$p" clean 2>/dev/null || true; done
-	rm -rf .port-results
+	@# This run's subdirectory, never the whole tree. Several sessions share
+	@# this checkout and key their state by COMPOSE_PROJECT_NAME, so a bare
+	@# `rm -rf .port-results` deletes every concurrent session's pidfiles, keys
+	@# and logs at once -- a worse version of the sharing this layout exists to
+	@# prevent, and instantaneous rather than gradual.
+	rm -rf .port-results/$${COMPOSE_PROJECT_NAME:-default}

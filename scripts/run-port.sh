@@ -15,8 +15,8 @@ export PATH="$ROOT/bin:$PATH"
 # shellcheck source=scripts/env.sh
 . "$ROOT/scripts/env.sh"
 
-mkdir -p "$ROOT/.port-results"
-LOG="$ROOT/.port-results/$PORT.log"
+mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
+LOG="$CLEAT_PORTS_RESULTS_DIR/$PORT.log"
 
 # One worker, shared by every port in this run. `ensure` is idempotent, so the
 # first port starts it and the rest reuse it. Teardown is the Makefile's job
@@ -24,7 +24,7 @@ LOG="$ROOT/.port-results/$PORT.log"
 # worker, which is what we are deliberately not doing.
 "$ROOT/scripts/worker.sh" ensure
 CLEAT_PORTS_API="$("$ROOT/scripts/worker.sh" url)"
-CLEAT_PORTS_API_KEY="$(cat "$ROOT/.port-results/api-key.$CLEAT_PORTS_DIALECT")"
+CLEAT_PORTS_API_KEY="$(cat "$CLEAT_PORTS_RESULTS_DIR/api-key.$CLEAT_PORTS_DIALECT")"
 export CLEAT_PORTS_API CLEAT_PORTS_API_KEY
 
 echo "--- $PORT: $(cat "$ROOT/bin/.cleat-build" 2>/dev/null | tr '\n' ' ')"
@@ -34,7 +34,7 @@ rc=${PIPESTATUS[0]}
 set -e
 
 if [ "$rc" -ne 0 ]; then
-  echo "--- $PORT: FAIL (rc=$rc), log at .port-results/$PORT.log" >&2
+  echo "--- $PORT: FAIL (rc=$rc), log at $CLEAT_PORTS_RESULTS_DIR/$PORT.log" >&2
 else
   echo "--- $PORT: pass"
 fi

@@ -351,7 +351,15 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
     """Build one workflow package to WASM and deploy it under a stable name."""
     root = pathlib.Path(__file__).resolve().parents[3]
     pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / pkg_name
-    out = root / ".port-results" / "wasm" / pkg_name
+    # Per-run, matching scripts/env.sh: several sessions share this checkout
+    # and a flat .port-results/wasm/<pkg> means the last build wins. Both
+    # halves have to move together -- if the harness writes here while the
+    # worker reads the keyed path, the deploy cannot find its binary.
+    results = os.environ.get(
+        "CLEAT_PORTS_RESULTS_DIR",
+        str(root / ".port-results" / os.environ.get("COMPOSE_PROJECT_NAME", "default")),
+    )
+    out = pathlib.Path(results) / "wasm" / pkg_name
 
     built = subprocess.run(
         [str(root / "scripts" / "build-workflow.sh"), str(pkg), str(out)],
