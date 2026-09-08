@@ -277,6 +277,31 @@ class Cleat:
                     f"{timeout}s; last status {last.get('status')!r}")
 
 
+def wait_until(predicate, timeout: float, what: str, interval: float = 0.5) -> None:
+    """Poll predicate until it is true, or fail naming what was awaited.
+
+    Seven test modules each carried a byte-identical private copy of this, and
+    the copies had drifted from the code they were copied from in one way that
+    matters: every one used time.time() where every helper in this file uses
+    time.monotonic(). Wall-clock can step -- NTP, a suspend, a manual change --
+    and a step backwards silently extends a timeout while a step forwards cuts
+    it short. Monotonic cannot. So the duplicates were not merely redundant,
+    they were slightly worse than the convention they diverged from, which is
+    the tell that they were written from each other rather than from here.
+
+    interval stays a parameter because two of the seven polled at 0.25s and
+    five at 0.5s. That difference is not load-bearing -- a shorter interval can
+    only find the condition sooner -- but it is preserved exactly rather than
+    unified, because the suite needs a database and could not be run to check.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(interval)
+    pytest.fail(f"timed out after {timeout}s waiting for {what}")
+
+
 @pytest.fixture(scope="session")
 def cleat(api: str, api_key: str) -> Cleat:
     return Cleat(api, api_key)
