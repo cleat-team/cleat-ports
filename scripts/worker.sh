@@ -17,9 +17,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/env.sh
 . "$ROOT/scripts/env.sh"
 SRC="$ROOT/.cleat-src"
-PIDFILE="$ROOT/.port-results/worker.pid"
-FIXPID="$ROOT/.port-results/fixture.pid"
-FIXLOG="$ROOT/.port-results/fixture.log"
+PIDFILE="$CLEAT_PORTS_RESULTS_DIR/worker.pid"
+FIXPID="$CLEAT_PORTS_RESULTS_DIR/fixture.pid"
+FIXLOG="$CLEAT_PORTS_RESULTS_DIR/fixture.log"
 # Per dialect, and that is the whole point of the suffix.
 #
 # The key lives in the database it was minted against -- api_keys is a table
@@ -36,8 +36,8 @@ FIXLOG="$ROOT/.port-results/fixture.log"
 # `worker.sh stop` does not remove it either, so stopping the worker and
 # starting it on another dialect reproduced the same failure -- which is what
 # makes this worth a suffix rather than a cleanup in stop.
-KEYFILE="$ROOT/.port-results/api-key.$CLEAT_PORTS_DIALECT"
-LOGFILE="$ROOT/.port-results/worker.log"
+KEYFILE="$CLEAT_PORTS_RESULTS_DIR/api-key.$CLEAT_PORTS_DIALECT"
+LOGFILE="$CLEAT_PORTS_RESULTS_DIR/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
 API_URL="$CLEAT_PORTS_API"
 
@@ -67,7 +67,7 @@ fixture_healthy() { curl -sf -m 2 "$CLEAT_PORTS_FIXTURE_URL/healthz" >/dev/null 
 
 start_fixture() {
   fixture_healthy && return 0
-  mkdir -p "$ROOT/.port-results"
+  mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   python3 "$ROOT/scripts/fixture-service.py" "$CLEAT_PORTS_FIXTURE_PORT" \
     >"$FIXLOG" 2>&1 &
   echo $! > "$FIXPID"
@@ -101,8 +101,56 @@ stop_fixture() {
 # The fixture service is left running on purpose. It holds the per-key call
 # counts the recovery assertion reads, and those must survive the crash to be
 # evidence of anything.
+# owned reports whether the pid in PIDFILE is a cleat-worker this project
+# started, by checking the process's OWN command line for our API port rather
+# than trusting the file that named it.
+#
+# Per-run pidfiles make a cross-session mixup unlikely; they do not make it
+# impossible, and the consequence is severe enough to check twice. On
+# 2026-09-08 a flat pidfile let `ensure` stop a live worker belonging to another
+# session and report it as restarting its own -- because health was tested
+# against THIS session's URL while the pid came from a file everyone shared.
+# A pid is a claim about a process; the process's argv is the process itself.
+owned() {
+  local pid
+  pid="$(cat "$PIDFILE" 2>/dev/null)" || return 1
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # -ww, and it is load-bearing: GNU ps TRUNCATES TO 80 COLUMNS when stdout is
+  # not a tty, which every CI step and every captured subprocess is. The worker
+  # is started as
+  #
+  #   .../bin/cleat-worker -db postgres://...?sslmode=disable -driver postgres -api-addr 127.0.0.1:8099
+  #
+  # and -api-addr begins at column 152, so the unwidened form cannot see the one
+  # flag this function exists to read. It then reports every worker as foreign.
+  # Caught by CI on the commit that introduced it, because the guard fails
+  # CLOSED -- had it failed open it would have passed here and protected
+  # nothing.
+  ps -ww -p "$pid" -o command= 2>/dev/null | grep -q -- "-api-addr 127.0.0.1:$API_PORT"
+}
+
+# refuse_foreign exits rather than signalling a process this project does not
+# own. Loud, because the alternative is what happened: the kill succeeds, the
+# run continues, and the session that lost its worker sees `401 invalid or
+# revoked API key` -- which names authentication, the one thing not wrong.
+refuse_foreign() {
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || echo unknown)"
+  cat >&2 <<MSG
+refusing to signal pid $pid: it is not a cleat-worker serving 127.0.0.1:$API_PORT.
+
+  pidfile: $PIDFILE
+  process: $(ps -ww -p "$pid" -o command= 2>/dev/null || echo "(gone)")
+
+Another session may own it. Check with:  pgrep -fl cleat-worker
+If the pidfile is simply stale, remove it: rm -f "$PIDFILE"
+MSG
+  exit 3
+}
+
 crash_worker() {
   if running; then
+    owned || refuse_foreign
     pid="$(cat "$PIDFILE")"
     kill -9 "$pid" 2>/dev/null || true
     for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
@@ -115,6 +163,7 @@ crash_worker() {
 
 stop_worker() {
   if running; then
+    owned || refuse_foreign
     pid="$(cat "$PIDFILE")"
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
@@ -127,9 +176,9 @@ stop_worker() {
 start() {
   [ -x "$ROOT/bin/cleat-worker" ] || {
     echo "cleat-worker not built -- run: make install-cleat" >&2; exit 2; }
-  mkdir -p "$ROOT/.port-results"
+  mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
 
-  mkdir -p "$ROOT/.port-results"
+  mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
 
   # Run from the cloned source tree, not from here. cleat-worker resolves its
   # migrations with a hardcoded relative path -- cmd/cleat-worker/main.go does
@@ -181,8 +230,8 @@ start() {
   # Written every start rather than once: the fixture port comes from env.sh
   # and a stale file would point a later run at the wrong port, which surfaces
   # as a connection refused inside the plugin rather than as a config problem.
-  PLUGIN_CONFIG="$ROOT/.port-results/plugin-config.json"
-  mkdir -p "$ROOT/.port-results"
+  PLUGIN_CONFIG="$CLEAT_PORTS_RESULTS_DIR/plugin-config.json"
+  mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   cat > "$PLUGIN_CONFIG" <<JSON
 {"providers":{"ollama":{"base_url":"$CLEAT_PORTS_FIXTURE_URL","enabled":true,"default_model":"llama3.2"}}}
 JSON
@@ -223,6 +272,29 @@ case "${1:?usage: worker.sh <ensure|crash|stop|url>}" in
     # process logged "address already in use", exited, and took the run with
     # it while the healthy first worker sat there unused.
     if healthy; then
+      # Serving is necessary and not sufficient: it must be OUR worker.
+      #
+      # Ports are chosen by hand here, so two sessions can pick the same one,
+      # and then this branch reuses a worker belonging to somebody else --
+      # against their database, with a key minted against ours. The symptom is
+      # `401 invalid or revoked API key`, which names authentication: the one
+      # thing that is not wrong. Observed on the shared default 8099 before
+      # per-session ports were used at all.
+      if [ -f "$PIDFILE" ] && ! owned; then
+        cat >&2 <<MSG
+something is already serving $API_URL and it is not this project's worker.
+
+  pidfile: $PIDFILE ($(cat "$PIDFILE" 2>/dev/null || echo "no pid"))
+  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+Reusing it would run this session against another session's database while
+authenticating with this session's key -- which fails as "401 invalid or
+revoked API key" and names the wrong thing.
+
+Set CLEAT_PORTS_API_PORT (and CLEAT_PORTS_FIXTURE_PORT) to a free port.
+MSG
+        exit 3
+      fi
       start_fixture || exit 1
       echo "worker already serving $API_URL${PIDFILE:+ (pid $(cat "$PIDFILE" 2>/dev/null || echo unknown))}"
       mint_key
