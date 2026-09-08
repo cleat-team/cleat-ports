@@ -28,6 +28,8 @@ import uuid
 
 import pytest
 
+from conftest import wait_until
+
 # Long enough that the crash lands inside it AND the reaper has time to notice
 # the dead worker before the sleep would have ended on its own. If the sleep
 # finished first, a workflow could complete without ever being recovered and
@@ -42,15 +44,6 @@ RECOVERY_TIMEOUT = 180.0
 def _body(final):
     raw = final["result"]
     return json.loads(raw) if isinstance(raw, str) else raw
-
-
-def _wait_until(predicate, timeout: float, what: str):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.5)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 def test_a_workflow_survives_the_loss_of_its_worker(
@@ -72,7 +65,7 @@ def test_a_workflow_survives_the_loss_of_its_worker(
     # Wait for the first call to actually land, so the crash is known to happen
     # AFTER it. Crashing before it would leave nothing to be repeated and the
     # central assertion would hold vacuously.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(f"{key}-before") == 1,
         timeout=60.0,
         what="the pre-crash durable call to reach the fixture",

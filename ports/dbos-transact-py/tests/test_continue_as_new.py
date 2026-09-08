@@ -21,21 +21,14 @@ import uuid
 
 import pytest
 
+from conftest import wait_until
+
 ITERATIONS = 3
 
 
 def _body(final):
     raw = final["result"]
     return json.loads(raw) if isinstance(raw, str) else raw
-
-
-def _wait_until(predicate, timeout, what):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.5)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 def test_a_workflow_can_continue_as_new_and_every_iteration_runs(
@@ -48,7 +41,7 @@ def test_a_workflow_can_continue_as_new_and_every_iteration_runs(
     )
     assert status == 201, f"start rejected: {status} {started}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= ITERATIONS,
         timeout=90.0,
         what=f"all {ITERATIONS} iterations to run",

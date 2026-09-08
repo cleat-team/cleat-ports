@@ -21,21 +21,14 @@ import uuid
 
 import pytest
 
+from conftest import wait_until
+
 HOLD_MS = 20_000
 
 
 def _body(final):
     raw = final["result"]
     return json.loads(raw) if isinstance(raw, str) else raw
-
-
-def _wait_until(predicate, timeout, what):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.5)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 def _try_once(cleat, tryer, key):
@@ -63,7 +56,7 @@ def test_a_held_lock_cannot_be_taken_and_is_released(cleat, lock_workflows, fixt
 
     # Wait for the holder to announce, so the attempt below is known to happen
     # while the lock is held rather than before it was taken.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(f"{key}-held") == 1,
         timeout=60.0,
         what="the holder to acquire the lock and announce it",
@@ -106,7 +99,7 @@ def test_distinct_keys_do_not_block_each_other(cleat, lock_workflows, fixture_ca
     status, started = cleat.start(holder_name, {"key": held, "holdMs": HOLD_MS})
     assert status == 201, f"start rejected: {status} {started}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(f"{held}-held") == 1,
         timeout=60.0,
         what="the holder to acquire its lock",

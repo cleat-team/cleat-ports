@@ -22,21 +22,22 @@ import uuid
 
 import pytest
 
+import functools
+
+from conftest import wait_until as _wait_until
+
+#: This module polled at 0.25s before wait_until was shared, and keeps it.
+#: Not tidied to the 0.5s default: some predicates here test a TRANSIENT
+#: state (a run being "running", a fixture call in flight), and polling
+#: less often can miss one entirely rather than merely notice it later.
+wait_until = functools.partial(_wait_until, interval=0.25)
+
 SLEEP_MS = 3000
 
 
 def _body(final):
     raw = final["result"]
     return json.loads(raw) if isinstance(raw, str) else raw
-
-
-def _wait_until(predicate, timeout: float, what: str):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.25)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 def test_a_fire_and_forget_send_reaches_the_service(cleat, send_workflow, fixture_calls):
@@ -51,7 +52,7 @@ def test_a_fire_and_forget_send_reaches_the_service(cleat, send_workflow, fixtur
 
     # The dispatch outlives the host call by design -- it runs in a goroutine --
     # so arrival is not ordered against the workflow finishing.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=30.0,
         what="the fire-and-forget send to reach the fixture service",
@@ -75,7 +76,7 @@ def test_a_send_is_not_repeated_when_the_workflow_replays(
     final = cleat.await_terminal(started["id"], timeout=60.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=30.0,
         what="the send to reach the fixture service",
@@ -123,12 +124,12 @@ def test_a_send_after_a_suspension_still_arrives(cleat, send_after_sleep_workflo
     final = cleat.await_terminal(started["id"], timeout=60.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(early) >= 1,
         timeout=30.0,
         what="the send made before the suspension to reach the fixture service",
     )
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(late) >= 1,
         timeout=30.0,
         what="the send made after the suspension to reach the fixture service",

@@ -24,16 +24,17 @@ import uuid
 
 import pytest
 
+import functools
+
+from conftest import wait_until as _wait_until
+
+#: This module polled at 0.25s before wait_until was shared, and keeps it.
+#: Not tidied to the 0.5s default: some predicates here test a TRANSIENT
+#: state (a run being "running", a fixture call in flight), and polling
+#: less often can miss one entirely rather than merely notice it later.
+wait_until = functools.partial(_wait_until, interval=0.25)
+
 SLEEP_MS = 3000
-
-
-def _wait_until(predicate, timeout: float, what: str):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.25)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 def test_a_registered_cleanup_runs(cleat, defer_workflow, fixture_calls):
@@ -51,7 +52,7 @@ def test_a_registered_cleanup_runs(cleat, defer_workflow, fixture_calls):
 
     # Dispatch outlives the host call by design -- DurableSend hands off to a
     # goroutine -- so arrival is not ordered against the workflow finishing.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(defer_key) >= 1,
         timeout=30.0,
         what="the deferred cleanup to reach the fixture service",
@@ -78,7 +79,7 @@ def test_a_cleanup_does_not_run_at_registration(cleat, defer_workflow, fixture_c
     # proves the workflow reached the line after the registration, which is
     # the moment the claim is about. A fixed sleep would either race the
     # start-up or outlast the workflow.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(body_key) >= 1,
         timeout=30.0,
         what="the workflow body to reach the registration point",
@@ -118,7 +119,7 @@ def test_a_cleanup_runs_once_though_the_body_runs_twice(cleat, defer_workflow, f
     final = cleat.await_terminal(started["id"], timeout=60.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(defer_key) >= 1,
         timeout=30.0,
         what="the deferred cleanup to reach the fixture service",
