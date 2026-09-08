@@ -30,50 +30,94 @@ application or a web framework.
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 77 | **1** — concurrency limits, rate limits, dedup, priority | 10 ‡ |
-| `tests/test_failures.py` | 43 † | **1** — retries, error classification, recovery | 9 † |
-| `tests/test_workflow_management.py` | 44 † | **1** — cancel, resume, fork, list, restart | 15 † |
-| `tests/test_concurrency.py` | 21 † | **1** — concurrent execution and isolation | 4 † |
-| `tests/test_dbos.py` | 138 † | 2 — broad core surface, mixed with SDK ergonomics | 24 † |
-| `tests/test_async.py` | 57 † | 2 — async workflow and step semantics | 0 |
-| `tests/test_scheduler.py` | 35 † | 2 — cron and scheduled workflows | 6 † |
-| `tests/test_client.py` | 54 † | 3 — client API surface, largely DBOS-specific | 4 † |
-| **Total in scope** | **469 †** | | **see below †** |
+| `tests/test_queue.py` | 77 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
+| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 14 |
+| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 12 |
+| `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
+| `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
+| `tests/test_async.py` | 32 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
+| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
+| `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 8 |
+| **Total in scope** | **351** | | **81** |
 
-† **Not verified — do not quote these.** The `Cases` rows were counted by
-`grep '^def test_'`, the method that inflated `tests/test_queue.py` from 77 to
-103 by sweeping in helper functions defined inside test bodies. Only
-`tests/test_queue.py` has been counted by collection. **469 is 495 − 26** — it
-carries that one correction and nothing else, so it is arithmetic, not a
-measurement.
+**Both tables are generated, and CI checks the file still matches the tree.**
 
-The `Ported` column has a different problem, and it is not the counting method:
-our own test files contain no inner helpers and no `Test*` classes, so both
-methods agree on them exactly. It is that the column, its total, and the
-per-file table below **disagree with each other and with the tree**:
+    python3 scripts/count-queue-cases.py --inventory   # print them
+    python3 scripts/count-queue-cases.py --check       # fail if README has drifted
+
+`Cases` is measured by **collection** — what pytest would actually run — at the
+pinned upstream ref, not by grep. Every figure this table carried before was
+`grep -c 'def test_'`, which counts helper functions defined *inside* test
+bodies; DBOS tests declare their workflows and steps locally and name them
+`test_workflow`, `test_step`, `test_child_wf`. That method reproduces all eight
+old values exactly, which is how it was identified rather than guessed:
+
+| upstream file | was | is | inner helpers swept in |
+|---|---:|---:|---:|
+| `test_dbos.py` | 138 | **61** | 77 |
+| `test_queue.py` | 103 | **77** | 26 |
+| `test_async.py` | 57 | **32** | 25 |
+| `test_concurrency.py` | 21 | **11** | 10 |
+| `test_failures.py` | 43 | **37** | 6 |
+| `test_workflow_management.py` | 44 | 44 | 0 |
+| `test_scheduler.py` | 35 | 35 | 0 |
+| `test_client.py` | 54 | 54 | 0 |
+
+**Three rows did not move at all**, which is why the old numbers looked
+plausible: the inflation is concentrated in the files that declare inner
+workflows, and absent from those that do not. A method that is right on three
+files out of eight is the hardest kind to doubt.
+
+**An anchored `grep -cE '^(async )?def test_'` also gives the right answer on
+all eight, and should still not be used.** It excludes inner helpers only
+because they are indented, and it cannot see a `test_` method on a `Test*`
+class at all. No upstream file here has one (`grep -cE '^class Test'` → 0
+across all eight), so the agreement is a property of these files rather than of
+the method, and it fails silently in the flattering direction the day one
+appears. Collection asks the question directly.
+
+`Ported` is collected live from `tests/`. It used to be hand-maintained, and
+gave three different answers at once — cells summing to 74, a stated total of
+79, and 82 in the tree. The mapping from our modules to upstream files is
+judgement and still lives in one reviewable place, `MAPPING` in
+`scripts/count-queue-cases.py`; the counts beside it no longer are. A module
+added to `tests/` and not to `MAPPING` fails the check rather than being
+silently omitted, which is how four modules went missing from the second table.
+
+**A skipped case is not coverage**, so the second table marks them and the
+figure is derived rather than written down — the note this replaces said
+"9 active and 1 skipped" against a cell that had since moved to 12.
+
+Only cases skipped **outright**, by decorator, are counted. A conditional
+`pytest.skip()` inside a body is not: those are written to skip on a known
+defect and assert in full otherwise, so one becomes a passing case the day the
+defect is fixed, with nobody editing it. `test_dead_letters.py` has exactly one
+and it started passing when cleat#979 was fixed. Counting it as a skip would
+understate coverage and go stale silently, which is the failure this whole
+section exists to stop.
+
+### `tests/test_async.py` is priority 3, and the reason is not that it is blocked
+
+Recorded because three sessions have now assessed this file and reached three
+different answers. Of its 32 cases:
 
 | | |
-|---|---|
-| sum of the `Ported` cells above | 74 |
-| the total this table used to state | 79 |
-| collectible cases actually on `develop` | **82** |
+|---:|---|
+| 3 | genuinely blocked — two use `asyncio.gather` inside a workflow (ISSUES.md #22), one wants a workflow-level timeout cleat does not have |
+| ~6 | Python event-loop specifics with no cleat counterpart — `asyncio.wait` semantics over handles (`FIRST_COMPLETED`, `ALL_COMPLETED`, `FIRST_EXCEPTION`, timeout), which are properties of the event loop rather than of an engine |
+| ~23 | the **async mirror** of assertions this port already makes in sync form — send/recv, events, child workflows, recovery, sleep, steps |
 
-Re-derive the last of those, rather than trusting any of the first two:
+For most of the file nothing blocks porting and there is still no reason to do
+it: **the `async` that makes these cases distinct upstream has no counterpart
+on our side to be distinct about**, because this port drives cleat over HTTP
+and its workflows are Go compiled to WASM. Porting them would restate existing
+assertions in a language feature the port does not use.
 
-    for f in ports/dbos-transact-py/tests/test_*.py; do python3 -c "
-    import ast,sys
-    print(len([n for n in ast.parse(open(sys.argv[1]).read()).body
-               if isinstance(n,ast.FunctionDef) and n.name.startswith('test_')]))" "$f"; done \
-      | awk '{t+=$1} END{print t}'
-
-Per-file `Ported` figures should be **generated rather than hand-maintained** —
-eight cases drifted across four files without anyone noticing, which is what
-hand-maintained tables do.
-
-‡ 10 = 9 active and 1 skipped
-(`test_concurrency.py::test_blocked_task_runs_after_the_holder_finishes`, which
-asserts a deferral cleat does not implement — see ISSUES.md #20). A skipped case
-is not coverage.
+(An earlier assessment attributed 29 of these to **PY012**, `python-sdk`'s
+refusal of `async def` entry points. That refusal is real and a future
+Python-SDK port would meet it here — but it cannot apply to this port, which
+has 34 Go workflow files, 0 Python ones, and no import of `cleat_sdk` anywhere
+in the repo. Retracted before it reached this table.)
 
 ## What this port deliberately skips, and why
 
@@ -112,27 +156,31 @@ assertion, mapped to the upstream file the assertion came from:
 
 | This suite | Cases | Mapped to |
 |---|---:|---|
-| `test_concurrency.py` | 4 | `test_queue.py` — concurrency keys are cleat's dedup surface |
-| `test_retries.py` | 4 | `test_failures.py` |
-| `test_recovery.py` | 1 | `test_failures.py` — recovery counts after a crash |
-| `test_cancellation.py` | 4 | `test_workflow_management.py` |
-| `test_detached.py` | 3 | `test_workflow_management.py` — the nearest thing cleat has to fork |
-| `test_children.py` | 4 | `test_concurrency.py` — concurrent execution and isolation |
-| `test_replay.py` | 2 | `test_dbos.py` |
-| `test_send.py` | 2 | `test_dbos.py` — `send` delivery semantics |
-| `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
-| `test_signals.py` | 1 | `test_dbos.py` — `recv` with a timeout |
+| `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives |
+| `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
+| `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
+| `test_concurrency.py` | 4 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
+| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
+| `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
+| `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
+| `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
-| `test_signals.py` (cross-workflow) | 1 | `test_dbos.py` — `send` between workflows |
-| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
-| `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
-| `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
-| `test_scheduling.py` | 4 | `test_scheduler.py` — cron and delayed invocation |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
+| `test_priority_order.py` | 2 | `test_queue.py` — priority is a queue control |
+| `test_promise_wakes.py` | 2 | `test_dbos.py` — promise resolution while the workflow is awake |
+| `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
+| `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
 | `test_queues.py` | 4 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
+| `test_recovery.py` | 1 | `test_failures.py` — recovery counts after a crash |
+| `test_replay.py` | 2 | `test_dbos.py` |
+| `test_retries.py` | 8 | `test_failures.py` |
+| `test_scheduling.py` | 6 | `test_scheduler.py` — cron and delayed invocation |
+| `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
+| `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
+| `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension | It is not a
+| **Total** | **85** (3 skipped outright) | **81** credited upstream, **4** cleat-specific |
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 

@@ -58,6 +58,17 @@ jobs:
           ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)
           echo "ports=$ports" >> "$GITHUB_OUTPUT"
           echo "discovered: $ports"
+      # Here rather than in its own job: it needs no database and no services,
+      # so it costs a few seconds on a runner that is already up, and it adds
+      # no new required-check context to the branch policy.
+      - name: Inventory tables match the tree
+        # The dbos-transact-py README's two tables are generated. They were
+        # hand-maintained until 2026-09-08 and drifted -- eight cases across
+        # four files, four modules missing from the second table entirely, and
+        # a Ported column whose cells, stated total and the tree gave three
+        # different answers. Correcting cells by hand only restarts that
+        # clock; this is what stops it.
+        run: python3 ports/dbos-transact-py/scripts/count-queue-cases.py --check
 
   port:
     name: ${{ matrix.port }}
