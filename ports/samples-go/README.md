@@ -57,13 +57,13 @@ sample is.
 
 ## Status
 
-**11 cases, 11 passing** (2026-09-07) — 3 findings, 0 fixed.
+**17 cases, 13 passing, 4 skipped** (2026-09-07) — 5 findings, 1 filed.
 
 Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-11
+17
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -73,8 +73,16 @@ while 53 cases existed. Hence the command beside the number.
 |---|---:|---|
 | `saga/` | 6 | `tests/saga_test.go` |
 | `child-workflow/` | 5 | `tests/child_workflow_test.go` |
+| `await-signals/` | 6 | `tests/await_signals_test.go` |
 
-Two of the eleven are controls on the instrument rather than on cleat
+**The four skips are all one defect**, cleat-team/cleat#933 — a single signal
+delivery satisfies more than one `AwaitSignals`. They are skipped rather than
+inverted, because the assertions are what the sample actually guarantees and
+rewriting them to match the defect would mean writing each test twice.
+`TestOneDeliveryCurrentlySatisfiesTwoAwaits` pins the defect instead, so the
+port notices when it is fixed.
+
+Two of the seventeen are controls on the instrument rather than on cleat
 `TestTheFixtureRecordsAFailedCallToo` — every other assertion reads the
 fixture's ordered call log, and the entries that matter are calls that
 *failed*, so "does the log record a failure at all" has to be checked
