@@ -30,17 +30,72 @@ BLOCK = re.compile(r'worker_concurrency\s*=|global_concurrency\s*=|\blimiter\s*=
 HAVE  = re.compile(r'priority|deduplication_id|dedup|app_version')
 
 
+def _module_constants(tree):
+    """Top-level literal assignments, so a parametrize can name its list."""
+    out = {}
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name):
+            try:
+                out[n.targets[0].id] = ast.literal_eval(n.value)
+            except Exception:
+                pass
+    return out
+
+
+def _parametrize_multiplier(dec, consts):
+    """How many cases one decorator produces. 1 unless it is a parametrize.
+
+    A `@pytest.mark.parametrize("code", [400, 401, 403, 404])` is FOUR
+    collected cases, not one. Counting the function instead undercounts, which
+    is what this script did until 2026-09-08 -- and it mattered most on the one
+    file whose figure was believed verified: test_queue.py is 91 cases from 77
+    functions.
+
+    Returns 1 for a shape this cannot evaluate (a fixture-generated list, a
+    generator) rather than guessing, so an unknown under-counts loudly in the
+    direction that is already documented rather than inventing a number.
+    """
+    if not isinstance(dec, ast.Call) or "parametrize" not in ast.unparse(dec.func):
+        return 1
+    if len(dec.args) < 2:
+        return 1
+    vals = dec.args[1]
+    try:
+        return max(1, len(ast.literal_eval(vals)))
+    except Exception:
+        pass
+    if isinstance(vals, ast.Name) and vals.id in consts:
+        return max(1, len(consts[vals.id]))
+    return 1
+
+
 def collected(path):
-    """The (qualified_name, node) pairs pytest would collect from `path`."""
+    """The (qualified_name, node) pairs pytest would collect from `path`.
+
+    A parametrized function appears once per case, named `f[0]`, `f[1]`, ... --
+    not the real ids pytest generates, but the right CARDINALITY, which is what
+    every caller here counts.
+    """
     tree = ast.parse(open(path).read())
+    consts = _module_constants(tree)
     out = []
+
+    def add(qual, node):
+        mult = 1
+        for d in node.decorator_list:
+            mult *= _parametrize_multiplier(d, consts)
+        if mult == 1:
+            out.append((qual, node))
+        else:
+            out.extend((f"{qual}[{i}]", node) for i in range(mult))
+
     for n in tree.body:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_"):
-            out.append((n.name, n))
+            add(n.name, n)
         elif isinstance(n, ast.ClassDef) and n.name.startswith("Test"):
             for m in n.body:
                 if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test_"):
-                    out.append((f"{n.name}::{m.name}", m))
+                    add(f"{n.name}::{m.name}", m)
     return out
 
 
@@ -86,7 +141,13 @@ def main(up, ports):
 #: plausible: the inflation is concentrated in the files that declare inner
 #: workflows and steps.
 #:
-#: Measured 2026-09-08 at PIN 833794f7a1138bacf75ff6d88647a33eb5e35e52.
+#: Measured 2026-09-08 at PIN 833794f7a1138bacf75ff6d88647a33eb5e35e52, with
+#: parametrize EXPANDED -- a `@parametrize("code", [400, 401, 403, 404])` is
+#: four collected cases. Three figures here exceed their function count for
+#: that reason: test_queue.py 77 -> 91, test_client.py 54 -> 57,
+#: test_workflow_management.py 44 -> 46, test_async.py 32 -> 33. Two of those
+#: raised a number that had gone DOWN in the same change, which is why the
+#: direction of a correction is not evidence about it.
 #: Re-derive (needs network, which is why the values are pinned here rather
 #: than fetched at generation time -- CI runs this check without egress):
 #:
@@ -98,15 +159,15 @@ def main(up, ports):
 #:   done
 UPSTREAM = [
     # (file, collected cases, priority text, was-grep-value)
-    ("test_queue.py", 77, "**1** \u2014 concurrency limits, rate limits, dedup, priority", 103),
+    ("test_queue.py", 91, "**1** \u2014 concurrency limits, rate limits, dedup, priority", 103),
     ("test_failures.py", 37, "**1** \u2014 retries, error classification, recovery", 43),
-    ("test_workflow_management.py", 44, "**1** \u2014 cancel, resume, fork, list, restart", 44),
+    ("test_workflow_management.py", 46, "**1** \u2014 cancel, resume, fork, list, restart", 44),
     ("test_concurrency.py", 11, "**1** \u2014 concurrent execution and isolation", 21),
     ("test_dbos.py", 61, "2 \u2014 broad core surface, mixed with SDK ergonomics", 138),
-    ("test_async.py", 32, "3 \u2014 mostly the async mirror of assertions this port "
+    ("test_async.py", 33, "3 \u2014 mostly the async mirror of assertions this port "
      "already makes in sync form; see the note below", 57),
     ("test_scheduler.py", 35, "2 \u2014 cron and scheduled workflows", 35),
-    ("test_client.py", 54, "3 \u2014 client API surface, largely DBOS-specific", 54),
+    ("test_client.py", 57, "3 \u2014 client API surface, largely DBOS-specific", 54),
 ]
 
 #: Which upstream file each of our test modules is answering. Judgement, so it

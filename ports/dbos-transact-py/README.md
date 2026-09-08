@@ -30,15 +30,15 @@ application or a web framework.
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 77 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
-| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 14 |
-| `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 12 |
+| `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
+| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 21 |
+| `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, restart | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
-| `tests/test_async.py` | 32 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
+| `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
-| `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **351** | | **79** |
+| `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
+| **Total in scope** | **371** | | **86** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -52,21 +52,36 @@ bodies; DBOS tests declare their workflows and steps locally and name them
 `test_workflow`, `test_step`, `test_child_wf`. That method reproduces all eight
 old values exactly, which is how it was identified rather than guessed:
 
-| upstream file | was | is | inner helpers swept in |
+| upstream file | was (grep) | functions | **cases** |
 |---|---:|---:|---:|
-| `test_dbos.py` | 138 | **61** | 77 |
-| `test_queue.py` | 103 | **77** | 26 |
-| `test_async.py` | 57 | **32** | 25 |
-| `test_concurrency.py` | 21 | **11** | 10 |
-| `test_failures.py` | 43 | **37** | 6 |
-| `test_workflow_management.py` | 44 | 44 | 0 |
-| `test_scheduler.py` | 35 | 35 | 0 |
-| `test_client.py` | 54 | 54 | 0 |
+| `test_dbos.py` | 138 | 61 | **61** |
+| `test_queue.py` | 103 | 77 | **91** |
+| `test_async.py` | 57 | 32 | **33** |
+| `test_concurrency.py` | 21 | 11 | **11** |
+| `test_failures.py` | 43 | 37 | **37** |
+| `test_workflow_management.py` | 44 | 44 | **46** |
+| `test_scheduler.py` | 35 | 35 | **35** |
+| `test_client.py` | 54 | 54 | **57** |
 
-**Three rows did not move at all**, which is why the old numbers looked
-plausible: the inflation is concentrated in the files that declare inner
-workflows, and absent from those that do not. A method that is right on three
-files out of eight is the hardest kind to doubt.
+**Two corrections are in play and they run in opposite directions**, which is
+why no single story explains the column. Unanchored grep counts inner helpers
+that pytest never collects, which pushed figures *up*. A parametrized function
+is one definition and several collected cases, which pushes them *down* if you
+count definitions — `@parametrize("code", [400, 401, 403, 404])` is four cases.
+
+`Cases` is the last column: what pytest collects, both effects applied.
+
+**`test_queue.py`'s 77 was believed verified and was not.** It is the figure
+this whole correction was anchored on, corrected once already in #51 from 103,
+and cited as the one row counted by collection rather than by grep. It is 91:
+77 is its function count, and three parametrize decorators expand it. A number
+that has already been corrected once reads as settled, and this one was carried
+forward by three sessions without being re-derived.
+
+**Four rows are unchanged from the grep figure**, which is why the old numbers
+looked plausible for so long: inner helpers appear only in files that declare
+workflows locally, and parametrize only in four files. A method that is right
+on half the corpus is the hardest kind to doubt.
 
 **An anchored `grep -cE '^(async )?def test_'` also gives the right answer on
 all eight, and should still not be used.** It excludes inner helpers only
@@ -174,13 +189,13 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_queues.py` | 4 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
 | `test_recovery.py` | 1 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
-| `test_retries.py` | 8 | `test_failures.py` |
+| `test_retries.py` | 15 | `test_failures.py` |
 | `test_scheduling.py` | 6 | `test_scheduler.py` — cron and delayed invocation |
 | `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **85** (3 skipped outright) | **79** credited upstream, **6** cleat-specific |
+| **Total** | **92** (3 skipped outright) | **86** credited upstream, **6** cleat-specific |
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 
