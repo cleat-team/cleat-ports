@@ -134,6 +134,54 @@ Python-SDK port would meet it here — but it cannot apply to this port, which
 has 34 Go workflow files, 0 Python ones, and no import of `cleat_sdk` anywhere
 in the repo. Retracted before it reached this table.)
 
+## What this suite structurally cannot catch
+
+Distinct from the section below, which lists cases nobody has ported. These are
+classes of defect that **no test added to this suite would find**, because the
+harness cannot express them. They are worth stating because a coverage figure
+invites the reading that what is not listed as a gap is covered.
+
+**One tenant.** The harness authenticates with a single API key for a single
+tenant (`scripts/worker.sh`'s `mint_key`, `CLEAT_PORTS_API_KEY`). Every
+cross-tenant isolation property is therefore invisible here, in either
+direction — a leak and an over-restriction look identical to a suite that only
+ever holds one tenant's data.
+
+This is not hypothetical. cleat#1017: the `idempotency_keys` outcome writes were
+tenant-scoped on PostgreSQL and on neither MySQL nor SQL Server, so completing a
+workflow overwrote every tenant's idempotency row naming that `workflow_id`. It
+survived because the engine's own regression test was hardcoded to one dialect,
+and this suite could not have caught it at any level of coverage. The bound is
+better than it sounds — `idempotency_keys` was the **only** table with a
+`tenant_id` and no row-level security behind it, so the class has one member —
+but the blind spot is permanent until the harness grows a second tenant.
+
+**One worker, and it is also the API server.** `cleat-worker` serves the HTTP
+API and runs workflows in one process, and the harness starts exactly one. So no
+test here can express a scenario needing two live workers:
+
+- a stale-but-living run writing its outcome after another worker took over
+  (upstream `test_workflow_outcome_is_owned_by_the_pending_row`; cleat answers it
+  with a generation fence, see `ISSUES.md` #21)
+- a concurrency key genuinely contended across processes rather than serialised
+  within one
+- a signal delivered to a workflow owned by a different worker
+
+Stopping the worker to simulate the outage also stops the API, so nothing can be
+observed *during* one — see `conftest.py`'s `worker.stop()` docstring, which had
+this wrong until 2026-09-08 and described a deployment shape this harness does
+not have.
+
+**Timing floors set by the engine, not by the tests.** Recovery depends on a
+heartbeat going stale and a reaper noticing, so recovery assertions cost 10-30s
+each and their timeouts are engine constants rather than arbitrary. A test that
+appears slow here is usually waiting on a real mechanism.
+
+**What follows from all three:** absence from this suite is not evidence of
+absence in cleat. The `Ported` column measures cases expressed against a
+single-tenant, single-worker harness, and says nothing about the properties that
+harness cannot state.
+
 ## What this port deliberately skips, and why
 
 - `test_fastapi.py`, `test_flask.py`, `test_sqlalchemy.py` — web/ORM integration.
