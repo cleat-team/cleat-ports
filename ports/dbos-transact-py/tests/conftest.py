@@ -192,6 +192,24 @@ class Cleat:
     def cancel(self, run_id: str, reason: str = "port test"):
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
 
+    def create_schedule(self, name: str, cron: str, def_name: str,
+                        entry_point: str, inp: dict, misfire: str = "",
+                        catch_up_limit: int = 0):
+        """POST /api/schedules.
+
+        misfire is passed through verbatim, including "" -- which the engine
+        reads as catch_up (engine/cron.go: "Empty is valid and means
+        MisfireCatchUp"). A test that wants the DEFAULT must be able to send
+        nothing rather than send the default's name, or it tests the name.
+        """
+        body = {"name": name, "cron": cron, "def_name": def_name,
+                "entry_point": entry_point, "input": inp}
+        if misfire:
+            body["misfire_policy"] = misfire
+        if catch_up_limit:
+            body["catch_up_limit"] = catch_up_limit
+        return self._req("POST", "/api/schedules", body)
+
     def schedules(self):
         """List cron schedules. Used by the scheduling tests."""
         return self._req("GET", "/api/schedules")
@@ -552,11 +570,28 @@ def worker():
             """Graceful shutdown, as opposed to crash().
 
             A test that wants to build a BACKLOG needs the worker gone without
-            claims left held: the API keeps accepting starts with no worker
-            running -- they land as `ready` rows -- and a graceful stop is what
-            makes the queue's contents entirely the test's doing. crash() would
-            leave whatever was in flight owned by a dead worker, which is the
-            right thing for a recovery test and the wrong thing here.
+            claims left held, so that the queue's contents are entirely the
+            test's doing. crash() would leave whatever was in flight owned by a
+            dead worker, which is the right thing for a recovery test and the
+            wrong thing here.
+
+            THE API GOES WITH IT. This docstring said until 2026-09-08 that
+            "the API keeps accepting starts with no worker running -- they land
+            as `ready` rows". That is false here: `cleat-worker` IS the API
+            server, so a stopped worker refuses every request with a connection
+            refusal. A test that creates work after calling this dies on
+            connect, and the error reads like a product defect rather than a
+            harness one.
+
+            Nothing had caught it because `test_recovery.py` was the only other
+            caller and it crashes and restarts with no request in between -- so
+            the behaviour this docstring described had never once been
+            exercised. It was written for a deployment shape where the API and
+            the worker are separate processes, which is not this harness.
+
+            `scripts/worker.sh stop` also stops the FIXTURE SERVICE, so nothing
+            can be observed during the outage either. Take any baseline before
+            the stop.
             """
             run("stop")
 

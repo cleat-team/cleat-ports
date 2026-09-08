@@ -207,6 +207,8 @@ MAPPING = {
     "test_defer.py": ("test_dbos.py", "cleanup that runs once though the body runs twice"),
     "test_query_state.py": ("test_dbos.py", "workflow status readable while running"),
     "test_scheduling.py": ("test_scheduler.py", "cron and delayed invocation"),
+    "test_misfire.py": ("test_scheduler.py", "firings missed during an outage \u2014 "
+                        "upstream calls it backfill, cleat calls it misfire_policy"),
     # SPANS TWO UPSTREAM FILES, and this mapping assigns it wholly to one.
     # Two of its cases exercise list_workflows, which is a workflow-management
     # operation -- test_workflow_management.py's own description names "list".
