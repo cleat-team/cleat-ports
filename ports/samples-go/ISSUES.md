@@ -505,7 +505,7 @@ context.
 
 **Class:** Bug (scope, not rules)
 **Upstream sample:** `goroutine/`, `mutex/`
-**Status:** Filed — cleat-team/cleat#949
+**Status:** Fixed — cleat-team/cleat#949, closed by #964 and #968 on 2026-09-08
 
 **What upstream asserts**
 
@@ -531,11 +531,17 @@ The two files differ by one line.
 
 **The case that matters is a helper.** `helperescape` has an entry point that
 calls the host — so it is checked, and it suspends and replays — calling a
-helper that does not. The helper carries six violations across three codes:
-goroutines, channel send, receive and `close()`, `sync.Mutex` and
-`sync.WaitGroup`. The build reports none of them, and the analyzer's own line
-reads `2 functions, 1 in cleat closure`: it counted the helper without checking
-it.
+helper that does not. The helper carries **six violations across four codes** —
+goroutines (E001), channel send and receive (E002), `close()` (E012, which is
+its own code rather than part of E002), and `sync.Mutex` / `sync.WaitGroup`
+(E013). The build reports none of them, and the analyzer's own line reads
+`2 functions, 1 in cleat closure`: it counted the helper without checking it.
+
+The E012 grouping is a correction. This entry and cleat#949's body both said
+"three codes", folding `close()` into E002. Noticed because a build against the
+fix reported an E012 nobody had predicted — a code appearing that you did not
+expect is the observation most easily rationalised away, and it was worth
+asking about.
 
 **Assessment**
 
@@ -552,6 +558,24 @@ calls, not local computation, so an unchecked helper is re-executed every time.
 `TestTheRuleIsRealWhenItApplies` is the control and everything else here is
 meaningless without it: if the analyzer simply did not implement these codes,
 every "it built" observation would be equally explained.
+
+**Fixed in two parts, and the first one is the lesson.** #964 seeded the
+analyzer's walk from durable functions — catching `helperescape` and leaving
+`syncmutex` building, because a workflow that makes no host call is neither
+durable nor the callee of anything durable. Measured on develop at that point:
+
+```
+syncmutex       BUILT     codes: none
+helperescape    REFUSED   E001 E002 E012 E013
+```
+
+So this port's pin would have gone **half** red. The natural response to a red
+pin is to rewrite it to match the new behaviour — and here that would have
+quietly encoded the remaining defect as expected. #968 added entry points to
+the seed and closed it; all five fixtures are now refused with the right codes.
+
+The signal is not "did the pin go red". It is **"did every case that should have
+moved, move"** — three fixtures with one moving is a question, not a result.
 
 ---
 
