@@ -70,3 +70,17 @@ pull request** rather than retargeting it, and pushing again to a branch that
 was already squash-merged and deleted produces a PR whose history conflicts with
 `develop`. If you need to rename, open a fresh branch off `develop` and
 cherry-pick.
+
+**And there is a silent variant of that, which is worse.** If the pull request
+was *closed* but the branch was **not** deleted, a push to it succeeds with no
+error, no conflict, and no signal of any kind. The commits are on `origin` and
+on no open pull request; nothing is on `develop` and nothing says so. One
+session lost a four-minute test with its falsification this way and only learned
+of it because someone else went looking.
+
+The remedy is the same -- fresh branch off `develop`, cherry-pick -- but the
+detection is not, because there is nothing to detect. **A branch stops being a
+workspace the moment its pull request is in someone else's hands.** If you are
+adding to work you have already handed over, open a new pull request rather than
+pushing to the old branch, and check that the old one is still open before
+assuming a successful push means anything.
