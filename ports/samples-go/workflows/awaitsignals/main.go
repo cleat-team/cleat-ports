@@ -54,9 +54,32 @@ func HandleAwaitSignals(h cleat.HostCalls, key string, names string, timeoutMs i
 	seen := map[string]bool{}
 	var order []string
 
-	deadline := time.Duration(timeoutMs) * time.Millisecond
+	// A TOTAL budget, not a per-call one, and the difference is not academic.
+	//
+	// The first version passed the same timeoutMs to every AwaitSignals in the
+	// loop, so each call suspended with a fresh deadline. Every delivery that
+	// did not advance `seen` -- a duplicate, or a name already recorded --
+	// restarted the clock. Three duplicates of one signal bought three extra
+	// timeout periods, and the run took 20s against an "8000ms" timeout.
+	//
+	// That is correct per-call behaviour from the engine: AwaitSignals promises
+	// a timeout for THAT call and delivers one. The test wanted to say "this
+	// workflow gives up after 8 seconds", which is a different claim, and
+	// writing it as a per-call value made the assertion unfalsifiable -- an
+	// external party sending duplicates could defer it indefinitely.
+	//
+	// Deadline arithmetic in durable time: h.Now() is the virtual clock, so
+	// this is deterministic on replay in a way that time.Now() would not be.
+	budget := time.Duration(timeoutMs) * time.Millisecond
+	giveUpAt := h.Now().Add(budget)
+
 	for len(seen) < len(wanted) {
-		res := h.AwaitSignals(wanted, deadline)
+		remaining := giveUpAt.Sub(h.Now())
+		if remaining <= 0 {
+			return fmt.Sprintf(`{"key":%q,"timedOut":true,"seen":%q}`,
+				key, strings.Join(order, ",")), nil
+		}
+		res := h.AwaitSignals(wanted, remaining)
 		if res.Err != nil {
 			return "", fmt.Errorf("await: %w", res.Err)
 		}
