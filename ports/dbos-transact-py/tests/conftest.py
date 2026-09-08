@@ -241,7 +241,15 @@ class Cleat:
         last: dict = {}
         while time.monotonic() < deadline:
             _, last = self.get(run_id)
-            if last.get("status") in ("done", "failed", "terminated", "cancelled"):
+            # dead_lettered is terminal and was missing here until 2026-09-08.
+            # A dead-lettered run never satisfied this loop, so any test that
+            # awaited one burned its full timeout and then failed with "did not
+            # reach a terminal status ... last status 'dead_lettered'" -- a
+            # message naming the terminal state it was waiting for. The
+            # dead-letter tests all passed because they poll for it themselves
+            # in _dead_letter() rather than calling this.
+            if last.get("status") in ("done", "failed", "terminated", "cancelled",
+                                      "dead_lettered"):
                 return last
             time.sleep(0.2)
         pytest.fail(f"run {run_id} did not reach a terminal status within "
@@ -344,6 +352,17 @@ def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
     can observe a detached run without a second fixture-calling workflow.
     """
     return _build_and_deploy("detached", "detached")
+
+
+@pytest.fixture(scope="session")
+def dead_letter_opaque_workflow(cleat: Cleat) -> str:
+    """A workflow that exhausts its retries and returns its OWN error text.
+
+    The counterpart to dead_letter_workflow, which wraps with %w. The pair
+    isolates one variable: whether the engine's error text survives into the
+    workflow's final message.
+    """
+    return _build_and_deploy("deadletteropaque", "dead_letter_opaque")
 
 
 @pytest.fixture(scope="session")

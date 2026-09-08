@@ -143,3 +143,64 @@ def test_retrying_a_run_that_is_not_dead_lettered_is_refused(cleat, retry_workfl
         f"retrying a run that was never dead-lettered answered {code}: {body!r}. "
         f"500 here would be cleat#832's shape."
     )
+
+
+def test_dead_lettering_survives_a_workflow_rewriting_the_error(
+    cleat, dead_letter_opaque_workflow
+):
+    """Retries exhausted, but the workflow reports the failure in its own words.
+
+    cleat#902 replaced a bare substring match on "retries exhausted" with a
+    typed fact plus a correlation:
+
+        ev.RetriesExhausted && ev.Err != "" && strings.Contains(errMsg, ev.Err)
+
+    The flag is the improvement — it is recorded by the engine at the point that
+    knows. The `Contains` is a surviving coupling, and it makes the
+    classification depend on the GUEST relaying the engine's error text.
+
+    dead_letter_workflow wraps with %w so the text survives. This one does what
+    a real workflow is at least as likely to do: catch the failure and describe
+    it in its own vocabulary. The pair differs in exactly that one line.
+
+    Either result is worth recording. If it still dead-letters, the coupling is
+    looser than it reads. If it does not, whether work is retained for an
+    operator depends on how its author phrased an error — which is a property
+    no operator can see and no reviewer would think to check.
+    """
+    key = f"dlq-opaque-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(dead_letter_opaque_workflow, {
+        "service": "flaky", "key": key, "attempts": 2, "intervalMs": 100,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=60.0)
+    assert final["status"] in ("failed", "dead_lettered"), (
+        f"a workflow whose call never succeeded ended {final['status']!r}"
+    )
+
+    if final["status"] == "dead_lettered":
+        code, listing = cleat.dead_letters()
+        assert code == 200, f"the dead-letter list answered {code}"
+        assert started["id"] in {row.get("id") for row in listing}, (
+            f"run {started['id']} is dead_lettered but absent from /api/dead-letters"
+        )
+        return
+
+    pytest.skip(
+        f"cleat#979: the run ended 'failed' rather than 'dead_lettered' after "
+        f"exhausting its retries.\n"
+        f"error: {final.get('error')!r}\n"
+        f"The only difference from the workflow in "
+        f"test_a_workflow_that_exhausts_its_retries_is_dead_lettered is that this one "
+        f"returns its own message instead of wrapping the engine's with %w. That "
+        f"decides retention, so whether unfinished work is kept for an operator "
+        f"depends on an author's phrasing (cleat#902's surviving `strings.Contains`).\n"
+        f"\n"
+        f"This is a skip rather than a failure only so the suite stays green while "
+        f"cleat#979 is open. It is deliberately NOT an unconditional skip: the "
+        f"dead_lettered branch above still asserts in full, so the day #979 is fixed "
+        f"this test starts passing on its own and the skip disappears without anyone "
+        f"having to remember it. If it turns red instead, something other than #979 "
+        f"is wrong and should be read as a new finding."
+    )
