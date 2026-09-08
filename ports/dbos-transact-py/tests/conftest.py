@@ -570,11 +570,28 @@ def worker():
             """Graceful shutdown, as opposed to crash().
 
             A test that wants to build a BACKLOG needs the worker gone without
-            claims left held: the API keeps accepting starts with no worker
-            running -- they land as `ready` rows -- and a graceful stop is what
-            makes the queue's contents entirely the test's doing. crash() would
-            leave whatever was in flight owned by a dead worker, which is the
-            right thing for a recovery test and the wrong thing here.
+            claims left held, so that the queue's contents are entirely the
+            test's doing. crash() would leave whatever was in flight owned by a
+            dead worker, which is the right thing for a recovery test and the
+            wrong thing here.
+
+            THE API GOES WITH IT. This docstring said until 2026-09-08 that
+            "the API keeps accepting starts with no worker running -- they land
+            as `ready` rows". That is false here: `cleat-worker` IS the API
+            server, so a stopped worker refuses every request with a connection
+            refusal. A test that creates work after calling this dies on
+            connect, and the error reads like a product defect rather than a
+            harness one.
+
+            Nothing had caught it because `test_recovery.py` was the only other
+            caller and it crashes and restarts with no request in between -- so
+            the behaviour this docstring described had never once been
+            exercised. It was written for a deployment shape where the API and
+            the worker are separate processes, which is not this harness.
+
+            `scripts/worker.sh stop` also stops the FIXTURE SERVICE, so nothing
+            can be observed during the outage either. Take any baseline before
+            the stop.
             """
             run("stop")
 
