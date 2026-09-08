@@ -207,3 +207,104 @@ def test_the_retry_budget_is_finite(cleat, retry_workflow, fixture_calls):
         f"the service was reached {reached} times for a budget of {attempts}"
     )
 
+
+
+# The two tests below pin the retry budget from both sides of its boundary.
+#
+# test_the_retry_budget_is_finite above uses failTimes=99 -- far more failures
+# than the budget -- which proves the budget is finite but says nothing about
+# where it ends. A policy that granted 2 attempts and one that granted 4 both
+# pass it. That is the same weakness as asserting a threshold without checking
+# the statistic can separate the hypotheses: the test excludes "infinite" and
+# admits every finite value.
+#
+# Run as a pair they locate the edge exactly. With MaxAttempts = N:
+#
+#   failTimes = N-1   the last permitted attempt succeeds   -> succeeded, N calls
+#   failTimes = N     the last permitted attempt fails      -> failed,    N calls
+#
+# An off-by-one in either direction breaks exactly one of them, which is what
+# makes the pair worth more than either alone. A budget of N-1 fails the first
+# (the call never gets its winning attempt); a budget of N+1 fails the second
+# (the service is reached N+1 times and the workflow reports success).
+#
+# Both assert the call count as well as the outcome, because the two can
+# disagree: a workflow can report failure having spent fewer attempts than its
+# budget, and the outcome alone would not show it.
+
+BUDGET = 3
+
+
+def test_a_call_that_succeeds_on_its_last_permitted_attempt_succeeds(
+    cleat, retry_workflow, fixture_calls
+):
+    """failTimes = BUDGET-1, so the final attempt is the one that works.
+
+    The boundary case a budget is most likely to get wrong: spending the last
+    attempt is legitimate, and a policy that stops one short would fail a call
+    that was about to succeed. That failure mode is invisible against
+    failTimes=99, where the call was never going to succeed anyway.
+    """
+    import uuid
+
+    key = str(uuid.uuid4())
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key, "attempts": BUDGET,
+        "intervalMs": 200, "failTimes": BUDGET - 1,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=120.0)
+    assert final["status"] == "done", f"run did not complete: {final!r}"
+
+    body = _body(final)
+    assert body["outcome"] == "succeeded", (
+        f"a call that fails {BUDGET - 1} times within a budget of {BUDGET} "
+        f"reported {body['outcome']!r}. The winning attempt is the last one the "
+        f"policy permits, so a budget that stops one short looks exactly like "
+        f"this. error: {body.get('error')!r}"
+    )
+
+    reached = fixture_calls(key)
+    assert reached == BUDGET, (
+        f"the service was reached {reached} times; expected exactly {BUDGET} "
+        f"({BUDGET - 1} failures then the success). Fewer means the call "
+        f"succeeded earlier than the fixture was told to allow; more means the "
+        f"successful attempt was retried."
+    )
+
+
+def test_a_call_that_fails_on_its_last_permitted_attempt_fails(
+    cleat, retry_workflow, fixture_calls
+):
+    """failTimes = BUDGET, one more failure than the budget can absorb.
+
+    The other side of the same edge. Together with the test above this pins
+    MaxAttempts to exactly BUDGET: that one shows attempt BUDGET is spent, this
+    one shows attempt BUDGET+1 is not.
+    """
+    import uuid
+
+    key = str(uuid.uuid4())
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key, "attempts": BUDGET,
+        "intervalMs": 200, "failTimes": BUDGET,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=120.0)
+    assert final["status"] == "done", f"run did not complete: {final!r}"
+
+    body = _body(final)
+    assert body["outcome"] == "failed", (
+        f"a call that fails {BUDGET} times within a budget of {BUDGET} reported "
+        f"{body['outcome']!r} -- the budget granted at least one attempt more "
+        f"than it should have"
+    )
+
+    reached = fixture_calls(key)
+    assert reached == BUDGET, (
+        f"the service was reached {reached} times for a budget of {BUDGET}. "
+        f"More than {BUDGET} means the policy over-spent; fewer means it gave "
+        f"up before exhausting the budget."
+    )
