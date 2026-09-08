@@ -31,8 +31,27 @@ import pytest
 
 
 CONCURRENCY = 10          # the shared worker's -concurrency
-ENQUEUED = 24             # comfortably more than two batches
-HOLD_MS = 9000            # long enough that batch 1 is still held while batch 2 waits
+HOLD_MS = 9000            # long enough that a batch is still held while the next waits
+
+# SIXTY, AND THE NUMBER IS THE RESULT OF A SIMULATION RATHER THAN A GUESS.
+#
+# Three earlier versions of the assertion below failed at ENQUEUED = 24 and
+# were each "fixed" by adjusting a threshold. That was the wrong move: at 24
+# the statistic cannot separate the hypotheses at all. Simulating a
+# contaminated enqueue prefix followed by batched claims, 1500 trials each:
+#
+#   n=24   ordered 5th pct  -3.0    unordered 95th pct  +3.4   OVERLAPS
+#   n=40   ordered 5th pct  +8.4    unordered 95th pct  +4.9   separates
+#   n=60   ordered 5th pct +19.5    unordered 95th pct  +6.0   separates
+#
+# The real runs measured +3.0 and +7.3 -- both inside the range unordered
+# dispatch produces one time in twenty. A threshold tuned to admit them would
+# have been fitting noise, and the test would have "passed" on evidence that
+# proves nothing.
+ENQUEUED = 60
+
+# Between unordered's 95th percentile (+6.0) and ordered's 5th (+19.5).
+MIN_MARGIN = 12
 
 
 def _priorities(fixture_log, key):
@@ -88,30 +107,37 @@ def test_priority_orders_the_second_batch(cleat, priority_mark_workflow, fixture
     # an assertion about where an arbitrary cut fell. Comparing means of the
     # post-enqueue remainder has no cut to get wrong and uses every
     # observation.
-    deadline = time.monotonic() + 180
+    deadline = time.monotonic() + 300
     while time.monotonic() < deadline and len(_priorities(fixture_log, key)) < ENQUEUED:
         time.sleep(0.2)
     seen = _priorities(fixture_log, key)
     assert len(seen) == ENQUEUED, (
-        f"only {len(seen)} of {ENQUEUED} workflows started within 180s: {seen}"
+        f"only {len(seen)} of {ENQUEUED} workflows started within 300s: {seen}"
     )
 
     ordered = seen[CONCURRENCY:]          # after the enqueue window
+
+    # The enqueue window is dropped because those claims are made from a queue
+    # that does not yet hold the better priorities -- they cannot be ordered
+    # against work that does not exist. Its length varies with how fast starts
+    # are issued, which is why CONCURRENCY is an approximation and why the
+    # margin has to tolerate it rather than assume a clean cut.
     half = len(ordered) // 2
     first_mean = sum(ordered[:half]) / half
     second_mean = sum(ordered[half:]) / len(ordered[half:])
+    margin = second_mean - first_mean
 
-    assert first_mean + 4 <= second_mean, (
-        f"among the {len(ordered)} workflows claimed after the enqueue window, the "
-        f"first {half} averaged priority {first_mean:.1f} and the rest averaged "
-        f"{second_mean:.1f}; expected the earlier ones to be at least 4 better.\n"
+    assert margin >= MIN_MARGIN, (
+        f"among the {len(ordered)} workflows claimed after the enqueue window, the first "
+        f"{half} averaged priority {first_mean:.1f} and the rest {second_mean:.1f} -- a "
+        f"margin of {margin:.1f}, want at least {MIN_MARGIN}.\n"
         f"arrival order: {seen}\n"
         f"post-enqueue:  {ordered}\n"
-        f"Priorities were assigned in REVERSE enqueue order, so created_at alone "
-        f"would reverse this sign, and ignoring priority would make the means "
-        f"roughly equal.\n"
-        f"The claim query orders by `priority ASC, created_at` on all three "
-        f"dialects; if that is not observable, the field is recorded and unused."
+        f"Priorities were assigned in REVERSE enqueue order, so created_at alone would "
+        f"reverse this sign. Unordered dispatch at this size produces a margin above "
+        f"{MIN_MARGIN} less than one time in twenty.\n"
+        f"The claim query orders by `priority ASC, created_at` on all three dialects; if "
+        f"that is not observable, the field is recorded and unused."
     )
 
 
