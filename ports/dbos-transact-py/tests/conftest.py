@@ -337,6 +337,17 @@ def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
 
 
 @pytest.fixture(scope="session")
+def dead_letter_opaque_workflow(cleat: Cleat) -> str:
+    """A workflow that exhausts its retries and returns its OWN error text.
+
+    The counterpart to dead_letter_workflow, which wraps with %w. The pair
+    isolates one variable: whether the engine's error text survives into the
+    workflow's final message.
+    """
+    return _build_and_deploy("deadletteropaque", "dead_letter_opaque")
+
+
+@pytest.fixture(scope="session")
 def priority_mark_workflow(cleat: Cleat) -> str:
     """Deploy the workflow that records its own claim order."""
     return _build_and_deploy("prioritymark", "priority_mark")
