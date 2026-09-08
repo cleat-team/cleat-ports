@@ -161,7 +161,7 @@ UPSTREAM = [
     # (file, collected cases, priority text, was-grep-value)
     ("test_queue.py", 91, "**1** \u2014 concurrency limits, rate limits, dedup, priority", 103),
     ("test_failures.py", 37, "**1** \u2014 retries, error classification, recovery", 43),
-    ("test_workflow_management.py", 46, "**1** \u2014 cancel, resume, fork, list, restart", 44),
+    ("test_workflow_management.py", 46, "**1** \u2014 cancel, resume, fork, list, delete", 44),
     ("test_concurrency.py", 11, "**1** \u2014 concurrent execution and isolation", 21),
     ("test_dbos.py", 61, "2 \u2014 broad core surface, mixed with SDK ergonomics", 138),
     ("test_async.py", 33, "3 \u2014 mostly the async mirror of assertions this port "
