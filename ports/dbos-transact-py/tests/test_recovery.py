@@ -102,3 +102,87 @@ def test_a_workflow_survives_the_loss_of_its_worker(
         f"the recovered run returned {body!r}; the result of the pre-crash call "
         "must survive the crash too, not just the fact that it happened"
     )
+
+
+def test_an_idempotency_key_survives_the_loss_of_its_worker(
+    cleat, recovery_workflow, fixture_calls, worker
+):
+    """Deduplication and recovery are tested separately; this is the interaction.
+
+    test_the_same_idempotency_key_starts_one_run proves a repeat start is
+    deduplicated. test_a_workflow_survives_the_loss_of_its_worker proves an
+    interrupted run resumes without repeating completed work. Neither says what
+    happens when a caller retries a submission whose worker died mid-run --
+    which is not a contrived case but the ordinary one, because a client that
+    sees no response is exactly a client that will retry.
+
+    The failure that costs money is specific: if the key does not survive, the
+    retry starts a SECOND run, and the durable call in front of the crash
+    executes twice. That is the same charge-taken-twice failure the recovery
+    test exists for, reached by a different route -- and neither existing test
+    can see it, because one never crashes and the other never retries.
+
+    Asserted on the call counts rather than on the ids, for the reason given in
+    the dedup test: returning the original id while executing the body twice is
+    the failure that matters, and the id alone cannot see it.
+    """
+    key = f"dedup-recover-{uuid.uuid4().hex[:8]}"
+    idem = f"idem-recover-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(
+        recovery_workflow, {"key": key, "sleepMs": SLEEP_MS}, idempotency_key=idem
+    )
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    # The crash must land AFTER the first durable call, or there is nothing in
+    # front of the interruption and the central assertion holds vacuously --
+    # the same precondition the plain recovery test makes explicit.
+    _wait_until(
+        lambda: fixture_calls(f"{key}-before") == 1,
+        timeout=60.0,
+        what="the pre-crash durable call to reach the fixture",
+    )
+    assert fixture_calls(f"{key}-after") == 0, (
+        "the post-crash call happened before the crash; the sleep is too short "
+        "to hold the workflow open and this test would prove nothing"
+    )
+
+    worker.crash()
+    worker.restart()
+
+    # Retry the submission while the original is still owned by a dead worker.
+    # This is the window that matters: the run exists, is not finished, and its
+    # owner is gone. A key that is cleaned up with the claim rather than with
+    # the run would be absent exactly here.
+    status_retry, retried = cleat.start(
+        recovery_workflow, {"key": key, "sleepMs": SLEEP_MS}, idempotency_key=idem
+    )
+
+    assert retried.get("workflow_id") == run_id, (
+        f"the retry created a different run: original={run_id!r} retry={retried!r}.\n"
+        f"The idempotency key did not survive the loss of the worker, so a client "
+        f"that retried after a timeout has started the job a second time. The "
+        f"durable call in front of the crash will now run twice."
+    )
+    assert status_retry == 200, (
+        f"the retry answered {status_retry}, not 200. 201 would mean 'created', "
+        f"which is the failure above: {retried!r}"
+    )
+
+    final = cleat.await_terminal(run_id, timeout=RECOVERY_TIMEOUT)
+    assert final["status"] == "done", (
+        f"the run did not complete after its worker was killed and the "
+        f"submission was retried: {final!r}"
+    )
+
+    assert fixture_calls(f"{key}-before") == 1, (
+        f"the pre-crash call ran {fixture_calls(f'{key}-before')} times. Once is "
+        f"the durable-execution guarantee; more than once means the retry "
+        f"re-executed work that was already complete."
+    )
+    assert fixture_calls(f"{key}-after") == 1, (
+        f"the post-crash call ran {fixture_calls(f'{key}-after')} times, not once. "
+        f"More than one means two runs reached the end of the workflow, so the "
+        f"deduplication reported above was not real."
+    )
