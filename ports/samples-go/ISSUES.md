@@ -555,6 +555,55 @@ every "it built" observation would be equally explained.
 
 ---
 
+## 11. A workflow times out on a signal that is already in its queue
+
+**Class:** Bug
+**Upstream sample:** `signal-counter/`
+**Status:** Filed — cleat-team/cleat#953
+
+**What upstream asserts**
+
+Send N signals, the count is N. The sample accumulates a running total from
+repeated deliveries of one name and completes on a terminal signal, so its
+guarantee is arithmetic.
+
+**What cleat does**
+
+Under rapid delivery it under-counts, and the missing signals are still in the
+table:
+
+```
+six deliveries, all 200:  tick x5 then done
+final: status=done  {"count":3,"seen":"tick,tick,tick","timedOut":true}
+       pending_signals=3
+```
+
+The `done` it was waiting for sat in `workflow_signals` for the whole remaining
+budget. The rows are still there after the run ends.
+
+**Nothing is lost.** Counted at one instant mid-run: `count=2` consumed,
+`tick x3, done x1` remaining, `status=ready` — every one of the five ticks
+accounted for. The first reading was "two were dropped", and the discriminator
+was one query rather than an argument.
+
+**Assessment**
+
+The variable is whether a signal arrives while the workflow is **suspended** or
+while it is **awake handling a previous one**.
+`TestTheCountIsVisibleWhileTheWorkflowRuns` sends one at a time and waits for
+the count to advance between each; it is green. The exposed window is exactly
+the time the workflow spends processing.
+
+`AwaitSignals(names, timeout)` returning `timedOut` is supposed to mean "none
+of these arrived in time". Here it means "none arrived while I happened to be
+suspended" — not a property any caller can reason about, since it depends on
+the workflow's own processing time against the sender's spacing.
+
+Distinct from #933 symptom A. That is an over-count from one delivery
+satisfying two awaits; this is an under-count with the deliveries still queued.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>
