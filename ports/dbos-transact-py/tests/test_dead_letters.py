@@ -30,7 +30,21 @@ import pytest
 
 
 def _dead_letter(cleat, workflow, key):
-    """Start a run that cannot succeed and wait for it to be dead-lettered."""
+    """Start a run that cannot succeed and wait for it to be dead-lettered.
+
+    DELIBERATELY LOCAL, now that it could call cleat.await_terminal. The
+    difference is the diagnostic below: await_terminal returns any settled
+    status, and this needs to fail loudly and specifically when the run
+    settles as done/failed, because that is the interesting way for
+    dead-lettering to break.
+
+    It was NOT deliberate before. await_terminal's set omitted
+    "dead_lettered", so this helper could not have used it -- polling here was
+    a workaround, and being a workaround is what made it invisible that the
+    shared helper was broken for every caller. Recorded because a private
+    reimplementation beside a shared helper is a report about that helper, and
+    the legitimate and the compensating kind look identical until read.
+    """
     status, started = cleat.start(workflow, {
         "service": "flaky", "key": key, "attempts": 2, "intervalMs": 100,
     })
@@ -44,8 +58,11 @@ def _dead_letter(cleat, workflow, key):
         if state.get("status") in ("done", "failed", "terminated"):
             pytest.fail(
                 f"the run reached {state['status']!r} rather than dead_lettered. "
-                f"Dead-lettering turns on the error message containing 'retries "
-                f"exhausted' (cleat#902), so a change to that wording lands here."
+                f"Dead-lettering turns on EventRecord.RetriesExhausted, a fact the "
+                f"engine records, AND on that call being the last durable event of "
+                f"the run (cleat#902, amended by cleat#979). It no longer depends on "
+                f"the error message wording, so a rewording cannot land here -- but a "
+                f"change to either half of that discriminator will."
             )
         time.sleep(0.3)
     pytest.fail(f"run {started['id']} never reached a terminal state")

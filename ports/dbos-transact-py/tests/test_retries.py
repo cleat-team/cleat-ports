@@ -99,20 +99,32 @@ def test_a_permanently_failing_call_is_not_retried(cleat, retry_workflow):
     )
 
 
-def test_a_permanent_failure_is_reached_exactly_once(cleat, retry_workflow, fixture_calls):
-    """The direct evidence for the timing assertion above.
+def test_a_failure_that_never_stops_is_retried_to_the_budget(cleat, retry_workflow, fixture_calls):
+    """A 503 on every attempt is retried exactly MaxAttempts times.
 
-    Elapsed time shows no waiting happened; the call counter shows no repeat
-    happened. A 4xx must be attempted once regardless of the budget, and this
-    distinguishes "classified permanent" from "retried instantly", which the
-    clock alone cannot.
+    RENAMED. This was `test_a_permanent_failure_is_reached_exactly_once`, and
+    its docstring read "A 4xx must be attempted once regardless of the budget".
+    It measured neither. The key is a valid uuid, so the fixture never takes its
+    `key is required` 400 branch (scripts/fixture-service.py); with
+    fail_times=999 every attempt is a 503, which cleat classifies TRANSIENT. The
+    assertion below -- reached == ATTEMPTS -- is correct and always was. The
+    name and docstring described the opposite case.
+
+    Two comments inside the old body contradicted each other, one saying "it
+    records one" and the other "retried to the budget", which is how the
+    mismatch surfaced. Both were written by reasoning about the fixture rather
+    than reading it; the assertion followed one and the name followed the other.
+
+    Why the rename mattered enough to do first: permanent classification had NO
+    call-count evidence anywhere, only the wall-clock test above -- the one
+    whose margin already failed once at 2309ms against a ~2250ms floor. A test
+    named as though the direct evidence existed is exactly what stopped anyone
+    noticing it did not. test_a_permanent_status_is_attempted_once now supplies
+    it.
     """
     import uuid
 
     key = str(uuid.uuid4())
-    # fail_times is irrelevant: the fixture 400s on the malformed shape before
-    # it consults the counter, so this key should record no calls at all... it
-    # records one, because the request does reach the service and is rejected.
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": ATTEMPTS,
         "intervalMs": 200, "failTimes": 999,
@@ -121,8 +133,6 @@ def test_a_permanent_failure_is_reached_exactly_once(cleat, retry_workflow, fixt
     final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
 
-    # 999 failures against a budget of 5: transient, so it is retried to the
-    # budget and no further.
     reached = fixture_calls(key)
     assert reached == ATTEMPTS, (
         f"the service was reached {reached} times for a budget of {ATTEMPTS}"
@@ -308,3 +318,107 @@ def test_a_call_that_fails_on_its_last_permitted_attempt_fails(
         f"More than {BUDGET} means the policy over-spent; fewer means it gave "
         f"up before exhausting the budget."
     )
+
+
+# ---------------------------------------------------------------------------
+# cleat's HTTP classification boundary
+#
+# THESE PIN CLEAT'S MAPPING, NOT AN UPSTREAM ASSERTION, and the distinction is
+# worth stating rather than blurring. DBOS separates retryable step failures
+# from non-retryable ones by EXCEPTION TYPE and says nothing about HTTP status
+# codes. The status mapping is cleat's own, in benchSvcStatusError
+# (cmd/cleat-worker/setup.go):
+#
+#     status >= 400 && status < 500 && status != 408 && status != 429
+#         -> PERMANENT, not retried
+#     everything else -> TRANSIENT, retried per policy
+#
+# It is pinned here because it is the vehicle the entire retryable half of this
+# port rides on: every test above reaches the transient path only because a 503
+# maps to it. If that mapping moves, those tests stop measuring what they claim
+# and would still pass -- a 500 reclassified as permanent makes
+# "retried to the budget" fail loudly, but 408 or 429 reclassified fails
+# nothing at all, because nothing exercised them.
+#
+# 408 and 429 are carved OUT of the 4xx rule, so they are the two the condition
+# is most likely to lose. Dropping either `!=` clause is invisible today.
+#
+# The discriminator is the call count, never the clock. See
+# test_a_permanently_failing_call_is_not_retried for what happens otherwise: a
+# margin that was 8x on paper was 0x in practice once fixed overhead became
+# comparable to the retry interval.
+
+PERMANENT_STATUSES = [400, 401, 403, 404]
+TRANSIENT_STATUSES = [408, 429, 500, 502, 503]
+
+
+def _drive_status(cleat, retry_workflow, status_code):
+    """Fail every attempt with status_code; return the final body and the count."""
+    import uuid
+
+    key = str(uuid.uuid4())
+    ok, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key, "attempts": ATTEMPTS,
+        "intervalMs": 200, "failTimes": 999, "failStatus": status_code,
+    })
+    assert ok == 201, f"start rejected for status {status_code}: {ok} {started}"
+    final = cleat.await_terminal(started["id"], timeout=90.0)
+    assert final["status"] == "done", f"run did not complete: {final!r}"
+    return final, key
+
+
+@pytest.mark.parametrize("status_code", PERMANENT_STATUSES)
+def test_a_permanent_status_is_attempted_once(
+    cleat, retry_workflow, fixture_calls, status_code
+):
+    """A 4xx outside {408, 429} must be attempted once and not retried.
+
+    This is the call-count evidence for permanent classification, which did not
+    exist before: the only coverage was a wall-clock assertion, and the test
+    that appeared to supply the direct measurement was in fact measuring the
+    transient path under a misleading name.
+
+    Exactly 1 is the claim, not "fewer than the budget". A run that retried once
+    and gave up would satisfy the looser form while still meaning the status was
+    classified retryable.
+    """
+    final, key = _drive_status(cleat, retry_workflow, status_code)
+
+    reached = fixture_calls(key)
+    assert reached == 1, (
+        f"HTTP {status_code} reached the service {reached} times with a budget of "
+        f"{ATTEMPTS}, so cleat classified it TRANSIENT. Every 4xx except 408 and "
+        f"429 is PERMANENT and must be attempted once -- see benchSvcStatusError "
+        f"in cmd/cleat-worker/setup.go."
+    )
+    assert _body(final)["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("status_code", TRANSIENT_STATUSES)
+def test_a_transient_status_is_retried_to_the_budget(
+    cleat, retry_workflow, fixture_calls, status_code
+):
+    """408, 429 and every 5xx must be retried exactly MaxAttempts times.
+
+    408 and 429 are the cases with no coverage at all before this. They are
+    exceptions carved out of the 4xx rule, so losing either `!=` clause in
+    benchSvcStatusError reclassifies a retryable failure as permanent -- and
+    nothing failed when that happened, because nothing drove those two codes.
+
+    The 5xx rows are not redundant with the tests above even though they take
+    the same path: they are the control. If the whole mapping broke, the 4xx
+    rows alone could not tell "408 was reclassified" from "the fixture never
+    reached cleat" -- both give a count of 1. The 5xx rows failing at the same
+    time says it is the harness; the 5xx rows passing while 408 fails says it is
+    the boundary.
+    """
+    final, key = _drive_status(cleat, retry_workflow, status_code)
+
+    reached = fixture_calls(key)
+    assert reached == ATTEMPTS, (
+        f"HTTP {status_code} reached the service {reached} times, want {ATTEMPTS}. "
+        f"408, 429 and every 5xx are TRANSIENT and must be retried to the budget. "
+        f"A count of 1 means cleat classified this PERMANENT -- for 408 or 429 "
+        f"that is the carve-out in benchSvcStatusError having been lost."
+    )
+    assert _body(final)["outcome"] == "failed"

@@ -155,6 +155,33 @@ func startedRunID(t *testing.T, r response) string {
 // The four terminal statuses are listed rather than "not running": a status
 // this port has not seen before should hang and report the status it is stuck
 // on, not be silently treated as finished.
+// terminalStatuses are the statuses a run can settle in, taken from the engine
+// rather than assumed: cmd/cleat-worker/server.go's isTerminalStatus.
+//
+// "dead_lettered" was missing from both readers below, so a dead-lettered run
+// -- settled, and the entire subject of the dead-letter tests -- satisfied
+// neither. "cancelled" was present in both and is NOT a workflow status: the
+// engine never writes it, the cancel endpoint returns
+// {"status":"cancellation_requested"} as an API field, and engine/errors.go's
+// "cancelled" is an ErrorCode. The Python port says so in its own
+// test_cancellation.py docstring, "There is no cancelled terminal status".
+//
+// Those are one defect. Four names read as an enumeration of "the ways a run
+// ends", so nobody checked it against the engine -- and one of the four was
+// fictional while a real one was absent.
+//
+// "terminating" is excluded, and the two readers below want that for OPPOSITE
+// reasons, which is why this is a shared list and not a shared predicate:
+// awaitTerminal must not return it because the defer phase is still running
+// and the final status is not yet written, while isRunning must report it as
+// running for exactly the same fact.
+var terminalStatuses = map[string]bool{
+	"done":          true,
+	"failed":        true,
+	"terminated":    true,
+	"dead_lettered": true,
+}
+
 func awaitTerminal(t *testing.T, runID string, timeout time.Duration) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -162,8 +189,7 @@ func awaitTerminal(t *testing.T, runID string, timeout time.Duration) map[string
 	for time.Now().Before(deadline) {
 		r := call(t, http.MethodGet, "/api/workflows/"+runID, nil, nil)
 		last = r.Body
-		switch last["status"] {
-		case "done", "failed", "terminated", "cancelled":
+		if st, _ := last["status"].(string); terminalStatuses[st] {
 			return last
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -269,11 +295,8 @@ func waitForCall(t *testing.T, key, op string, timeout time.Duration) {
 func isRunning(t *testing.T, runID string) bool {
 	t.Helper()
 	r := call(t, http.MethodGet, "/api/workflows/"+runID, nil, nil)
-	switch r.Body["status"] {
-	case "done", "failed", "terminated", "cancelled":
-		return false
-	}
-	return true
+	st, _ := r.Body["status"].(string)
+	return !terminalStatuses[st]
 }
 
 // signal delivers a signal over HTTP.
