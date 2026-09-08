@@ -25,6 +25,8 @@ import uuid
 
 import pytest
 
+from conftest import wait_until
+
 # Short: the assertion is that the timeout fires at all, and a long one only
 # makes the suite slower without making the claim stronger.
 TIMEOUT_MS = 5000
@@ -53,15 +55,6 @@ def test_a_signal_await_times_out_when_nothing_arrives(cleat, signal_timeout_wor
     )
 
 
-def _wait_until(predicate, timeout, what):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.5)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
-
-
 def test_a_workflow_can_signal_another_and_the_payload_arrives(
     cleat, signal_pair, fixture_calls
 ):
@@ -84,7 +77,7 @@ def test_a_workflow_can_signal_another_and_the_payload_arrives(
     # that has not reached its await is a different question -- whether an
     # early signal is held -- and mixing them would leave a failure unable to
     # say which case broke.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(f"{key}-waiting") == 1,
         timeout=60.0,
         what="the receiver to reach its await",

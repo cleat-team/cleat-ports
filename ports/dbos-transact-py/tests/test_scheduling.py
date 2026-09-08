@@ -21,6 +21,8 @@ import uuid
 
 import pytest
 
+from conftest import wait_until
+
 # Cron granularity is one minute, so a `* * * * *` schedule fires within a
 # minute of being created plus the scheduler's own lag (measured at ~8s after
 # the minute boundary). 100s covers both with room, and this is the slowest
@@ -30,15 +32,6 @@ import pytest
 # exists and has a next_run_at" is exactly the assertion that would have passed
 # against a scheduler that never fired.
 CRON_FIRE_TIMEOUT = 100.0
-
-
-def _wait_until(predicate, timeout: float, what: str):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.5)
-    pytest.fail(f"timed out after {timeout}s waiting for {what}")
 
 
 @pytest.fixture
@@ -108,7 +101,7 @@ def test_a_cron_schedule_actually_starts_its_workflow(cleat, cron_workflows, fix
     body = json.loads(final["result"]) if isinstance(final["result"], str) else final["result"]
     cleanup_schedules.append(body["scheduleID"])
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=CRON_FIRE_TIMEOUT,
         what="the cron schedule to start its workflow and that workflow to reach the fixture",
@@ -156,7 +149,7 @@ def test_a_delayed_invocation_reaches_the_service(cleat, schedule_invoke_workflo
     final = cleat.await_terminal(started["id"], timeout=60.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=30.0,
         what="the delayed invocation to reach the fixture service",
@@ -200,7 +193,7 @@ def test_disabling_a_schedule_stops_it_firing(
     key = f"cron-dis-{uuid.uuid4().hex[:8]}"
     schedule_id = _register_cron(cleat, cron_workflows, cleanup_schedules, key)
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=CRON_FIRE_TIMEOUT,
         what="the schedule to fire at least once before it is disabled",
@@ -240,7 +233,7 @@ def test_re_enabling_a_schedule_resumes_it(
     key = f"cron-re-{uuid.uuid4().hex[:8]}"
     schedule_id = _register_cron(cleat, cron_workflows, cleanup_schedules, key)
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) >= 1,
         timeout=CRON_FIRE_TIMEOUT,
         what="the schedule to fire once before being disabled",
@@ -275,7 +268,7 @@ def test_re_enabling_a_schedule_resumes_it(
         f"after a successful re-enable, so the flag and the endpoint disagree"
     )
 
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(key) > disabled_at,
         timeout=CRON_FIRE_TIMEOUT,
         what="the re-enabled schedule to fire again",
