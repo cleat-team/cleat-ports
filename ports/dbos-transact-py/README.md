@@ -34,11 +34,11 @@ application or a web framework.
 | `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 14 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
-| `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
+| `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 32 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **351** | | **81** |
+| **Total in scope** | **351** | | **79** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -156,7 +156,7 @@ assertion, mapped to the upstream file the assertion came from:
 
 | This suite | Cases | Mapped to |
 |---|---:|---|
-| `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives |
+| `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives; two of its cases are arguably workflow-management |
 | `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_concurrency.py` | 4 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
@@ -168,7 +168,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
 | `test_priority_order.py` | 2 | `test_queue.py` — priority is a queue control |
-| `test_promise_wakes.py` | 2 | `test_dbos.py` — promise resolution while the workflow is awake |
+| `test_promise_wakes.py` | 2 | none — cleat-specific: does the promise wake path share cleat#953's defect |
 | `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
 | `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
 | `test_queues.py` | 4 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
@@ -180,7 +180,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **85** (3 skipped outright) | **81** credited upstream, **4** cleat-specific |
+| **Total** | **85** (3 skipped outright) | **79** credited upstream, **6** cleat-specific |
 percentage of upstream: many upstream cases test the DBOS decorator API rather
 than an engine property, and those have nothing to port.
 

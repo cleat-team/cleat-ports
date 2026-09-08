@@ -132,14 +132,30 @@ MAPPING = {
     "test_replay.py": ("test_dbos.py", ""),
     "test_send.py": ("test_dbos.py", "`send` delivery semantics"),
     "test_promises.py": ("test_dbos.py", "`set_event`/`get_event`"),
-    "test_promise_wakes.py": ("test_dbos.py", "promise resolution while the workflow is awake"),
+    # None, not test_dbos.py. This module ports nothing: its docstring is
+    # "Does the promise wake path have cleat#953's defect?", and "promise"
+    # appears zero times in upstream's test_dbos.py -- DBOS has no promise
+    # primitive at all. Crediting it upstream would count coverage of a file
+    # these cases take nothing from, inflating Ported in the flattering
+    # direction. Corrected in review before it shipped.
+    "test_promise_wakes.py": (None, "cleat-specific: does the promise wake path "
+                              "share cleat#953's defect"),
     "test_signals.py": ("test_dbos.py", "`recv` with a timeout, and `send` between workflows"),
     "test_determinism.py": ("test_dbos.py", "stable IDs and randomness under recovery"),
     "test_continue_as_new.py": ("test_dbos.py", "bounded history via self-restart"),
     "test_defer.py": ("test_dbos.py", "cleanup that runs once though the body runs twice"),
     "test_query_state.py": ("test_dbos.py", "workflow status readable while running"),
     "test_scheduling.py": ("test_scheduler.py", "cron and delayed invocation"),
-    "test_api_surface.py": ("test_client.py", "the HTTP surface a client drives"),
+    # SPANS TWO UPSTREAM FILES, and this mapping assigns it wholly to one.
+    # Two of its cases exercise list_workflows, which is a workflow-management
+    # operation -- test_workflow_management.py's own description names "list".
+    # Not split, because hand-splitting a module across rows is what produced
+    # the drift this generator replaces. But the consequence is recorded rather
+    # than left implicit: the TOTAL is right and the DISTRIBUTION is off by two
+    # between these rows. This is the standing cost of per-module mapping, and
+    # any module that spans two upstream files pays it.
+    "test_api_surface.py": ("test_client.py", "the HTTP surface a client drives; "
+                            "two of its cases are arguably workflow-management"),
     "test_plugins.py": (None, "cleat has no upstream analogue; plugin calls through a real worker"),
     "test_versions.py": (None, "cleat-specific version reporting across a suspension"),
 }
