@@ -497,6 +497,60 @@ context.
 
 ---
 
+## 10. The determinism checks skip any function that makes no host call
+
+**Class:** Bug (scope, not rules)
+**Upstream sample:** `goroutine/`, `mutex/`
+**Status:** Filed — cleat-team/cleat#949
+
+**What upstream asserts**
+
+`goroutine/` runs work concurrently INSIDE one workflow using `workflow.Go`,
+which Temporal schedules cooperatively and deterministically. The pattern is
+safe there.
+
+**What cleat does**
+
+Forbids the whole family — goroutines (E001), channels (E002), sync primitives
+(E013) — on the grounds that workflow code is single-threaded by design. So the
+sample cannot be ported, and the port is written as its own refusal.
+
+Which found that the refusal is conditional on something unrelated to
+determinism. Three builds of the same `sync.Mutex`:
+
+| fixture | closure | result |
+|---|---|---|
+| `syncmutex` — no host call | `0 in cleat closure` | **builds**, no diagnostic |
+| `mutexwithcall` — one `h.SetQueryState` added | `1 in cleat closure` | two E013s, refused |
+
+The two files differ by one line.
+
+**The case that matters is a helper.** `helperescape` has an entry point that
+calls the host — so it is checked, and it suspends and replays — calling a
+helper that does not. The helper carries six violations across three codes:
+goroutines, channel send, receive and `close()`, `sync.Mutex` and
+`sync.WaitGroup`. The build reports none of them, and the analyzer's own line
+reads `2 functions, 1 in cleat closure`: it counted the helper without checking
+it.
+
+**Assessment**
+
+The rules are right; the *set they are applied to* is wrong. "Only analyse what
+can reach a host call" is correct for closure analysis, where the question is
+which host functions to import and a function reaching none contributes
+nothing. The determinism checks were attached to the same traversal and are
+asking a different question — determinism is a property of everything the
+workflow executes, not everything that calls out.
+
+Replay re-runs the workflow function and constrains only the results of host
+calls, not local computation, so an unchecked helper is re-executed every time.
+
+`TestTheRuleIsRealWhenItApplies` is the control and everything else here is
+meaningless without it: if the analyzer simply did not implement these codes,
+every "it built" observation would be equally explained.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>

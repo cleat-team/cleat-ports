@@ -57,7 +57,7 @@ sample is.
 
 ## Status
 
-**28 cases, 24 passing, 4 skipped** (2026-09-08) — 9 findings, 4 filed, 3 fixed.
+**32 cases, 28 passing, 4 skipped** (2026-09-08) — 10 findings, 5 filed, 3 fixed.
 
 Measured green on **PostgreSQL** (28/28). The first 24 were also measured on
 **MySQL** and **SQL Server**, 24/24 on each; the four `timer/` cases have not
@@ -70,7 +70,7 @@ Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-28
+32
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -84,6 +84,7 @@ while 53 cases existed. Hence the command beside the number.
 | `query/`, `query-workflow/` | 4 | `tests/query_test.go` |
 | — (route shape, not a sample) | 2 | `tests/identifier_test.go` |
 | `timer/`, `sleepfor/` | 4 | `tests/timer_test.go` |
+| `goroutine/`, `mutex/` (as refusals) | 4 | `tests/nondeterminism_test.go` |
 
 **The four skips are all one defect**, cleat-team/cleat#933 — a single signal
 delivery satisfies more than one `AwaitSignals`. They are skipped rather than

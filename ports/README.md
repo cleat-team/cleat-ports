@@ -7,7 +7,7 @@ upstream test *cases* re-expressed, not files touched — see
 | Port | Upstream | Upstream license | Covers | Status |
 |---|---|---|---|---|
 | [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **73 cases, 70 passing, 3 skipped** (2026-09-07) — 23 findings, 18 fixed |
-| [`samples-go`](samples-go/) | [temporalio/samples-go](https://github.com/temporalio/samples-go) | **Apache-2.0** | a different engine's assumptions: signals, queries, timers, child workflows, saga compensation | **28 cases, 24 passing, 4 skipped**; 24 of them on all three dialects (2026-09-08) — 9 findings |
+| [`samples-go`](samples-go/) | [temporalio/samples-go](https://github.com/temporalio/samples-go) | **Apache-2.0** | a different engine's assumptions: signals, queries, timers, child workflows, saga compensation | **32 cases, 28 passing, 4 skipped**; 24 of them on all three dialects (2026-09-08) — 10 findings |
 
 ## Planned
 
