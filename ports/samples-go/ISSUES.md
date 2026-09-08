@@ -273,6 +273,101 @@ them. It is currently skipped on #4.
 
 ---
 
+## 6. A query on an unknown run answers 200, not 404
+
+**Class:** Bug
+**Upstream sample:** `query/`
+**Status:** Filed and fixed — cleat-team/cleat#935
+
+**What upstream asserts**
+
+Nothing directly. This came from writing the sample's assertions and assuming a
+settled question was settled.
+
+**What cleat does**
+
+```
+GET /api/workflows/00000000-0000-0000-0000-000000000000/query?key=counter
+200 {"key":"counter","value":""}
+```
+
+`/query` was the last run-scoped read still answering 200, and it was not among
+the three cleat#900 named. The full set spans **two prefixes**, which is why an
+enumeration from one route switch misses some of it:
+
+| endpoint | status |
+|---|---|
+| `/api/instances/{id}/events` | #917 |
+| `/api/instances/{id}/state` | already 404'd |
+| `/api/workflows/{id}` | already 404'd |
+| `/api/workflows/{id}/terminal` | #896 |
+| `/api/workflows/{id}/history` | #917 |
+| `/api/workflows/{id}/promises` | #917 |
+| `/api/workflows/{id}/dag` | already 404'd |
+| `/api/workflows/{id}/query` | cleat#935 |
+
+`/routing` and `/tags` are **not** in the set: they take a definition *name*
+rather than a run id, so the existence check does not apply and an empty result
+for an unknown name is the normal state.
+
+**Assessment**
+
+Worse here than on the collection endpoints, because the empty value is *also a
+legitimate answer*. A run that does not exist, a key not yet published, and a
+key published as `""` are three situations with one response. The 404 separates
+the first two.
+
+The general lesson is not about this endpoint. **#900's fix closed the three
+endpoints the issue listed rather than the class it described**, and the class
+was stated plainly in the issue. A port written from a different engine's
+assumptions asks the question again in a place the original never looked,
+which is most of what a second upstream buys.
+
+---
+
+## 7. Query state is published, not computed
+
+**Class:** Design difference
+**Upstream sample:** `query/`, `query-workflow/`
+**Status:** Won't fix — recorded
+
+**What upstream asserts**
+
+A query invokes a REGISTERED HANDLER when it arrives, and the handler computes
+its answer from live workflow state at that moment. A caller can ask a question
+the workflow author anticipated the *shape* of but not the *timing* of.
+
+**What cleat does**
+
+`SetQueryState(key, value)` PUBLISHES a value; a reader gets whatever was
+published last. Push, not pull.
+
+`TestAPublishedValueGoesStaleWhenTheStateMovesOn` pins it: `firstSeen` is
+published once and never republished while the state it describes keeps
+moving, and the reader keeps getting the original value. A Temporal handler
+asked the same question would return the current one.
+
+**Assessment**
+
+Deliberate, and the difference is defensible — the alternative is invoking
+guest code on demand from an HTTP handler, which is a much larger thing than a
+query API and brings its own failure modes (what happens when the handler
+suspends, or the worker holding the run is gone).
+
+It is recorded because *nothing in the API's shape tells a caller which model
+they are in*, and a reader arriving from Temporal will assume pull. Two
+consequences follow that are easy to meet by surprise: a value can be stale
+without being wrong, and an unpublished key is indistinguishable from an
+unanswerable one — there is no handler-not-registered error, because there is
+no handler.
+
+`TestAQueryStillAnswersAfterTheRunHasFinished` establishes the useful half of
+the push model: query state OUTLIVES the run, so it can be used to inspect a
+workflow that finished. That is a genuine advantage of publishing over
+computing, and it is worth having a test on.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>
