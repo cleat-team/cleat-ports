@@ -241,7 +241,15 @@ class Cleat:
         last: dict = {}
         while time.monotonic() < deadline:
             _, last = self.get(run_id)
-            if last.get("status") in ("done", "failed", "terminated", "cancelled"):
+            # dead_lettered is terminal and was missing here until 2026-09-08.
+            # A dead-lettered run never satisfied this loop, so any test that
+            # awaited one burned its full timeout and then failed with "did not
+            # reach a terminal status ... last status 'dead_lettered'" -- a
+            # message naming the terminal state it was waiting for. The
+            # dead-letter tests all passed because they poll for it themselves
+            # in _dead_letter() rather than calling this.
+            if last.get("status") in ("done", "failed", "terminated", "cancelled",
+                                      "dead_lettered"):
                 return last
             time.sleep(0.2)
         pytest.fail(f"run {run_id} did not reach a terminal status within "
