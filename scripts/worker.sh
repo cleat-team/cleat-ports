@@ -116,7 +116,18 @@ owned() {
   pid="$(cat "$PIDFILE" 2>/dev/null)" || return 1
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o command= 2>/dev/null | grep -q -- "-api-addr 127.0.0.1:$API_PORT"
+  # -ww, and it is load-bearing: GNU ps TRUNCATES TO 80 COLUMNS when stdout is
+  # not a tty, which every CI step and every captured subprocess is. The worker
+  # is started as
+  #
+  #   .../bin/cleat-worker -db postgres://...?sslmode=disable -driver postgres -api-addr 127.0.0.1:8099
+  #
+  # and -api-addr begins at column 152, so the unwidened form cannot see the one
+  # flag this function exists to read. It then reports every worker as foreign.
+  # Caught by CI on the commit that introduced it, because the guard fails
+  # CLOSED -- had it failed open it would have passed here and protected
+  # nothing.
+  ps -ww -p "$pid" -o command= 2>/dev/null | grep -q -- "-api-addr 127.0.0.1:$API_PORT"
 }
 
 # refuse_foreign exits rather than signalling a process this project does not
@@ -129,7 +140,7 @@ refuse_foreign() {
 refusing to signal pid $pid: it is not a cleat-worker serving 127.0.0.1:$API_PORT.
 
   pidfile: $PIDFILE
-  process: $(ps -p "$pid" -o command= 2>/dev/null | cut -c1-120 || echo "(gone)")
+  process: $(ps -ww -p "$pid" -o command= 2>/dev/null || echo "(gone)")
 
 Another session may own it. Check with:  pgrep -fl cleat-worker
 If the pidfile is simply stale, remove it: rm -f "$PIDFILE"
@@ -274,7 +285,7 @@ case "${1:?usage: worker.sh <ensure|crash|stop|url>}" in
 something is already serving $API_URL and it is not this project's worker.
 
   pidfile: $PIDFILE ($(cat "$PIDFILE" 2>/dev/null || echo "no pid"))
-  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -p {} -o command= 2>/dev/null | cut -c1-110 || echo "unknown")
+  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
 
 Reusing it would run this session against another session's database while
 authenticating with this session's key -- which fails as "401 invalid or
