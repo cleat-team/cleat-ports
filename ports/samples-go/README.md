@@ -57,13 +57,13 @@ sample is.
 
 ## Status
 
-**6 cases, 6 passing** (2026-09-07) — 2 findings, 0 fixed.
+**11 cases, 11 passing** (2026-09-07) — 3 findings, 0 fixed.
 
 Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-6
+11
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -72,10 +72,14 @@ while 53 cases existed. Hence the command beside the number.
 | upstream area | cases | file |
 |---|---:|---|
 | `saga/` | 6 | `tests/saga_test.go` |
+| `child-workflow/` | 5 | `tests/child_workflow_test.go` |
 
-One of the six is a control on the instrument rather than on cleat
-(`TestTheFixtureRecordsAFailedCallToo`): every other assertion reads the
+Two of the eleven are controls on the instrument rather than on cleat
+`TestTheFixtureRecordsAFailedCallToo` — every other assertion reads the
 fixture's ordered call log, and the entries that matter are calls that
 *failed*, so "does the log record a failure at all" has to be checked
 separately or the expected sequences would be wrong in a way that looked like
-an engine defect.
+an engine defect. `TestTheChildIsReachableByIdFromOutsideTheParent` — the
+child-workflow tests locate the child through the parent's query state, and a
+stale or wrong id there would have them reading some other run's status, which
+would mostly still pass.

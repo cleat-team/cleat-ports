@@ -173,6 +173,38 @@ func awaitTerminal(t *testing.T, runID string, timeout time.Duration) map[string
 	return nil
 }
 
+// queryState reads one published query key from a run.
+//
+// The value has to be readable while the run is SUSPENDED, which is the case
+// the endpoint exists for and the case cleat#844 got wrong: query_state was
+// written only on the 'done' and 'failed' branches, so a value reached the
+// database only once the run had finished and its result was available anyway.
+func queryState(t *testing.T, runID, key string) (int, string) {
+	t.Helper()
+	r := call(t, http.MethodGet, "/api/workflows/"+runID+"/query?key="+key, nil, nil)
+	v, _ := r.Body["value"].(string)
+	return r.Status, v
+}
+
+// pollQueryState waits for a key to carry a value.
+//
+// Needed because the interesting value is published mid-run: a caller that
+// waits for the run to finish has already missed it, and in this port the runs
+// whose query state matters are the ones deliberately closed before they can
+// return anything.
+func pollQueryState(t *testing.T, runID, key string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, v := queryState(t, runID, key); v != "" {
+			return v
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("run %s never published query key %q within %s", runID, key, timeout)
+	return ""
+}
+
 // ---- the fixture service ----
 
 // fixtureCalls returns the operations a key saw, in arrival order, as
@@ -192,6 +224,45 @@ func fixtureCalls(t *testing.T, key string) []string {
 		t.Fatalf("decoding the fixture call log for %q: %v", key, err)
 	}
 	return out.Calls
+}
+
+// waitForCall blocks until the fixture has seen `op` under `key`.
+//
+// This exists so a precondition can be OBSERVED rather than assumed. The
+// child-workflow tests all depend on the child being genuinely mid-flight when
+// its parent closes, and the first version of them asserted that by checking
+// the call log at parent-close time -- which is a race, not a check: the child
+// is scheduled independently, and a parent that finishes in 1.5s can easily
+// beat its child's first call.
+//
+// Deliberately not a fixed sleep. A margin wide enough to "usually" work is
+// the defect ports#30 was opened for: 8x on paper and 0x in practice.
+func waitForCall(t *testing.T, key, op string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = fixtureCalls(t, key)
+		for _, c := range last {
+			if c == op {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the fixture never saw %q under key %q within %s; it saw %v",
+		op, key, timeout, last)
+}
+
+// isRunning reports whether a run has not yet reached a terminal status.
+func isRunning(t *testing.T, runID string) bool {
+	t.Helper()
+	r := call(t, http.MethodGet, "/api/workflows/"+runID, nil, nil)
+	switch r.Body["status"] {
+	case "done", "failed", "terminated", "cancelled":
+		return false
+	}
+	return true
 }
 
 // ---- deployment ----

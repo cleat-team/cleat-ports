@@ -116,6 +116,73 @@ runs tells you when it stops being true.
 
 ---
 
+## 3. An unrecognised `parent_close_policy` silently means ABANDON
+
+**Class:** Bug (silent-acceptance)
+**Upstream sample:** `child-workflow/`
+**Status:** Open
+
+**What upstream asserts**
+
+Temporal's `ParentClosePolicy` is an enum. A value outside it cannot be sent —
+the client rejects it — so "the policy I wrote was the policy that ran" is
+guaranteed by construction rather than by care.
+
+**What cleat does**
+
+`enforceParentClosePolicy` matches exact string literals, and ABANDON has no
+arm at all: it is the *absence* of an update. So any value that is not
+`TERMINATE`, `REQUEST_CANCEL` or one of the recognised spellings falls through
+to ABANDON, silently.
+
+Measured — a parent started with `parent_close_policy: "terminate"`,
+lower-case:
+
+```
+ id       | def_name         | status | policy         | parent
+ 78035b86 | sg_child_sleeper | done   | terminate      | dae873cd
+```
+
+Stored verbatim, no error at start, no warning in the log, and the child ran to
+completion after its parent closed. `TestAnUnrecognisedPolicyIsTreatedAsAbandon`
+pins this as current behaviour, in the same shape the DBOS port used for
+cleat#900: if it ever fails because the value was rejected or normalised, that
+is the fix landing and the test should be updated rather than deleted.
+
+Three things make the typo easy to write and hard to see:
+
+- `ParentClosePolicy` is a `string` type, so the typed constants are trivial to
+  bypass and any string literal compiles.
+- The column's DEFAULT is `'ABANDON'`, so a wrong value and a missing value are
+  indistinguishable afterwards.
+- ABANDON is the safe-looking outcome. The child keeps running, nothing errors,
+  and nothing looks wrong until someone asks why the children of terminated
+  parents are still alive.
+
+**Assessment**
+
+The failure is silent and it fails *open* — toward children that keep running
+rather than children that stop. A validation at the start boundary, or a
+warning when the column holds an unrecognised value, would close it. Nothing
+about the enforcement itself needs to change.
+
+Worth stating what is NOT wrong here, because the port initially claimed it
+was: TERMINATE and REQUEST_CANCEL both work. The first version of these tests
+reported "a TERMINATE child completed anyway", which was the harness's own thin
+timing margin — 500ms between the child's sleep and the parent's — and not the
+engine. Direct measurement of the row across the parent's completion showed the
+correct transition:
+
+```
+ready | running -               gen=1
+done  | failed  parent workflow terminated gen=2
+```
+
+The tests now measure the ordering rather than assume it, and a child that
+finishes before its parent fails as a harness problem naming itself as one.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>
