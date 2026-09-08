@@ -256,9 +256,33 @@ guards, because per-run paths make a mixup unlikely rather than impossible:
     stranger's worker runs against their database with your key, and fails as
     that same 401.
 
-Ports are still chosen by hand. `pgrep -fl cleat-worker` shows every worker
-with its `-api-addr`, which is how to tell yours from someone else's before
-starting anything.
+### Telling the four apart, because they share one symptom
+
+A documented failure mode needs a stated way to distinguish it from its
+neighbours, not only a description of itself. The Makefile's stale-key comment
+explains its own case completely and correctly — and that is what made it
+absorb three cases it does not explain. It supplies a ready, plausible,
+locally-correct story, and a sufficient explanation terminates the search.
+
+Every one of these prints `401 invalid or revoked API key`:
+
+| cause | how to tell |
+|---|---|
+| stale key — database recreated since minting | key file has a value, but no matching row in `tenant_api_keys` for **your** DSN |
+| another session rewrote the key file | key file's mtime is recent and **you did not mint it**; the flat layout made this possible at all |
+| your worker was stopped by another session's `ensure` | nothing on your `-api-addr`, or a `cleat-worker` there with a `-db` that is not yours |
+| you are talking to a stranger's worker on your port | it answers `/healthz`, but `pgrep -fl cleat-worker` shows its `-db` pointing at another database |
+
+The discriminating question is the same in all four: **does the process serving
+my API port have my DSN?** One command answers it, and it is worth running
+before believing any 401:
+
+```sh
+pgrep -fl cleat-worker
+```
+
+Ports are still chosen by hand, so `pgrep` is also how to tell your worker from
+someone else's before starting anything.
 
 `make clean` removes only this run's subdirectory. A bare `rm -rf
 .port-results` would delete every concurrent session's state at once, which is
