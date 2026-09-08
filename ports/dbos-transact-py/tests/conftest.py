@@ -54,6 +54,12 @@ def api_key() -> str:
     return value
 
 
+# Distinguishes "no input field in the request" from "input: {}". See
+# create_schedule -- the two are different requests and cleat#997 was the
+# difference.
+_OMIT = object()
+
+
 class Cleat:
     """The smallest client these ports need, over urllib rather than requests.
 
@@ -193,26 +199,42 @@ class Cleat:
         return self._req("POST", f"/api/workflows/{run_id}/cancel", {"reason": reason})
 
     def create_schedule(self, name: str, cron: str, def_name: str,
-                        entry_point: str, inp: dict, misfire: str = "",
-                        catch_up_limit: int = 0):
-        """POST /api/schedules.
+                        entry_point: str = "", inp=_OMIT, misfire: str = "",
+                        catch_up_limit: int = 0, overlap_policy: str = ""):
+        """POST /api/schedules -- the operator path.
+
+        The scheduling tests that use h.ScheduleCron go in through GUEST code,
+        which carries none of the three policy fields. This is the only way to
+        set one at all.
 
         misfire is passed through verbatim, including "" -- which the engine
         reads as catch_up (engine/cron.go: "Empty is valid and means
         MisfireCatchUp"). A test that wants the DEFAULT must be able to send
         nothing rather than send the default's name, or it tests the name.
+
+        inp defaults to the _OMIT sentinel rather than to {} because those are
+        different requests, and the difference was a bug: omitting "input"
+        entirely used to answer 500, since workflow_schedules.input is
+        NOT NULL DEFAULT '{}' and a column default does not apply to an INSERT
+        that names the column (cleat#997). Sending {} never exercised it.
         """
-        body = {"name": name, "cron": cron, "def_name": def_name,
-                "entry_point": entry_point, "input": inp}
+        body = {"name": name, "cron": cron, "def_name": def_name}
+        if entry_point:
+            body["entry_point"] = entry_point
+        if inp is not _OMIT:
+            body["input"] = inp
         if misfire:
             body["misfire_policy"] = misfire
         if catch_up_limit:
             body["catch_up_limit"] = catch_up_limit
+        if overlap_policy:
+            body["overlap_policy"] = overlap_policy
         return self._req("POST", "/api/schedules", body)
 
     def schedules(self):
         """List cron schedules. Used by the scheduling tests."""
         return self._req("GET", "/api/schedules")
+
 
     def delete_schedule(self, name: str):
         return self._req("DELETE", f"/api/schedules/{name}")
