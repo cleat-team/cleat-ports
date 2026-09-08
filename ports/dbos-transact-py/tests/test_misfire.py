@@ -29,6 +29,21 @@ catch_up owes two, skip owes zero. The workflow cannot stamp its scheduled
 instant -- cleat passes the schedule's stored input verbatim and does not
 inject the firing time -- so cardinality is the observable that exists.
 
+BLOCKED ON cleat#995 AS OF 2026-09-08, AND THE GUARD IS BELOW RATHER THAN A
+BARE SKIP. The misfire policy can only be set through POST /api/schedules --
+the ScheduleCron host call takes (workflowName, cronExpr, timezone, inputJSON)
+and no policy -- and that endpoint never sets next_run_at, so a schedule it
+creates is dated 0001-01-01. The scheduler then reads it as overdue by two
+millennia and drains up to catch_up_limit (60) firings on the FIRST TICK, with
+no outage involved.
+
+That is not a setup inconvenience. It would satisfy the `catch_up >= 2`
+assertion below on its own, so the test would pass while measuring nothing --
+which is exactly what it did before the guard was added, with a 135-second
+sleep that was decorative. The guard reads next_run_at back and skips if it is
+in the past, so the day #995 is fixed this test starts asserting in full with
+nobody editing it.
+
 COST: this test takes about three minutes, and cannot be made faster. cleat's
 cron dialect is five fields (`engine/cron.go:75` rejects anything else), so one
 minute is the shortest interval expressible, and the outage has to span two of
@@ -36,6 +51,7 @@ them for the cardinality argument above to hold.
 """
 
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -105,6 +121,30 @@ def misfire_schedules(cleat, cron_workflows, worker, fixture_calls):
             misfire=policy,
         )
         assert status in (200, 201), f"creating the {policy} schedule: {status} {body}"
+
+    # THE #995 GUARD. A schedule whose next_run_at is already in the past is
+    # not the schedule this test means to create, and the catch_up assertion
+    # would pass off the backlog that produces rather than off the outage.
+    # Read it back rather than trusting the 201.
+    listed_status, listed = cleat.schedules()
+    assert listed_status == 200, f"GET /api/schedules: {listed_status}"
+    by_name = {s["name"]: s for s in listed}
+    for policy, name in names.items():
+        row = by_name.get(name)
+        assert row is not None, f"the {policy} schedule is absent from the listing"
+        nra = row.get("next_run_at") or ""
+        if nra < datetime.now(timezone.utc).isoformat():
+            for n in names.values():
+                cleat.delete_schedule(n)
+            pytest.skip(
+                f"cleat#995: POST /api/schedules stored next_run_at={nra!r} for "
+                f"{name!r}, which is in the past. The scheduler treats such a "
+                f"schedule as overdue and drains up to catch_up_limit firings on "
+                f"its first tick, which would satisfy this test's catch_up "
+                f"assertion without any outage. Skipping rather than asserting "
+                f"something that measures nothing. This skip retires itself when "
+                f"#995 is fixed."
+            )
 
     for policy, key in keys.items():
         fired = fixture_calls(key)
