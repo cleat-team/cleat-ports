@@ -50,6 +50,25 @@ esac
 # -rls-check note in worker.sh for what that costs.
 : "${CLEAT_PORTS_TENANT:=00000000-0000-0000-0000-000000000000}"
 
+# Where this run keeps its pidfiles, logs, minted keys and built WASM.
+#
+# Keyed by COMPOSE_PROJECT_NAME because that is already how a session declares
+# its identity here: it isolates the databases, and until 2026-09-08 it isolated
+# nothing else. Several sessions run out of one checkout, and a flat
+# .port-results/ gave them ONE worker.pid, ONE api-key.<dialect> and ONE
+# worker.log between them.
+#
+# The cost of that was not a collision anyone could see. All three symptoms
+# present as `401 invalid or revoked API key` -- naming authentication, which is
+# the one thing that is not wrong -- so a session reads it as the stale-key
+# hazard the Makefile documents and moves on. Three separate sessions did,
+# tonight. Worse, `worker.sh ensure` decides "up but not serving" by comparing
+# THIS session's health URL against the SHARED pidfile, so it stopped a live
+# worker belonging to somebody else and reported it as restarting its own.
+: "${CLEAT_PORTS_RESULTS_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.port-results}"
+: "${CLEAT_PORTS_RESULTS_DIR:=$CLEAT_PORTS_RESULTS_ROOT/${COMPOSE_PROJECT_NAME:-default}}"
+
+export CLEAT_PORTS_RESULTS_ROOT CLEAT_PORTS_RESULTS_DIR
 export CLEAT_PORTS_DIALECT CLEAT_PORTS_MYSQL_PORT CLEAT_PORTS_MSSQL_PORT
 export CLEAT_PORTS_FIXTURE_PORT CLEAT_PORTS_FIXTURE_URL
 export CLEAT_PORTS_TENANT CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API

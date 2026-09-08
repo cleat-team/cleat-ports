@@ -216,3 +216,74 @@ environment and compare ports. It is the kind of explanation that fits every
 observation, which is exactly why it needs checking rather than assuming, in
 both directions: it has been the true cause here, and it has also been the
 comfortable wrong answer.
+
+## Several sessions share this checkout; `.port-results` is keyed per run
+
+`COMPOSE_PROJECT_NAME` and per-session database ports isolate the **containers**.
+Until 2026-09-08 they isolated nothing else: `.port-results/` was one flat
+directory, so every concurrent session shared one `worker.pid`, one
+`api-key.<dialect>` and one `worker.log`.
+
+What that does, all measured in one twenty-minute window with three sessions
+live:
+
+  * **`worker.sh ensure` stopped a worker belonging to another session.** It
+    tests health against *this* session's URL but read the pid from a file
+    everyone shared, so it saw "up but not serving", stopped a stranger's
+    process, and reported it as restarting its own.
+  * **`api-key.<dialect>` went to 0 bytes** while another session was
+    authenticating with it — a `mint` that ran with an unset DSN truncated the
+    file by redirect before failing.
+  * **A session read another's `worker.log` for several minutes.** The only
+    tell was `-api-addr 127.0.0.1:8199` where its own worker was on 8109.
+
+**Every one of those surfaces as `401 invalid or revoked API key`** — naming
+authentication, which is the one thing that is not wrong. That is the same
+shape as the stale-key hazard the Makefile documents, one level up: there the
+file's NAME did not distinguish two databases, here its DIRECTORY did not
+distinguish two sessions. Two sessions independently diagnosed it as staleness
+and moved on.
+
+State now lives in `$CLEAT_PORTS_RESULTS_DIR`, which defaults to
+`.port-results/$COMPOSE_PROJECT_NAME` (or `.port-results/default`). Two further
+guards, because per-run paths make a mixup unlikely rather than impossible:
+
+  * `worker.sh` refuses to signal a pid whose process is not a `cleat-worker`
+    serving this session's `-api-addr`. A pid is a claim about a process; the
+    process's own argv is the process.
+  * `ensure` refuses to *reuse* a healthy worker on its port when that worker
+    is not this project's. Serving is necessary and not sufficient — reusing a
+    stranger's worker runs against their database with your key, and fails as
+    that same 401.
+
+### Telling the four apart, because they share one symptom
+
+A documented failure mode needs a stated way to distinguish it from its
+neighbours, not only a description of itself. The Makefile's stale-key comment
+explains its own case completely and correctly — and that is what made it
+absorb three cases it does not explain. It supplies a ready, plausible,
+locally-correct story, and a sufficient explanation terminates the search.
+
+Every one of these prints `401 invalid or revoked API key`:
+
+| cause | how to tell |
+|---|---|
+| stale key — database recreated since minting | key file has a value, but no matching row in `tenant_api_keys` for **your** DSN |
+| another session rewrote the key file | key file's mtime is recent and **you did not mint it**; the flat layout made this possible at all |
+| your worker was stopped by another session's `ensure` | nothing on your `-api-addr`, or a `cleat-worker` there with a `-db` that is not yours |
+| you are talking to a stranger's worker on your port | it answers `/healthz`, but `pgrep -fl cleat-worker` shows its `-db` pointing at another database |
+
+The discriminating question is the same in all four: **does the process serving
+my API port have my DSN?** One command answers it, and it is worth running
+before believing any 401:
+
+```sh
+pgrep -fl cleat-worker
+```
+
+Ports are still chosen by hand, so `pgrep` is also how to tell your worker from
+someone else's before starting anything.
+
+`make clean` removes only this run's subdirectory. A bare `rm -rf
+.port-results` would delete every concurrent session's state at once, which is
+a worse version of the bug this layout exists to prevent.
