@@ -219,6 +219,9 @@ MAPPING = {
     # any module that spans two upstream files pays it.
     "test_api_surface.py": ("test_client.py", "the HTTP surface a client drives; "
                             "two of its cases are arguably workflow-management"),
+    "test_results.py": ("test_failures.py",
+                        "upstream's test_nonserializable_return; the property generalises "
+                        "past pickle, and cleat substitutes rather than failing"),
     "test_plugins.py": (None, "cleat has no upstream analogue; plugin calls through a real worker"),
     "test_versions.py": (None, "cleat-specific version reporting across a suspension"),
 }
