@@ -205,6 +205,17 @@ func pollQueryState(t *testing.T, runID, key string, timeout time.Duration) stri
 	return ""
 }
 
+// dialect reports which database the suite is running against.
+//
+// Needed by exactly one assertion, and that is the point: cleat#936 is a
+// divergence, so the test cannot assert a single behaviour without being wrong
+// on one dialect. A test that only ever runs on PostgreSQL would have called
+// the MySQL behaviour a regression, and one that only ran on MySQL would never
+// have seen the defect at all.
+func dialect() string {
+	return envOr("CLEAT_PORTS_DIALECT", "postgres")
+}
+
 // ---- the fixture service ----
 
 // fixtureCalls returns the operations a key saw, in arrival order, as

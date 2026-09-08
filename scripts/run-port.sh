@@ -24,7 +24,7 @@ LOG="$ROOT/.port-results/$PORT.log"
 # worker, which is what we are deliberately not doing.
 "$ROOT/scripts/worker.sh" ensure
 CLEAT_PORTS_API="$("$ROOT/scripts/worker.sh" url)"
-CLEAT_PORTS_API_KEY="$(cat "$ROOT/.port-results/api-key")"
+CLEAT_PORTS_API_KEY="$(cat "$ROOT/.port-results/api-key.$CLEAT_PORTS_DIALECT")"
 export CLEAT_PORTS_API CLEAT_PORTS_API_KEY
 
 echo "--- $PORT: $(cat "$ROOT/bin/.cleat-build" 2>/dev/null | tr '\n' ' ')"

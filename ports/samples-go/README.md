@@ -57,7 +57,11 @@ sample is.
 
 ## Status
 
-**17 cases, 13 passing, 4 skipped** (2026-09-07) — 5 findings, 1 filed.
+**17 cases, 13 passing, 4 skipped** (2026-09-07) — 5 findings, 2 filed.
+
+Measured green on **PostgreSQL and MySQL**, all 17 on each. One case is
+deliberately dialect-aware (cleat#936) and reports a different result on each,
+which is the finding; every other case asserts the same thing on both.
 
 Derived, not asserted:
 

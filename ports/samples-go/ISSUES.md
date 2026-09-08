@@ -115,71 +115,74 @@ This is the argument for the ports repo over a design review: an assertion that
 runs tells you when it stops being true.
 
 ---
+## 3. A mis-cased `parent_close_policy` means different things on different dialects
 
-## 3. An unrecognised `parent_close_policy` silently means ABANDON
-
-**Class:** Bug (silent-acceptance)
+**Class:** Bug (silent divergence) + validation gap
 **Upstream sample:** `child-workflow/`
-**Status:** Open
+**Status:** Filed — cleat-team/cleat#936
 
 **What upstream asserts**
 
 Temporal's `ParentClosePolicy` is an enum. A value outside it cannot be sent —
-the client rejects it — so "the policy I wrote was the policy that ran" is
+the client rejects it — so "the policy I wrote is the policy that ran" is
 guaranteed by construction rather than by care.
 
 **What cleat does**
 
-`enforceParentClosePolicy` matches exact string literals, and ABANDON has no
-arm at all: it is the *absence* of an update. So any value that is not
-`TERMINATE`, `REQUEST_CANCEL` or one of the recognised spellings falls through
-to ABANDON, silently.
+Two things, and they were only visible together.
 
-Measured — a parent started with `parent_close_policy: "terminate"`,
-lower-case:
+*The validation gap.* `enforceParentClosePolicy` matches exact string literals
+and ABANDON has no arm — it is the *absence* of an update — so an unrecognised
+value silently means ABANDON. `ParentClosePolicy` is a `string` type, the typed
+constants are trivial to bypass, and the column DEFAULTs to `'ABANDON'`, so a
+wrong value and a missing one are indistinguishable afterwards.
+
+*The divergence.* String equality is collation-dependent, and the dialects
+disagree:
 
 ```
- id       | def_name         | status | policy         | parent
- 78035b86 | sg_child_sleeper | done   | terminate      | dae873cd
+mysql>      SELECT 'terminate' = 'TERMINATE';   1     (utf8mb4_0900_ai_ci)
+postgres=#  SELECT 'terminate' = 'TERMINATE';   f
 ```
 
-Stored verbatim, no error at start, no warning in the log, and the child ran to
-completion after its parent closed. `TestAnUnrecognisedPolicyIsTreatedAsAbandon`
-pins this as current behaviour, in the same shape the DBOS port used for
-cleat#900: if it ever fails because the value was rejected or normalised, that
-is the fix landing and the test should be updated rather than deleted.
+Same workflow, same policy string, same test:
 
-Three things make the typo easy to write and hard to see:
-
-- `ParentClosePolicy` is a `string` type, so the typed constants are trivial to
-  bypass and any string literal compiles.
-- The column's DEFAULT is `'ABANDON'`, so a wrong value and a missing value are
-  indistinguishable afterwards.
-- ABANDON is the safe-looking outcome. The child keeps running, nothing errors,
-  and nothing looks wrong until someone asks why the children of terminated
-  parents are still alive.
+| dialect | child after the parent closes | effective policy |
+|---|---|---|
+| PostgreSQL | `done`, both calls made | ABANDON |
+| MySQL | `failed`, only the first call | TERMINATE |
 
 **Assessment**
 
-The failure is silent and it fails *open* — toward children that keep running
-rather than children that stop. A validation at the start boundary, or a
-warning when the column holds an unrecognised value, would close it. Nothing
-about the enforcement itself needs to change.
+The divergence is the serious half. A validation gap fails **open** in a
+predictable direction; this produces *opposite* child-lifecycle behaviour from
+identical code depending on the backing database, with nothing in the workflow,
+the metadata or the logs to show it. A suite tested on MySQL and deployed on
+PostgreSQL silently stops terminating children.
 
-Worth stating what is NOT wrong here, because the port initially claimed it
-was: TERMINATE and REQUEST_CANCEL both work. The first version of these tests
-reported "a TERMINATE child completed anyway", which was the harness's own thin
-timing margin — 500ms between the child's sleep and the parent's — and not the
-engine. Direct measurement of the row across the parent's completion showed the
-correct transition:
+**The two defects mask each other**, which is why one dialect could not have
+found this. On MySQL the mis-cased policy "works", so the validation gap is
+invisible. On PostgreSQL it falls through to ABANDON, so the collation
+difference is invisible. The test is therefore dialect-aware rather than
+asserting one answer — a single-dialect version would have reported the other
+dialect's correct-for-itself behaviour as a regression.
+
+Note what found it: not a new test, but an existing one run somewhere else.
+
+**What is not wrong.** TERMINATE and REQUEST_CANCEL both work. An earlier
+version of these tests reported "a TERMINATE child completed anyway", which was
+this port's own thin timing margin — 500ms between the child's sleep and the
+parent's — and not the engine. Direct measurement of the row across the
+parent's completion showed the correct transition:
 
 ```
-ready | running -               gen=1
-done  | failed  parent workflow terminated gen=2
+ready | running -                             gen=1
+done  | failed  parent workflow terminated    gen=2
 ```
 
 The tests now measure the ordering rather than assume it, and a child that
 finishes before its parent fails as a harness problem naming itself as one.
+
 
 ---
 
