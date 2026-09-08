@@ -199,6 +199,16 @@ class Cleat:
     def delete_schedule(self, name: str):
         return self._req("DELETE", f"/api/schedules/{name}")
 
+    def schedule_enabled(self, name: str, enabled: bool):
+        """Enable or disable a schedule.
+
+        POST /api/schedules/{name}/enable | /disable, both with no body.
+        Separate from delete_schedule because the difference is the point: a
+        disabled schedule is retained and can be resumed, a deleted one cannot.
+        """
+        action = "enable" if enabled else "disable"
+        return self._req("POST", f"/api/schedules/{name}/{action}", {})
+
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
 
@@ -277,6 +287,28 @@ def fanout_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def fixture_log():
+    """Read the fixture service's per-key call log, in arrival order.
+
+    Distinct from fixture_calls, which counts. A count cannot answer an
+    ORDERING question -- two workflows starting in either sequence are two
+    calls -- so the service records the operation names as they arrive and this
+    returns them as "service.operation" strings.
+
+    Added for the priority-dispatch test, which asks which workflows were
+    claimed first. Nothing else here needed order until something asked whether
+    the claim query's `ORDER BY priority` is observable.
+    """
+    base = os.environ.get("CLEAT_PORTS_FIXTURE_URL", "http://127.0.0.1:8098")
+
+    def log(key: str) -> list[str]:
+        with urllib.request.urlopen(f"{base}/log/{key}", timeout=10) as resp:
+            return json.loads(resp.read())["calls"]
+
+    return log
+
+
+@pytest.fixture(scope="session")
 def fixture_calls():
     """Read the fixture service's per-key call counter.
 
@@ -302,6 +334,12 @@ def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
     can observe a detached run without a second fixture-calling workflow.
     """
     return _build_and_deploy("detached", "detached")
+
+
+@pytest.fixture(scope="session")
+def priority_mark_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that records its own claim order."""
+    return _build_and_deploy("prioritymark", "priority_mark")
 
 
 @pytest.fixture(scope="session")
@@ -428,6 +466,18 @@ def worker():
     class Worker:
         def crash(self) -> None:
             run("crash")
+
+        def stop(self) -> None:
+            """Graceful shutdown, as opposed to crash().
+
+            A test that wants to build a BACKLOG needs the worker gone without
+            claims left held: the API keeps accepting starts with no worker
+            running -- they land as `ready` rows -- and a graceful stop is what
+            makes the queue's contents entirely the test's doing. crash() would
+            leave whatever was in flight owned by a dead worker, which is the
+            right thing for a recovery test and the wrong thing here.
+            """
+            run("stop")
 
         def restart(self) -> None:
             run("ensure")

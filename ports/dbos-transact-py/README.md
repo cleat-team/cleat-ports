@@ -24,15 +24,15 @@ each file says about an *engine* as opposed to an application or a web framework
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 10 |
+| `tests/test_queue.py` | 103 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
 | `tests/test_failures.py` | 43 | **1** — retries, error classification, recovery | 9 |
 | `tests/test_workflow_management.py` | 44 | **1** — cancel, resume, fork, list, restart | 15 |
 | `tests/test_concurrency.py` | 21 | **1** — concurrent execution and isolation | 4 |
 | `tests/test_dbos.py` | 138 | 2 — broad core surface, mixed with SDK ergonomics | 24 |
 | `tests/test_async.py` | 57 | 2 — async workflow and step semantics | 0 |
-| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 4 |
+| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 6 |
 | `tests/test_client.py` | 54 | 3 — client API surface, largely DBOS-specific | 4 |
-| **Total in scope** | **495** | | **73** |
+| **Total in scope** | **495** | | **79** |
 
 ## What this port deliberately skips, and why
 
