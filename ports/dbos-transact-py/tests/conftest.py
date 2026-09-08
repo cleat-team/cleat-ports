@@ -199,6 +199,16 @@ class Cleat:
     def delete_schedule(self, name: str):
         return self._req("DELETE", f"/api/schedules/{name}")
 
+    def schedule_enabled(self, name: str, enabled: bool):
+        """Enable or disable a schedule.
+
+        POST /api/schedules/{name}/enable | /disable, both with no body.
+        Separate from delete_schedule because the difference is the point: a
+        disabled schedule is retained and can be resumed, a deleted one cannot.
+        """
+        action = "enable" if enabled else "disable"
+        return self._req("POST", f"/api/schedules/{name}/{action}", {})
+
     def query(self, run_id: str, key: str):
         return self._req("GET", f"/api/workflows/{run_id}/query?key={key}")
 

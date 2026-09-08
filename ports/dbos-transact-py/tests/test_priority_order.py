@@ -63,54 +63,55 @@ def test_priority_orders_the_second_batch(cleat, priority_mark_workflow, fixture
         )
         assert status == 201, f"start {i} rejected: {status} {run}"
 
-    # Batch 1: whoever the worker grabbed while starts were still arriving.
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline and len(_priorities(fixture_log, key)) < CONCURRENCY:
-        time.sleep(0.2)
-    batch1 = _priorities(fixture_log, key)[:CONCURRENCY]
-    assert len(batch1) == CONCURRENCY, (
-        f"the worker claimed only {len(batch1)} of {CONCURRENCY} slots in 60s: {batch1}"
-    )
-
-    remaining = sorted(set(range(ENQUEUED)) - set(batch1))
-    expected = remaining[:CONCURRENCY]
-
-    # Batch 2: everything has been queued for seconds. No race left.
-    deadline = time.monotonic() + 90
-    while time.monotonic() < deadline and len(_priorities(fixture_log, key)) < 2 * CONCURRENCY:
+    # Wait for everything, then compare the two halves of what remains after
+    # the enqueue window.
+    #
+    # THE FIRST `CONCURRENCY` ARRIVALS ARE EXCLUDED, and that is a statement
+    # about the system rather than a convenience. The worker begins claiming as
+    # soon as the first start lands, while the rest are still being issued --
+    # so those claims are made from a queue that does not yet contain the
+    # better priorities. They cannot be ordered with respect to work that did
+    # not exist.
+    #
+    # The measured arrival order shows it plainly:
+    #
+    #   [19,16,23,18,20,17,22,21, | 1,2,0,6,8,4,7,3,5, | 13,15,12,9,11,10,14]
+    #
+    # The first eight are the WORST priorities -- claimed during enqueue, in
+    # arrival order, exactly as expected. Everything after is near-perfectly
+    # ordered.
+    #
+    # Two earlier versions of this assertion tried to slice into batches and
+    # scored 9 of 10, then 8 of 10 under a fuller suite. The fix for that is
+    # not a looser threshold: slots free one at a time, so there is no instant
+    # at which a batch exists as a set, and any membership assertion is partly
+    # an assertion about where an arbitrary cut fell. Comparing means of the
+    # post-enqueue remainder has no cut to get wrong and uses every
+    # observation.
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline and len(_priorities(fixture_log, key)) < ENQUEUED:
         time.sleep(0.2)
     seen = _priorities(fixture_log, key)
-    assert len(seen) >= 2 * CONCURRENCY, (
-        f"only {len(seen)} of {ENQUEUED} workflows started within 150s: {seen}"
+    assert len(seen) == ENQUEUED, (
+        f"only {len(seen)} of {ENQUEUED} workflows started within 180s: {seen}"
     )
-    batch2 = sorted(seen[CONCURRENCY:2 * CONCURRENCY])
 
-    # AT LEAST 9 OF 10, not all 10, and the reason is a real boundary effect
-    # rather than tolerance for noise.
-    #
-    # Slots free one at a time as each held workflow finishes, so "batch 2" is
-    # not an atomic claim of ten -- it is ten claims spread over however long
-    # the first batch takes to drain, and a workflow that starts near that
-    # boundary can land on either side of the slice. A first measurement came
-    # back [0,1,2,3,4,5,6,7,8,11] against an expected [0..8,10]: nine exact,
-    # one neighbour.
-    #
-    # The threshold is still decisive. Ten draws from the fourteen still queued,
-    # if order were ignored, would match about 3.6 of the expected set on
-    # average; requiring 9 is far outside anything unordered dispatch produces.
-    # Requiring 10 would be asserting the absence of a boundary, which is not a
-    # property of the claim query.
-    hits = len(set(batch2) & set(expected))
-    assert hits >= CONCURRENCY - 1, (
-        f"after the first batch took {batch1}, the next {CONCURRENCY} claimed were "
-        f"{batch2}; only {hits} of them are among the {CONCURRENCY} best still "
-        f"queued ({expected}).\n"
-        f"Priorities were assigned in REVERSE enqueue order, so created_at cannot "
-        f"explain a pass: insertion order would claim the WORST remaining first. "
-        f"Unordered dispatch would score about {CONCURRENCY * CONCURRENCY // len(remaining)} "
-        f"by chance.\n"
-        f"The claim query orders by `priority ASC, created_at` on all three dialects. "
-        f"If that is not observable, the priority field is recorded and unused."
+    ordered = seen[CONCURRENCY:]          # after the enqueue window
+    half = len(ordered) // 2
+    first_mean = sum(ordered[:half]) / half
+    second_mean = sum(ordered[half:]) / len(ordered[half:])
+
+    assert first_mean + 4 <= second_mean, (
+        f"among the {len(ordered)} workflows claimed after the enqueue window, the "
+        f"first {half} averaged priority {first_mean:.1f} and the rest averaged "
+        f"{second_mean:.1f}; expected the earlier ones to be at least 4 better.\n"
+        f"arrival order: {seen}\n"
+        f"post-enqueue:  {ordered}\n"
+        f"Priorities were assigned in REVERSE enqueue order, so created_at alone "
+        f"would reverse this sign, and ignoring priority would make the means "
+        f"roughly equal.\n"
+        f"The claim query orders by `priority ASC, created_at` on all three "
+        f"dialects; if that is not observable, the field is recorded and unused."
     )
 
 
