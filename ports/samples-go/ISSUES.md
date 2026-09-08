@@ -604,6 +604,59 @@ satisfying two awaits; this is an under-count with the deliveries still queued.
 
 ---
 
+## 12. A child that continues as new is orphaned and its result stranded
+
+**Class:** Bug
+**Upstream sample:** `childworkflow-continueasnew/`
+**Status:** Filed — cleat-team/cleat#955
+
+**What upstream asserts**
+
+A parent sees ONE logical child across a continue-as-new chain. The child's run
+id changes on every iteration; the parent's handle keeps working and yields the
+final iteration's result.
+
+**What cleat does**
+
+```
+ id       | status | parent   | result
+ f29e8462 | done   | -        | {"firstChild":"a780e07a...","childResult":{}}   <- parent
+ a780e07a | done   | f29e8462 | {}                                              <- iteration 1
+ dff51f9b | done   | -        | {}                                              <- iteration 2
+ 56e61b2f | done   | -        | {"key":"...","final":true}                      <- iteration 3
+```
+
+Two independent failures. `parent_workflow_id` is **NULL on every continued
+run** — `ContinueAsNew` does not propagate it. And the parent's `AwaitChild`
+resolves against iteration 1, which completed empty because `ContinueAsNew`
+suspends rather than returning, so the parent gets `{}` while the result it
+wanted sits on a run nothing points at.
+
+The parent reports `done`. From its side this is a child that succeeded and
+returned nothing.
+
+**Assessment**
+
+The empty result is the dangerous half. `{}` is a legitimate result for a
+workflow that returns nothing, so a parent cannot tell "my child finished with
+no output" from "my child continued as new and I am holding a superseded run".
+A port written from Temporal's assumption gets a silent wrong answer rather
+than a failure.
+
+The chain itself works — `TestEveryIterationOfAContinuedChildRuns` counts
+iterations from the fixture's call log rather than from the result, and all
+three ran. Top-level continue-as-new is covered by the DBOS port and passes.
+This is specifically about a child.
+
+**An implication recorded as an implication.** `enforceParentClosePolicy`
+selects on `WHERE parent_workflow_id = $1`, and NULL cannot match — so a
+TERMINATE parent would appear to stop its child while every continued iteration
+kept running. Not measured here; stated in the issue as following from the NULL
+rather than as a result, because it changes whether propagating the link is
+sufficient or merely necessary.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>
