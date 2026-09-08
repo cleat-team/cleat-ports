@@ -57,9 +57,12 @@ sample is.
 
 ## Status
 
-**24 cases, 20 passing, 4 skipped** (2026-09-08) — 7 findings, 3 filed, 3 fixed.
+**28 cases, 24 passing, 4 skipped** (2026-09-08) — 9 findings, 4 filed, 3 fixed.
 
-Measured green on **PostgreSQL, MySQL and SQL Server**, all 24 on each. One case is
+Measured green on **PostgreSQL** (28/28). The first 24 were also measured on
+**MySQL** and **SQL Server**, 24/24 on each; the four `timer/` cases have not
+been run on those two yet, so the three-dialect claim covers 24 of 28 and is
+written that way deliberately rather than rounded up. One case is
 deliberately dialect-aware (cleat#936) and reports a different result on each,
 which is the finding; every other case asserts the same thing on both.
 
@@ -67,7 +70,7 @@ Derived, not asserted:
 
 ```
 $ go test ./tests/ -list '.*' | grep -c '^Test'
-24
+28
 ```
 
 The DBOS port's status line read "scaffolded — no tests ported yet" for two days
@@ -80,6 +83,7 @@ while 53 cases existed. Hence the command beside the number.
 | `await-signals/` | 6 | `tests/await_signals_test.go` |
 | `query/`, `query-workflow/` | 4 | `tests/query_test.go` |
 | — (route shape, not a sample) | 2 | `tests/identifier_test.go` |
+| `timer/`, `sleepfor/` | 4 | `tests/timer_test.go` |
 
 **The four skips are all one defect**, cleat-team/cleat#933 — a single signal
 delivery satisfies more than one `AwaitSignals`. They are skipped rather than

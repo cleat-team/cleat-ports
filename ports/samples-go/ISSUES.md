@@ -438,6 +438,65 @@ knows the name is not a definition and does not consult that on the way out.
 
 ---
 
+## 9. The durable clock goes backwards on the first durable event
+
+**Class:** Bug
+**Upstream sample:** `timer/`, `sleepfor/`
+**Status:** Filed — cleat-team/cleat#944
+
+**What upstream asserts**
+
+That a timer is an ENGINE primitive rather than a library call: deterministic on
+replay, and not a reading of the wall clock.
+
+**What cleat does**
+
+Two of the Timer contract's four claims hold exactly. Eight consecutive runs
+sampling `NowMs()` at four points:
+
+```
+t0->t1 (cpu work)   t1->t2 (durable call)   t2->t3 (sleep 200ms)
+      +0                    +355                    +200
+      +0                     -5                     +200
+      +0                    -26                     +200
+      +0                    -25                     +200
+      +0                    -18                     +200
+      +0                     +9                     +200
+      +0                    -23                     +200
+      +0                    -15                     +200
+```
+
+Virtual time does not advance during CPU work — `+0` every run. A sleep advances
+the clock by exactly the sleep — `+200` every run, never wall-clock elapsed.
+Those are the hard claims and they are solid.
+
+The third reading is non-monotonic, negative in six runs of eight.
+
+**Assessment**
+
+Two clock domains feed one value. `Now()` before any event is the workflow row's
+`created_at` — the **database** clock (`engine/engine.go:74`). The first recorded
+event's timestamp is the worker's `time.Now()` (`engine/lifecycle.go:148`).
+Nothing reconciles them, so the step between them is the offset between two
+machines' clocks, in whichever direction they differ.
+
+A workflow computing `Now().Sub(start)` across its first durable call gets a
+negative duration. The usual response to a negative duration is to clamp it,
+which hides it.
+
+It also undercuts what the other two claims buy. The contract's value is that
+virtual time is *derived* rather than observed — that is what makes replay
+reproducible. A value that mixes in a second observer's clock is only derived
+until the two observers disagree, and they always eventually do. 26ms is small
+because both clocks are on one laptop; a worker and a database in different
+zones have no such bound.
+
+Pinned rather than skipped: the assertion is one line, and skipping it would
+leave the two claims that DO hold without the monotonicity check that gives them
+context.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>
