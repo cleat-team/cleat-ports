@@ -236,20 +236,41 @@ class Cleat:
             time.sleep(0.1)
         return None
 
+    #: The statuses a run can settle in, taken from the engine rather than
+    #: assumed: cmd/cleat-worker/server.go's isTerminalStatus.
+    #:
+    #: "dead_lettered" was missing, so a dead-lettered run -- which is settled,
+    #: and is the whole point of the dead-letter tests -- could never satisfy
+    #: this loop. It polled a finished run until the deadline and then failed
+    #: with a message naming the terminal status it had spent 60s waiting for.
+    #:
+    #: "cancelled" was present and is NOT a workflow status. The engine never
+    #: writes it: the cancel endpoint returns {"status": "cancellation_
+    #: requested"} as an API response field, and engine/errors.go's "cancelled"
+    #: is an ErrorCode. test_cancellation.py says so in its own module
+    #: docstring -- "There is no cancelled terminal status" -- and pins it in
+    #: test_a_cancelled_workflow_still_reports_status_done. A cancelled run
+    #: ends up "done" or "terminated". Nothing depended on the branch; it never
+    #: matched anything.
+    #:
+    #: Those two are one defect, not two. A set of four names reads as an
+    #: enumeration of "the ways a run ends", so nobody counted it against the
+    #: engine -- and one of the four was fictional while a real one was absent.
+    #:
+    #: "terminating" is deliberately NOT here even though isTerminalStatus
+    #: includes it. There it means "the outcome is already decided, refuse a
+    #: late promise". Here it means the defer phase is still running and the
+    #: final status has not been written, so returning it would hand callers a
+    #: non-final status and break every `final["status"] == "done"` that
+    #: follows an await_terminal.
+    TERMINAL = ("done", "failed", "terminated", "dead_lettered")
+
     def await_terminal(self, run_id: str, timeout: float = 30.0) -> dict:
         deadline = time.monotonic() + timeout
         last: dict = {}
         while time.monotonic() < deadline:
             _, last = self.get(run_id)
-            # dead_lettered is terminal and was missing here until 2026-09-08.
-            # A dead-lettered run never satisfied this loop, so any test that
-            # awaited one burned its full timeout and then failed with "did not
-            # reach a terminal status ... last status 'dead_lettered'" -- a
-            # message naming the terminal state it was waiting for. The
-            # dead-letter tests all passed because they poll for it themselves
-            # in _dead_letter() rather than calling this.
-            if last.get("status") in ("done", "failed", "terminated", "cancelled",
-                                      "dead_lettered"):
+            if last.get("status") in self.TERMINAL:
                 return last
             time.sleep(0.2)
         pytest.fail(f"run {run_id} did not reach a terminal status within "
