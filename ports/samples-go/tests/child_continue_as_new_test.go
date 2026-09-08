@@ -63,18 +63,6 @@ func TestEveryIterationOfAContinuedChildRuns(t *testing.T) {
 // different id, so the question is whether the await follows the chain or waits
 // forever on a run that has been superseded.
 func TestAParentSeesItsChildAcrossAContinueAsNew(t *testing.T) {
-	// Blocked on cleat#955: a child that continues as new is orphaned
-	// (parent_workflow_id is NULL on every run after the first) and the
-	// parent's AwaitChild resolves against the superseded first run, returning
-	// {} while the final iteration's result is stranded.
-	//
-	// Skipped rather than inverted because the assertion IS the sample -- a
-	// parent seeing one logical child across the chain is the whole subject --
-	// and pinning "the parent gets an empty result" would mean writing the
-	// test twice. The two cases beside it stay green and keep the chain and the
-	// run-id relationship covered meanwhile.
-	t.Skip("blocked on cleat#955: a continued child is orphaned and its result stranded")
-
 	k := key(t)
 	runID := startedRunID(t, start(t, casnPair(t), map[string]any{
 		"key": k, "iterations": 3,

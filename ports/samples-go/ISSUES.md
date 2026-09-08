@@ -632,7 +632,7 @@ satisfying two awaits; this is an under-count with the deliveries still queued.
 
 **Class:** Bug
 **Upstream sample:** `childworkflow-continueasnew/`
-**Status:** Filed — cleat-team/cleat#955
+**Status:** Fixed — cleat-team/cleat#955, closed by #967 on 2026-09-08
 
 **What upstream asserts**
 
@@ -672,12 +672,23 @@ iterations from the fixture's call log rather than from the result, and all
 three ran. Top-level continue-as-new is covered by the DBOS port and passes.
 This is specifically about a child.
 
-**An implication recorded as an implication.** `enforceParentClosePolicy`
-selects on `WHERE parent_workflow_id = $1`, and NULL cannot match — so a
-TERMINATE parent would appear to stop its child while every continued iteration
-kept running. Not measured here; stated in the issue as following from the NULL
-rather than as a result, because it changes whether propagating the link is
-sufficient or merely necessary.
+**The implication was confirmed and it was worse than stated.** Another session
+measured it against the store: a TERMINATE parent left the continued iteration
+running while a plain sibling child stopped — and run 1 of the chain was
+unreachable too, by a *second* mechanism (`status NOT IN ('done','failed')`,
+and `ContinueAsNew` marks the superseded run `done`). So nothing in the chain
+was reachable from the parent, which is stronger than "the latest iteration is
+orphaned".
+
+**Fixed, and verified from the port on all three dialects**:
+`TestAParentSeesItsChildAcrossAContinueAsNew` passes on PostgreSQL, MySQL and
+SQL Server. The parent's `AwaitChild` follows the chain and returns the final
+iteration's result.
+
+**One gap stays open deliberately.** Chains written with a NULL parent link
+*before* the fix remain orphaned — the code fix does not repair existing rows,
+and whether that is worth a backfill migration is recorded on the issue rather
+than assumed. `continued_from` makes the walk feasible.
 
 ---
 
