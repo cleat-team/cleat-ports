@@ -67,14 +67,16 @@ func runCounter(t *testing.T, ticks int, budgetMs int) counterResult {
 
 // TestTheCountEqualsTheNumberOfSignalsSent is the sample's whole assertion.
 func TestTheCountEqualsTheNumberOfSignalsSent(t *testing.T) {
-	// Blocked on cleat#953: a workflow times out while the signal it awaits is
-	// already in workflow_signals. Rapid delivery -- N ticks with no gap -- has
-	// some consumed and the rest left queued until the budget expires.
+	// Un-skipped 2026-09-08. cleat#953 took two fixes: #981 made a signal
+	// delivered mid-segment schedule a wake, and #985 made a BURST drain rather
+	// than be slept through -- the port suite found the second, because #981
+	// passed the single-signal case while five ticks with no gap still stalled
+	// at two.
 	//
-	// TestTheCountIsVisibleWhileTheWorkflowRuns is the same workflow with one
-	// signal at a time and is green, which is what isolates this to delivery
-	// timing rather than to counting.
-	t.Skip("blocked on cleat#953: queued signals do not wake a suspended workflow")
+	// The wall clock is the corroboration and is worth keeping in mind if this
+	// ever regresses: before #985 this case took ~33s and was the timeout being
+	// SERVED; after, ~1-2s. A regression would show as duration long before
+	// anyone read the count.
 
 	const ticks = 5
 	got := runCounter(t, ticks, 30000)
@@ -107,14 +109,16 @@ func TestASingleSignalCountsOnce(t *testing.T) {
 // increment. A counter that counted its own terminator would be off by one in a
 // way that looks like a delivery defect and is not.
 func TestTheTerminalSignalIsNotCounted(t *testing.T) {
-	// Blocked on cleat#953: a workflow times out while the signal it awaits is
-	// already in workflow_signals. Rapid delivery -- N ticks with no gap -- has
-	// some consumed and the rest left queued until the budget expires.
+	// Un-skipped 2026-09-08. cleat#953 took two fixes: #981 made a signal
+	// delivered mid-segment schedule a wake, and #985 made a BURST drain rather
+	// than be slept through -- the port suite found the second, because #981
+	// passed the single-signal case while five ticks with no gap still stalled
+	// at two.
 	//
-	// TestTheCountIsVisibleWhileTheWorkflowRuns is the same workflow with one
-	// signal at a time and is green, which is what isolates this to delivery
-	// timing rather than to counting.
-	t.Skip("blocked on cleat#953: queued signals do not wake a suspended workflow")
+	// The wall clock is the corroboration and is worth keeping in mind if this
+	// ever regresses: before #985 this case took ~33s and was the timeout being
+	// SERVED; after, ~1-2s. A regression would show as duration long before
+	// anyone read the count.
 
 	got := runCounter(t, 3, 20000)
 	if strings.Count(got.Seen, "done") != 1 {
