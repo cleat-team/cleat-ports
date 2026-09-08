@@ -194,35 +194,73 @@ def test_an_unknown_run_is_a_clean_404_on_every_read_path(cleat):
     path rather than one: under cleat#830 these fell through to the SPA
     handler, which answers 200 with HTML for any unmatched path, so a client
     got a web page where it expected JSON.
+
+    This test used to be split in two. Three of the five paths -- events,
+    history and promises -- answered 200 with an empty list for a run that did
+    not exist, so a caller could not tell "no events" from "no such workflow"
+    and a typo in an id looked like a healthy empty result. That half asserted
+    the WRONG behaviour on purpose, with a note saying to update it if the
+    paths ever started answering 404, and it is what found cleat#900.
+
+    They 404 now. cleat#917 landed the fix and this test failed in CI the same
+    day, which is the whole point of pinning current behaviour rather than
+    skipping it: the assertion was the thing that noticed.
+
+    Note the empty list was never a safe thing to accept even as a placeholder.
+    An empty collection is a NORMAL state here -- event history is buffered
+    within a segment and purged at completion, so a legitimately finished run
+    also reports [] -- and 200 [] therefore meant three different things at
+    once, with nothing to separate them.
     """
     missing = str(uuid.uuid4())
     for path in (
         f"/api/workflows/{missing}",
         f"/api/instances/{missing}/state",
-    ):
-        code, body = cleat.api(path)
-        assert code == 404, (
-            f"{path} answered {code} for a nonexistent run: {body!r}. "
-            f"200 means the SPA fallback served it (cleat#830); 500 means the "
-            f"status came from an error message (cleat#832)."
-        )
-
-    # events, history and promises answer 200 [] for a run that does not exist,
-    # so a caller cannot tell "no events" from "no such workflow" and a typo in
-    # an id looks like a healthy empty result. Asserted as-is rather than
-    # skipped, because it is current behaviour and a change to it should fail
-    # this test and be a deliberate decision. Filed as cleat#900.
-    for path in (
         f"/api/instances/{missing}/events",
         f"/api/workflows/{missing}/history",
         f"/api/workflows/{missing}/promises",
     ):
         code, body = cleat.api(path)
-        assert (code, body) == (200, []), (
-            f"{path} answered {code} {body!r} for a nonexistent run. This test "
-            f"pins CURRENT behaviour: these three do not distinguish an unknown "
-            f"run from an empty one, unlike /state and the run itself which 404. "
-            f"If this now 404s, cleat#900 has been resolved -- update the test."
+        assert code == 404, (
+            f"{path} answered {code} for a nonexistent run: {body!r}. "
+            f"200 means either the SPA fallback served it (cleat#830) or the "
+            f"collection endpoints have regressed to reporting empty rather "
+            f"than absent (cleat#900); 500 means the status came from an error "
+            f"message (cleat#832)."
+        )
+
+
+def test_an_empty_collection_on_a_real_run_is_still_200(cleat, retry_workflow):
+    """The control on the test above.
+
+    Making the five paths 404 for an unknown run is only correct if a run that
+    DOES exist and genuinely has nothing still answers 200. Without this, an
+    implementation that 404'd every empty collection -- including on live runs,
+    where empty is normal -- would pass every assertion above.
+
+    That is not hypothetical: cleat#900's fix is one shared `runExists` helper
+    in front of all three collections, so a wrong lookup there fails in exactly
+    this direction and nothing else in this suite would catch it.
+    """
+    key = f"empty-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key, "attempts": 1,
+        "intervalMs": 50, "failTimes": 0,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    for path in (
+        f"/api/instances/{run_id}/events",
+        f"/api/workflows/{run_id}/history",
+        f"/api/workflows/{run_id}/promises",
+    ):
+        code, body = cleat.api(path)
+        assert code == 200, (
+            f"{path} answered {code} for a run that EXISTS: {body!r}. "
+            f"An empty collection on a live run is normal -- history is "
+            f"buffered per segment and purged at completion -- so this must "
+            f"stay 200 while an unknown run 404s."
         )
 
 
