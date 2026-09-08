@@ -64,6 +64,41 @@ make all-ports DIALECT=$d > "$OUT/$d.log" 2>&1
 grep -E '^--- (dbos-transact-py|samples-go):|passed,|--- FAIL' "$OUT/$d.log"
 ```
 
+## Decide a run finished from the task, never from its output file
+
+Every other entry here is about a run that produced the wrong answer. This one
+is about reading a run that has not produced an answer yet, and it caught two
+sessions in one night.
+
+`go test` buffers and writes at the end, so a `grep -c` over its output while it
+is still going returns **0** — and:
+
+    0 matching events  +  0 failures  =  exactly what a clean completed run looks like
+
+The empty file does not look empty. It looks like success. One session reported
+"zero events across the whole suite, zero failures" from a file that was 0 bytes
+with two `go test` processes still running.
+
+**This is the same defect as *Do not truncate the output* above**, and the two
+belong together: in both, nothing in the pipeline carried the run's completion
+state, so a partial read and a final read were indistinguishable at the point of
+reading. Truncation throws away part of a finished run; this throws away the
+distinction between finished and not. Either way the result is well-formed and
+looks like a finding.
+
+The discipline already exists for CI and is worth pointing at your own jobs.
+Nobody trusts `gh pr checks` to have listed every check; you gate on a total, or
+on `mergeStateStatus`, because a check list lies by omission and "no pending"
+also matches "never started". The same scepticism belongs on a background run
+you started yourself:
+
+  - wait for the task to **report completion**, then read the file
+  - or have the command write a sentinel as its last action, and gate on that
+  - never infer "it finished" from "the output contains no failures"
+
+The trap is that this discipline tends to be pointed outward. Careful about
+someone else's tooling, credulous about your own.
+
 ## Print what is actually running
 
 After bringing databases up, print `docker ps` rather than trusting that `make
