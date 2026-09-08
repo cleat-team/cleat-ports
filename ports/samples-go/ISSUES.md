@@ -205,7 +205,7 @@ finishes before its parent fails as a harness problem naming itself as one.
 
 **Class:** Bug
 **Upstream sample:** `await-signals/`
-**Status:** Filed — cleat-team/cleat#933
+**Status:** Fixed — cleat-team/cleat#933, closed by #950, #967/#968 and #974 on 2026-09-08
 
 **What upstream asserts**
 

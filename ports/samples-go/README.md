@@ -57,7 +57,7 @@ sample is.
 
 ## Status
 
-**41 cases, 37 passing, 4 skipped** (2026-09-08) — 12 findings, 7 filed, 6 fixed.
+**41 cases, 38 passing, 3 skipped** (2026-09-08) — 12 findings, 7 filed, 6 fixed.
 
 Measured green on **PostgreSQL** and **MySQL**, all 41 on each. SQL Server was
 green at 24 cases; the 17 added since have not been run there, so that claim

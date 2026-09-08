@@ -109,16 +109,6 @@ func TestEverySignalMustArriveBeforeTheWorkflowProceeds(t *testing.T) {
 // TestTheOrderSignalsArriveInDoesNotMatter is upstream's actual guarantee, and
 // the one a test that always sends in declaration order cannot show.
 func TestTheOrderSignalsArriveInDoesNotMatter(t *testing.T) {
-	// Blocked on cleat#933 symptom A -- one delivery satisfying more than one
-	// await -- which #950 did not touch and which is now the whole of that
-	// issue.
-	//
-	// This test sends all three names once each and expects completion. Under A
-	// an await can return a name already seen, so the loop makes no progress on
-	// that iteration and burns budget instead. It is the only one of the four
-	// original skips that #950 did not release; the other three are green.
-	t.Skip("blocked on cleat#933 (symptom A): a repeat delivery stalls the loop")
-
 	// Blocked on a second defect, not #933: the await's timeout does not fire.
 	// This test sends three copies of one signal to a workflow awaiting three
 	// NAMES with an 8000ms timeout, and the run never leaves "ready".
@@ -146,10 +136,25 @@ func TestTheOrderSignalsArriveInDoesNotMatter(t *testing.T) {
 	k := key(t)
 	runID := startWaiting(t, k, "approve,fund,ship", 60000)
 
+	// Wait for each arrival to be recorded before sending the next.
+	//
+	// The subject here is ORDER -- the same three names in a different sequence
+	// -- not delivery timing. Sending all three with no gap makes the test
+	// depend on cleat#953 instead: a signal arriving while the workflow is
+	// still awake handling the previous one is queued without scheduling a
+	// wake, and the run sits at `ready` until its budget expires.
+	//
+	// That is what this was doing. It was skipped as blocked on cleat#933, and
+	// when #933 was fixed it kept failing -- because #933 was never what
+	// stopped it. Rapid delivery keeps its own coverage in
+	// signal_counter_test.go, where it is the subject rather than an accident.
+	sent := []string{}
 	for _, name := range []string{"ship", "approve", "fund"} {
 		if r := signal(t, runID, name, `{}`); r.Status != 200 {
 			t.Fatalf("delivering %q answered %d: %s", name, r.Status, r.Raw)
 		}
+		sent = append(sent, name)
+		awaitQueryState(t, runID, "seen", strings.Join(sent, ","), 30*time.Second)
 	}
 	final := awaitTerminal(t, runID, 30*time.Second)
 	if final["status"] != "done" {
@@ -303,29 +308,38 @@ func twoAwaitsWorkflow(t *testing.T) string {
 	return twoAwaitWF
 }
 
-// TestOneDeliveryCurrentlySatisfiesTwoAwaits pins the defect that skips the
-// four tests above, so the port notices when it is fixed.
+// TestOneDeliverySatisfiesExactlyOneAwait was a pin and is now an assertion.
 //
-// Same construction the DBOS port used for cleat#900: assert the WRONG
-// behaviour deliberately, say so in the message, and let the failure be the
-// news. That test failed the same day #917 landed and named the issue in its
-// own output, which is the only reason to write one this way.
+// It shipped asserting the WRONG behaviour on purpose -- that one delivery of
+// "a" satisfied both awaits -- with its own message saying what its failure
+// would mean. It failed when cleat#933 was fixed, printing:
 //
-// It runs against workflows/twoawaits rather than the sample's own workflow.
-// The sample loops, so it reaches a THIRD await and hits #933's other symptom
-// -- the checksum mismatch -- which would make this test report the wrong half
-// of the defect and go green for the wrong reason when only one half is fixed.
+//	cleat#933 appears to be FIXED: one delivery of "a" no longer satisfies the
+//	second await, which timed out as it should. Remove this test and un-skip
+//	the four above.
 //
-// Signal "a" is delivered once; "b" never. Correct behaviour is that the
-// second await times out. Current behaviour is that it returns "a" again.
-func TestOneDeliveryCurrentlySatisfiesTwoAwaits(t *testing.T) {
+// Fourth time that construction has caught its own obsolescence.
+//
+// The issue took three shapes before it closed, and the port's measurements
+// moved it twice. It began as two symptoms; #950 fixed the checksum half; the
+// duplicate then stopped reproducing under #967/#968, leaving a misattribution
+// -- the first await reporting a spurious timeout while the delivery landed on
+// the second. What located THAT was a column nobody had looked at:
+//
+//	step | event_type      | created
+//	   0 | await_signals   | 13:27:18.964
+//	   1 | await_signals   | 13:27:18.964     <- same millisecond
+//	   2 | signal_received | 13:27:21.965        three seconds later
+//
+// Both awaits written before any signal existed, so both were recorded in one
+// segment with no history to replay. That moved the fault off the replay arm
+// and onto the fresh path, where #974 found it: a suspending await returned a
+// value byte-identical to a genuine timeout, the guest read it as one and ran
+// on, and the second await recorded into a segment that had already ended.
+func TestOneDeliverySatisfiesExactlyOneAwait(t *testing.T) {
 	runID := startedRunID(t, start(t, twoAwaitsWorkflow(t), map[string]any{
 		"tag": key(t), "unused": 0,
 	}))
-	// No phase wait: this workflow publishes none. The sleep is only to let
-	// the run reach its first await, and the assertion does not depend on it
-	// -- a signal that arrives before the await is buffered, which
-	// TestASignalSentBeforeTheWaitIsNotLost establishes separately.
 	time.Sleep(2 * time.Second)
 
 	if r := signal(t, runID, "a", `{}`); r.Status != 200 {
@@ -334,20 +348,22 @@ func TestOneDeliveryCurrentlySatisfiesTwoAwaits(t *testing.T) {
 
 	final := awaitTerminal(t, runID, 40*time.Second)
 	result, _ := final["result"].(string)
-
-	if strings.Contains(result, `"secondTimedOut":true`) {
-		t.Errorf("cleat#933 appears to be FIXED: one delivery of \"a\" no longer satisfies "+
-			"the second await, which timed out as it should (%q). Remove this test and "+
-			"un-skip the four above.", result)
-		return
-	}
 	if final["status"] != "done" {
-		t.Fatalf("neither the defect nor the fix: the run ended %v with result %q, error %v",
-			final["status"], result, final["error"])
+		t.Fatalf("the run ended %v: %v", final["status"], final["error"])
 	}
-	if !strings.Contains(result, `"second":"a"`) {
-		t.Fatalf("unexpected outcome, neither the defect nor the fix: %q", result)
+
+	// The FIRST await takes the delivery. Getting it on the second while the
+	// first reports a timeout is the misattribution #974 fixed, and it is
+	// distinguishable from the older duplicate only by which await timed out.
+	if !strings.Contains(result, `"first":"a"`) || !strings.Contains(result, `"firstTimedOut":false`) {
+		t.Errorf("the first await did not receive the delivery: %q\n"+
+			"A spurious timeout here with the signal landing on the second await is "+
+			"cleat#933's misattribution returning.", result)
 	}
-	t.Logf("cleat#933 still present: one delivery of \"a\" satisfied both awaits and the "+
-		"run completed (%q) instead of the second await timing out on \"b\".", result)
+	// And exactly one: the second must time out, because "b" is never sent.
+	if !strings.Contains(result, `"secondTimedOut":true`) {
+		t.Errorf("the second await did not time out on \"b\", which was never sent: %q\n"+
+			"One delivery satisfying two awaits is cleat#933's original duplicate.",
+			result)
+	}
 }
