@@ -31,14 +31,14 @@ application or a web framework.
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
 | `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
-| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 22 |
+| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 27 |
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 11 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **92** |
+| **Total in scope** | **371** | | **97** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -213,13 +213,14 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_queues.py` | 4 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
 | `test_recovery.py` | 2 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
+| `test_results.py` | 5 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
 | `test_retries.py` | 15 | `test_failures.py` |
 | `test_scheduling.py` | 10 | `test_scheduler.py` — cron and delayed invocation |
 | `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **98** (3 skipped outright) | **92** credited upstream, **6** cleat-specific |
+| **Total** | **103** (3 skipped outright) | **97** credited upstream, **6** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
