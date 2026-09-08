@@ -138,7 +138,7 @@ def test_an_idempotency_key_survives_the_loss_of_its_worker(
     # The crash must land AFTER the first durable call, or there is nothing in
     # front of the interruption and the central assertion holds vacuously --
     # the same precondition the plain recovery test makes explicit.
-    _wait_until(
+    wait_until(
         lambda: fixture_calls(f"{key}-before") == 1,
         timeout=60.0,
         what="the pre-crash durable call to reach the fixture",
