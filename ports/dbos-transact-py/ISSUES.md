@@ -772,8 +772,32 @@ upstream fails, cleat returns success with a substituted value. Whether to
 surface it (an `error_code`, or failing the run) is a product decision, which is
 why this is recorded here rather than filed as a defect.
 
+**A second finding, from the control rather than the subject**
+
+The large-integer case was included as a CONTROL -- to show the engine does not
+mangle values merely for being awkward. It found a different defect, filed as
+cleat#1022: the same result is stored exactly on PostgreSQL and narrowed to a
+double on MySQL.
+
+| dialect | `{"x":123456789012345678901234567890}` stored as |
+|---|---|
+| PostgreSQL | `{"x": 123456789012345678901234567890}` |
+| MySQL | **`{"x": 1.2345678901234566e29}`** |
+
+Read from the column on both, same WASM binary. The conversion is inherent to
+MySQL's `JSON` type -- exact only to `BIGINT` -- so the defect is the silence
+and the divergence, not the narrowing. Nothing logs it, and the degraded value
+is valid JSON of the right shape.
+
+Worth recording how it surfaced: an assertion that the result "is a number" or
+"is an object" passes on both dialects. It took comparing against the exact
+returned string, on more than one dialect, and it was not what the case was for.
+
 **Tests**
 
-`tests/test_results.py` pins the current behaviour, with both controls. The
-substitution test fails with instructions to invert it if cleat moves to
-upstream's behaviour.
+`tests/test_results.py` pins the current behaviour, with the `valid` control.
+The substitution test fails with instructions to invert it if cleat moves to
+upstream's behaviour, and the large-integer test asserts per-dialect values --
+skipping, with its reason, on any dialect nobody has measured. SQL Server is
+unmeasured: `result` there is a `CHECK (ISJSON(...))` column, a third
+implementation, and guessing would assert nothing.
