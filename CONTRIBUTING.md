@@ -25,6 +25,20 @@ assertions — the upstream is a specification, not a source tree to copy from.
 This repo follows the same DCO sign-off and branch-naming conventions as
 `cleat-team/cleat`. Sign commits off with `git commit -s`.
 
+**And `-s` really is needed here, which is easy to miss if you also work in
+`cleat-team/cleat`.** That repo sets `core.hooksPath=.githooks`, and its hook
+adds `Signed-off-by` for you — so a session can land many PRs there without ever
+typing `-s` and reasonably conclude sign-off is automatic. A fresh clone of
+*this* repo has no `core.hooksPath` and no `.githooks`, so nothing signs for
+you and the DCO check fails on the first push. Confirm with:
+
+```sh
+git config --get core.hooksPath   # empty here; `.githooks` in cleat-team/cleat
+```
+
+Worth stating because the failure is invisible until it happens somewhere else:
+the habit that works is the one that was never yours.
+
 ## Branches and merges
 
 Same discipline as `cleat-team/cleat` and `cleat-team/cleat-bench`:
