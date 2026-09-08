@@ -18,6 +18,7 @@ port, but the assertions do.
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -272,4 +273,184 @@ def test_re_enabling_a_schedule_resumes_it(
         lambda: fixture_calls(key) > disabled_at,
         timeout=CRON_FIRE_TIMEOUT,
         what="the re-enabled schedule to fire again",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schedule policies: misfire, catch-up limit, overlap
+#
+# WHAT IS AND IS NOT ALREADY COVERED, re-derived against develop rather than
+# quoted from when these were written -- test_misfire.py (#61) landed in
+# between and made the original claim false:
+#
+#   misfire_policy   test_misfire.py sets it and asserts the BEHAVIOUR:
+#                    catch_up delivers the backlog after an outage, skip does
+#                    not. Covered, and these tests do not repeat it.
+#   catch_up_limit   appears twice on develop, both times in prose -- a
+#                    sentence and an assertion message. Never sent.
+#   overlap_policy   appears ONCE on develop, inside a grep command quoted in
+#                    test_misfire.py's own docstring. Never sent.
+#
+# Check it by looking at where the name sits, not by counting matches; a
+# text search cannot tell a request field from a sentence about one:
+#
+#     git grep -n overlap_policy origin/develop -- 'ports/'
+#
+# So two of the three policy fields still reach the server from no test at
+# all, and the surface itself -- does a value survive the round trip, is a
+# bad one refused, what comes back when you send nothing -- is untested for
+# all three. That is what these add, one layer below #61: it asks what the
+# policy DOES, these ask whether it can be SET.
+#
+# They pin the OPERATOR path deliberately. The scheduling tests above register
+# schedules from guest code via h.ScheduleCron, which carries none of the
+# three -- so POST /api/schedules is not merely another way in, it is the only
+# way to set a policy at all.
+#
+# What these do NOT test is what the policies do; #61 does that.
+#
+# The rejection test is the one that distinguishes the two failure modes a
+# write-only surface has: a field that is stored but ignored, and a field that
+# is neither stored nor rejected. A round-trip alone cannot tell "accepted and
+# persisted" from "accepted, defaulted, and happens to match what I sent".
+
+
+def test_the_schedule_policies_round_trip_through_the_api(cleat, cron_workflows, cleanup_schedules):
+    """All three policy fields survive create and come back on read.
+
+    Non-default values on purpose: sending catch_up/allow would pass against a
+    server that dropped the fields entirely and let the column defaults answer.
+    """
+    name = f"policy-{uuid.uuid4().hex[:8]}"
+    status, created = cleat.create_schedule(
+        name, "*/5 * * * *", "cron_target",
+        misfire="skip", catch_up_limit=7, overlap_policy="skip",
+    )
+    assert status in (200, 201), f"create rejected: {status} {created}"
+    cleanup_schedules.append(name)
+
+    status, listing = cleat.schedules()
+    assert status == 200, f"listing failed: {status} {listing}"
+    rows = listing if isinstance(listing, list) else listing.get("schedules", [])
+    mine = [r for r in rows if r.get("name") == name]
+    assert len(mine) == 1, f"expected exactly one schedule named {name}, got {mine!r}"
+    got = mine[0]
+
+    assert got.get("misfire_policy") == "skip", (
+        f"misfire_policy read back as {got.get('misfire_policy')!r}, want 'skip'. "
+        "The field was accepted by the API and is not in the row -- a policy that "
+        "cannot be set is worse than one that does not exist, because the caller "
+        "is told it succeeded."
+    )
+    assert got.get("catch_up_limit") == 7, (
+        f"catch_up_limit read back as {got.get('catch_up_limit')!r}, want 7"
+    )
+    assert got.get("overlap_policy") == "skip", (
+        f"overlap_policy read back as {got.get('overlap_policy')!r}, want 'skip'"
+    )
+
+
+def test_an_unknown_misfire_policy_is_refused(cleat, cron_workflows, cleanup_schedules):
+    """An unrecognised policy is a 400, not a silent fall back to the default.
+
+    This is what makes the round-trip above mean something. A server that
+    ignored the field entirely would still store 'catch_up', still answer 200,
+    and still look correct to any test that only sends valid values.
+
+    It matters beyond tidiness: the scheduler reads the stored string and the
+    migration constrains the column to ('catch_up','skip'), so a value that
+    reached the database would be one the scheduler cannot interpret at 03:00 --
+    which is the reason engine/cron.go gives for validating at all.
+    """
+    name = f"policy-bad-{uuid.uuid4().hex[:8]}"
+    status, body = cleat.create_schedule(
+        name, "*/5 * * * *", "cron_target", misfire="sometimes",
+    )
+    if status in (200, 201):
+        cleanup_schedules.append(name)
+    assert status == 400, (
+        f"an unknown misfire policy answered {status} {body!r}, want 400. "
+        "Accepting it means either the value is stored and the scheduler will "
+        "meet it later, or it is dropped and the caller was told a policy was "
+        "set that was not."
+    )
+
+
+def test_a_schedule_created_without_policies_carries_the_documented_defaults(
+    cleat, cron_workflows, cleanup_schedules
+):
+    """Omitting the fields yields catch_up and allow, not empty strings.
+
+    The defaults are a documented promise -- engine/cron.go says catch_up is the
+    default "because the engine promises at-least-once", and allow is the
+    default "only because it is what the scheduler has always done". A row that
+    came back with '' would satisfy neither, and would push the decision to
+    whichever reader remembered to call MisfirePolicyOrDefault.
+    """
+    name = f"policy-default-{uuid.uuid4().hex[:8]}"
+    status, created = cleat.create_schedule(name, "*/5 * * * *", "cron_target")
+    assert status in (200, 201), f"create rejected: {status} {created}"
+    cleanup_schedules.append(name)
+
+    _, listing = cleat.schedules()
+    rows = listing if isinstance(listing, list) else listing.get("schedules", [])
+    mine = [r for r in rows if r.get("name") == name]
+    assert len(mine) == 1, f"expected one schedule named {name}, got {mine!r}"
+    got = mine[0]
+
+    assert got.get("misfire_policy") == "catch_up", (
+        f"misfire_policy defaulted to {got.get('misfire_policy')!r}, want 'catch_up'"
+    )
+    assert got.get("overlap_policy") == "allow", (
+        f"overlap_policy defaulted to {got.get('overlap_policy')!r}, want 'allow'"
+    )
+
+
+def test_a_newly_created_schedule_is_not_already_due(cleat, cron_workflows, cleanup_schedules):
+    """next_run_at comes back in the future, not at the epoch.
+
+    The column is `NOT NULL DEFAULT now()`, but a column default applies only
+    when the INSERT omits the column, and CreateSchedule names every column. So
+    a handler that left NextRunAt unset bound the zero time.Time and the row
+    stored 0001-01-01 -- and the scheduler selects due work with
+    `next_run_at <= now()`, which year 1 satisfies permanently. Every schedule
+    created through this endpoint fired on the next tick regardless of its cron
+    expression (cleat#998).
+
+    Asserted here rather than only upstream because the unit test that covers
+    it uses a mock store: it can prove the handler PASSES a sane value, not
+    that a real database stores one and a real API hands it back. This is the
+    only place all three are true at once.
+
+    A daily cron is what makes it an assertion. With `*/5 * * * *` the next
+    instant is at most five minutes out, which is close enough to now that a
+    clock skew or a slow create could make a correct value look wrong; at 07:00
+    daily the gap between "the epoch" and "the right answer" is never smaller
+    than hours.
+    """
+    name = f"due-{uuid.uuid4().hex[:8]}"
+    status, created = cleat.create_schedule(name, "0 7 * * *", "cron_target")
+    assert status in (200, 201), f"create rejected: {status} {created}"
+    cleanup_schedules.append(name)
+
+    status, listing = cleat.schedules()
+    assert status == 200, f"listing failed: {status} {listing}"
+    rows = listing if isinstance(listing, list) else listing.get("schedules", [])
+    mine = [r for r in rows if r.get("name") == name]
+    assert len(mine) == 1, f"expected one schedule named {name}, got {mine!r}"
+
+    next_run = mine[0].get("next_run_at")
+    assert next_run, f"next_run_at missing from the listing: {mine[0]!r}"
+    # Parse without assuming a fixed offset spelling: Go renders RFC3339 with
+    # "Z" for UTC, which fromisoformat rejected before 3.11.
+    parsed = datetime.fromisoformat(next_run.replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    assert parsed.year > 1970, (
+        f"next_run_at is {next_run}, at or before the epoch. The schedule is "
+        "permanently due and will fire on the next scheduler tick instead of "
+        "at 07:00."
+    )
+    assert parsed > now, (
+        f"next_run_at is {next_run}, which is already past (now {now.isoformat()}). "
+        "A schedule created just now is due immediately."
     )
