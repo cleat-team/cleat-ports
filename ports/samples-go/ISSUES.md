@@ -183,6 +183,93 @@ finishes before its parent fails as a harness problem naming itself as one.
 
 ---
 
+## 4. A single signal delivery satisfies two `AwaitSignals`
+
+**Class:** Bug
+**Upstream sample:** `await-signals/`
+**Status:** Filed — cleat-team/cleat#933
+
+**What upstream asserts**
+
+Each named signal is awaited and consumed once. A workflow waiting for three
+distinct signals proceeds when all three have arrived, and one delivery
+advances exactly one wait.
+
+**What cleat does**
+
+One delivery satisfies more than one await. `workflows/twoawaits/main.go` is
+the reproduction and ships with this port; it contains two straight-line
+`AwaitSignals` calls and nothing else.
+
+Start it, wait for it to suspend, deliver `a` once, deliver nothing else:
+
+```
+run1: done | {"first":"a","second":"a"} | signal rows left=0
+run2: done | {"first":"a","second":"a"} | signal rows left=0
+run3: done | {"first":"a","second":"a"} | signal rows left=0
+```
+
+Three awaits instead of two fails differently — a checksum mismatch at step 2,
+with two byte-identical `await_signals` events in history.
+
+**Assessment**
+
+Not the duplicate that `engine/signaller.go:312` already tolerates. That
+comment's reasoning depends on a delivery row SURVIVING a failed consume, and
+the row count above is zero: `ConsumeSignal` succeeded and the second delivery
+came from somewhere else.
+
+That distinction is the whole finding, and it nearly went unfiled. The comment
+made a real defect look like documented behaviour — the mirror image of the
+child-workflow case in #3, where a comment made a harness bug look like a real
+defect. The discriminator in both is the same: test the premise the comment's
+argument rests on, not its conclusion.
+
+Four assertions in `tests/await_signals_test.go` are skipped on this, and
+`TestOneDeliveryCurrentlySatisfiesTwoAwaits` pins the defect so the port
+notices the fix — the construction the DBOS port used for cleat#900.
+
+---
+
+## 5. There is no "await these N distinct signals" primitive
+
+**Class:** Missing API
+**Upstream sample:** `await-signals/`
+**Status:** Open
+
+**What upstream asserts**
+
+The sample's whole subject is waiting for several DISTINCT named signals and
+proceeding once each has arrived, in any order.
+
+**What cleat does**
+
+Two calls, neither of which is that:
+
+| call | returns when |
+|---|---|
+| `AwaitSignals(names, timeout)` | ONE of the names arrives |
+| `AwaitSignalsWithQuorum(names, minCount, maxRejections, timeout)` | `minCount` SIGNALS have arrived |
+
+Quorum is the closer-looking fit and the wrong one. `minCount` counts
+DELIVERIES, not distinct names, so three deliveries of `approve` satisfy a
+quorum of 3 over three different names. Upstream's guarantee is that each named
+signal arrived, which quorum cannot express.
+
+So the port loops over `AwaitSignals` and de-duplicates by name itself.
+
+**Assessment**
+
+Arguably fine — the loop is six lines and does exactly what is needed. It is
+recorded because the natural reading of the API leads to the wrong call, and
+the difference is invisible in any test that sends three different names once
+each, which is what a test written from the sample would do.
+
+`TestRepeatingOneSignalDoesNotSatisfyTheOthers` is the assertion that separates
+them. It is currently skipped on #4.
+
+---
+
 ## Template for an entry
 
 ## N. <one-line summary>

@@ -265,6 +265,37 @@ func isRunning(t *testing.T, runID string) bool {
 	return true
 }
 
+// signal delivers a signal over HTTP.
+//
+// The body field is `signal_name`, not `name`. `name` is a 400 saying
+// "signal_name is required", which is obvious once seen and invisible before.
+func signal(t *testing.T, runID, signalName, payload string) response {
+	t.Helper()
+	return call(t, http.MethodPost, "/api/workflows/"+runID+"/signal",
+		map[string]any{"signal_name": signalName, "payload": payload}, nil)
+}
+
+// awaitQueryState waits until a key holds an expected value.
+//
+// Distinct from pollQueryState, which waits for ANY value: several assertions
+// here need to know the workflow has reached a particular phase before the
+// test does something to it, and "non-empty" would be satisfied by the
+// previous phase.
+func awaitQueryState(t *testing.T, runID, key, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		_, last = queryState(t, runID, key)
+		if last == want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("run %s never reached %s=%q within %s; last value %q",
+		runID, key, want, timeout, last)
+}
+
 // ---- deployment ----
 
 // deploy builds one workflow package to WASM and deploys it under a name.
