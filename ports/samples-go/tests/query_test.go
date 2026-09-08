@@ -86,41 +86,39 @@ func TestAKeyNobodyPublishedIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestAQueryOnAnUnknownRunCurrentlyAnswers200 pins CURRENT behaviour, which is
-// wrong, so that the port notices when it is fixed.
+// TestAQueryOnAnUnknownRunIs404 — and this test is the reason to write the
+// other kind first.
 //
-// This assertion was written as `want 404`, on the grounds that cleat#900 had
-// settled the question for the other per-run reads and #917 had landed the
-// fix. It failed:
+// It began as `want 404`, on the grounds that cleat#900 had settled the
+// question for the per-run reads. It failed:
 //
 //	GET /api/workflows/00000000-.../query?key=counter
 //	200 {"key":"counter","value":""}
 //
-// /query was not among the endpoints #900 named. The fix closed the three the
-// issue listed rather than the class it described, and this is the sixth.
+// /query was the last run-scoped read still answering 200 — not among the three
+// #900 named, because that fix closed the endpoints the issue LISTED rather
+// than the class it DESCRIBED.
 //
-// Filed and fixed in cleat-team/cleat#935. Inverted rather than skipped
-// because the correct assertion is one line and the pin costs nothing --
-// unlike the four #933 skips, where inverting would have meant writing each
-// test twice.
+// So it was inverted to pin the 200 and say what its own failure would mean.
+// cleat#935 landed and it failed within the hour, printing:
 //
-// The empty value is worse here than the empty list was on /events, because it
-// is ALSO a legitimate answer: an unpublished key reads exactly the same as a
-// nonexistent run.
-func TestAQueryOnAnUnknownRunCurrentlyAnswers200(t *testing.T) {
+//	cleat#935 has landed: a query on an unknown run now answers 404.
+//	Rename this test back to TestAQueryOnAnUnknownRunIs404 and assert 404.
+//
+// Which is exactly what this commit does. The whole round trip — assert the
+// right thing, find it fails, pin the wrong thing with a note, get told when to
+// unpin — is the construction the DBOS port used for #900 itself, and it has
+// now worked twice.
+func TestAQueryOnAnUnknownRunIs404(t *testing.T) {
 	r := call(t, http.MethodGet,
 		"/api/workflows/00000000-0000-0000-0000-000000000000/query?key=counter", nil, nil)
 
-	if r.Status == 404 {
-		t.Errorf("cleat#935 has landed: a query on an unknown run now answers 404. " +
-			"Rename this test back to TestAQueryOnAnUnknownRunIs404 and assert 404.")
-		return
+	if r.Status != 404 {
+		t.Errorf("querying a nonexistent run answered %d: %s\n"+
+			"200 means a typo in a run id reads as an unpublished key, which is the "+
+			"shape cleat#900 fixed for the other run-scoped reads and cleat#935 fixed "+
+			"for this one", r.Status, r.Raw)
 	}
-	if r.Status != 200 {
-		t.Fatalf("neither the defect nor the fix: answered %d: %s", r.Status, r.Raw)
-	}
-	t.Logf("cleat#935 still present: a query on a nonexistent run answers 200 %s, so a "+
-		"typo in a run id reads as an unpublished key", r.Raw)
 }
 
 // TestAPublishedValueGoesStaleWhenTheStateMovesOn pins the design difference

@@ -277,7 +277,7 @@ them. It is currently skipped on #4.
 
 **Class:** Bug
 **Upstream sample:** `query/`
-**Status:** Filed and fixed — cleat-team/cleat#935
+**Status:** Fixed — cleat-team/cleat#935, merged 2026-09-08
 
 **What upstream asserts**
 
