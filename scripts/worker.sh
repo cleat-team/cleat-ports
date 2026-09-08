@@ -20,7 +20,23 @@ SRC="$ROOT/.cleat-src"
 PIDFILE="$ROOT/.port-results/worker.pid"
 FIXPID="$ROOT/.port-results/fixture.pid"
 FIXLOG="$ROOT/.port-results/fixture.log"
-KEYFILE="$ROOT/.port-results/api-key"
+# Per dialect, and that is the whole point of the suffix.
+#
+# The key lives in the database it was minted against -- api_keys is a table
+# like any other -- so a key minted on PostgreSQL means nothing on MySQL. A
+# single shared path made `make port DIALECT=mysql` after a postgres run fail
+# every test with
+#
+#     start answered 401: {"error":"invalid or revoked API key"}
+#
+# because mint_key returns early whenever the file is non-empty, and it was:
+# it held the postgres key. The 401 names authentication, which is the one
+# thing that was not wrong, and sends you looking at --require-auth.
+#
+# `worker.sh stop` does not remove it either, so stopping the worker and
+# starting it on another dialect reproduced the same failure -- which is what
+# makes this worth a suffix rather than a cleanup in stop.
+KEYFILE="$ROOT/.port-results/api-key.$CLEAT_PORTS_DIALECT"
 LOGFILE="$ROOT/.port-results/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
 API_URL="$CLEAT_PORTS_API"
