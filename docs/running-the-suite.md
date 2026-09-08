@@ -145,14 +145,70 @@ Save the change as a patch and apply it after. `bash -n <script>` after any edit
 confirms it still parses, but it cannot tell you whether something was midway
 through reading it.
 
-## Isolate from the other sessions
+## A guard whose premise is CI cannot be vouched for locally
 
-Several sessions share this machine and run their own databases. Use a dedicated
-docker context so a teardown here cannot touch a suite running there:
+`cleat`'s `scripts/check-skip-budget.sh` refuses a raised skip total unless the
+ledger names each new skip and why. Run it on a laptop and it errors on lines
+that are **correct in CI**: `TestRustAllHostCallsCompiles` expects a skip for
+absent cargo, and cargo plus `wasm32-wasip1` are installed on these machines, so
+it runs instead.
 
-```sh
-export DOCKER_CONTEXT=colima-cleat-ports
-```
+The ledger describes **CI's environment**. So:
+
+  - a local run can confirm a **new** line does not error
+  - it cannot vouch for the **file**
+
+Seeing those two errors locally means your laptop differs from CI, not that the
+ledger is wrong. Fixing what they appear to report breaks the file for everyone.
+
+Same shape as the rest of this document, pointed at a guard rather than a test:
+the command completes, reports a result, and the result is about a different
+environment from the one the guard exists to describe.
+
+**And attribute by NAME, not by delta.** That guard reports a delta, and the
+delta can be wrong while remaining self-consistent: one PR added two skips and
+CI reported one, because the unattributed count had drifted to 615 against a 616
+allowance. Trusting the delta produces a count that agrees with itself and is
+wrong about the tree.
+
+## One shared daemon: isolation is now a convention, not a boundary
+
+Until 2026-09-08 each session ran its own colima VM, so container names and host
+ports could collide freely -- different network namespaces. Four VMs
+pre-allocated **26 GiB** to hold a few hundred MB of database:
+
+    postgres actual working set    69.71 MiB
+    the colima VM it sat inside     6    GiB      ~85x
+
+Stopping them returned **371 MB -> 7847 MB** of host memory. Below that line the
+worker refuses API starts outright -- `503 worker is under memory pressure` --
+so the suite fails wholesale for a reason that is true and has nothing to do
+with the code.
+
+On one shared daemon there is **no VM boundary at all**. Set both of these, per
+session:
+
+    export COMPOSE_PROJECT_NAME=cleat-ports-<something-unique>
+    export CLEAT_PORTS_POSTGRES_PORT=...   # and MYSQL / MSSQL
+
+Nothing enforces either. `engine/testutil`'s `CleanupPostgresTestData` is an
+unqualified `DELETE FROM` across a list that includes `workflow_instances`, so a
+shared database name is one connection string away from wiping another session's
+fixtures mid-test.
+
+**Prefer non-default ports even when the defaults look free.** A stopped colima
+VM releases its host forward, so 5442/3309/1436 become available -- and a
+restarted one silently takes them back. The compose file already records what
+that costs: port 1435 looked free in `docker ps` while a colima SSH forward was
+delivering connections to a **different** SQL Server, which failed
+authentication against it. `docker ps` answers "is a container bound here"; the
+question is "where does a connection to this port actually land".
+
+## Rule out cross-process interference by measuring, not by arguing
+
+The isolation advice that used to live here said to use a dedicated colima
+context. That is stale -- see the section above; there is one shared daemon now
+and a per-context VM no longer exists to isolate anything.
 
 Cross-process interference is worth ruling out *by measurement* rather than by
 argument when a result will not reproduce — read the other process's
