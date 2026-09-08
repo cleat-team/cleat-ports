@@ -37,72 +37,84 @@ func TestTheRuleIsRealWhenItApplies(t *testing.T) {
 	}
 }
 
-// TestForbiddenConstructsCurrentlyBuildWhenNothingCallsTheHost pins cleat#949.
+// TestForbiddenConstructsAreRefusedAtBuildTime is the port of `goroutine/` and
+// `mutex/`, finally able to assert what it always meant.
 //
-// Each of these is a construct the analyzer refuses -- when the function
-// reaches a host call. None of them does, so all three build and deploy.
+// It shipped as a pin -- asserting that these BUILT, because they did -- and
+// went red when cleat#949 was fixed. That is the construction working: the
+// pin's own message named the issue and said to rewrite it, which is this.
 //
-// Pinned rather than asserted-correct because the correct assertion fails
-// today, and a red suite is one people stop reading. When #949 lands this goes
-// red and says so.
-func TestForbiddenConstructsCurrentlyBuildWhenNothingCallsTheHost(t *testing.T) {
+// Worth recording how nearly it went wrong. #949 was fixed in two parts. The
+// first (#964) seeded the analyzer's walk from durable functions, which caught
+// `helperescape` and left `syncmutex` building, because a workflow that makes
+// no host call is neither durable nor the callee of anything durable. Measured
+// on develop at that point:
+//
+//	syncmutex       BUILT     codes: none
+//	helperescape    REFUSED   E001 E002 E012 E013
+//
+// So the pin would have gone HALF red. The natural response to a red pin is to
+// rewrite it to match the new behaviour -- and doing that here would have
+// quietly encoded the remaining defect as expected. #968 added entry points to
+// the seed and closed it.
+//
+// The signal is not "did the pin go red". It is "did every case that should
+// have moved, move" -- three fixtures with one moving is a question, not a
+// result.
+func TestForbiddenConstructsAreRefusedAtBuildTime(t *testing.T) {
 	for _, tc := range []struct {
 		pkg, code, why string
 	}{
 		{"nondeterminism/goroutine", "E001",
 			"a goroutine plus a channel: the literal shape of upstream's sample"},
 		{"nondeterminism/channel", "E002",
-			"channels with no goroutine, so the exemption cannot be attributed to `go`"},
+			"channels with no goroutine, so the refusal cannot be attributed to `go`"},
 		{"nondeterminism/syncmutex", "E013",
-			"a sync primitive with no concurrency at all"},
+			"a sync primitive with no concurrency and NO HOST CALL -- the case #964 " +
+				"left open and #968 closed"},
 	} {
 		t.Run(tc.pkg, func(t *testing.T) {
 			out, ok := buildOnly(t, tc.pkg)
-			if !ok {
-				if strings.Contains(out, tc.code) {
-					t.Errorf("cleat#949 appears to be FIXED: %s is now refused with %s. "+
-						"Rewrite this test to assert the refusal and delete the pin.",
-						tc.pkg, tc.code)
-					return
-				}
-				t.Fatalf("%s failed to build, but not with %s -- neither the defect nor "+
-					"the fix:\n%s", tc.pkg, tc.code, tail(out, 600))
+			if ok {
+				t.Fatalf("%s BUILT. %s.\n"+
+					"cleat's determinism model rests on this being refused at build time; "+
+					"if it reaches a worker the failure is a checksum mismatch in "+
+					"production against a workflow that passed review.", tc.pkg, tc.why)
 			}
-			t.Logf("cleat#949 still present: %s built with no diagnostic (%s). "+
-				"The function makes no host call, so it is outside the cleat closure "+
-				"and the determinism checks do not run on it.", tc.pkg, tc.why)
+			if !strings.Contains(out, tc.code) {
+				t.Errorf("%s was refused, but not with %s -- so it may have failed for an "+
+					"unrelated reason and this test would pass either way.\n%s",
+					tc.pkg, tc.code, tail(out, 600))
+			}
 		})
 	}
 }
 
-// TestAHelperEscapesTheCheckEvenInsideAReplayedWorkflow is the case that makes
-// cleat#949 worth filing rather than noting.
+// TestAHelperIsCheckedEvenThoughItMakesNoHostCall is the sharp case of #949,
+// now asserted rather than pinned.
 //
-// The entry point calls the host, so it is checked AND it suspends and replays.
-// The helper it calls does not, so it is not checked -- while being re-executed
-// on every replay, because replay re-runs the workflow function and constrains
+// The entry point calls the host, so it is checked and it suspends and
+// replays. The helper does not, and was invisible -- while being re-executed on
+// every replay, because replay re-runs the workflow function and constrains
 // only the results of host calls, not local computation.
 //
-// Six violations across three codes, and the build is silent.
-func TestAHelperEscapesTheCheckEvenInsideAReplayedWorkflow(t *testing.T) {
+// Six violations across FOUR codes: goroutines (E001), channel send and receive
+// (E002), close() (E012, its own code rather than part of E002), sync.Mutex and
+// sync.WaitGroup (E013). The grouping is a correction -- this port and #949
+// both said three codes until a build reported an E012 nobody had predicted.
+func TestAHelperIsCheckedEvenThoughItMakesNoHostCall(t *testing.T) {
 	out, ok := buildOnly(t, "nondeterminism/helperescape")
-	if !ok {
-		t.Errorf("cleat#949 appears to be FIXED: a non-deterministic helper outside the "+
-			"cleat closure is now reported. Rewrite this test to assert it.\n%s",
-			tail(out, 800))
-		return
+	if ok {
+		t.Fatalf("a helper carrying goroutines, channels, close(), sync.Mutex and "+
+			"sync.WaitGroup built silently inside a workflow that suspends and "+
+			"replays.\n%s", tail(out, 800))
 	}
-	// The analyzer SEES the helper -- it counts it -- and does not check it.
-	// Asserted because "2 functions, 1 in cleat closure" is the entire
-	// mechanism, and a build that stopped seeing it would be a different bug
-	// wearing this one's result.
-	if !strings.Contains(out, "2 functions") || !strings.Contains(out, "1 in cleat closure") {
-		t.Errorf("the analyzer no longer reports 2 functions with 1 in the closure, so "+
-			"this test may not be measuring cleat#949 any more:\n%s", tail(out, 600))
+	for _, code := range []string{"E001", "E002", "E012", "E013"} {
+		if !strings.Contains(out, code) {
+			t.Errorf("the helper's violations should span E001, E002, E012 and E013; "+
+				"%s is missing:\n%s", code, tail(out, 800))
+		}
 	}
-	t.Logf("cleat#949 still present: a helper with goroutines, channels, close(), " +
-		"sync.Mutex and sync.WaitGroup built silently inside a workflow that suspends " +
-		"and replays.")
 }
 
 // TestTheSanctionedAlternativesStillBuild — without this, every assertion above
