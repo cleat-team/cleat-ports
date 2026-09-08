@@ -280,6 +280,18 @@ fact that makes the suite unportable rather than merely unwritten: a ported
 `test_one_at_a_time` needs the second enqueue to eventually run, and in cleat
 there is nothing left to run.
 
+**And there is no deferral in the guest API either**, which is the third
+independent place the control is absent. `AcquireConcurrencyKey` returns a
+**bool, immediately** -- `packAcquireLockResult(acquired, 0)`,
+`engine/locking.go:62-79`. It does not suspend, does not retry, does not queue;
+the guest gets `false` and must decide what to do.
+
+So: no slot count in the schema, no deferral at the front door, no suspend in
+the guest API. Taken together the gap is **architectural rather than a missing
+feature** -- adding a semaphore to the schema would still not make
+`test_blocked_task_runs_after_the_holder_finishes` pass, because the guest has
+no way to wait. That would need an ABI change.
+
 Enforcement is HTTP-only. From the comment at `server.go:640`:
 
 > The HTTP layer is the only enforcement point for Cleat-Concurrency-Key;
@@ -325,3 +337,207 @@ and DBOS's queue suite is almost entirely about the third.
 The 45 blocked cases should not be written. They would fail for "cleat has no
 queues", which is a feature request, not something a test should pin. The
 32 portable cases are tracked in the README table; 10 are done.
+
+## 21. Cancellation is a flag, not a state — so there is nothing to resume
+
+**Class:** Deliberate difference (with one open question)
+**Upstream test:** `tests/test_workflow_management.py` — the `resume_workflow` cases
+**Status:** Closed — a divergence cleat is right about, not a defect. One
+adjacent question (reprocess semantics) deliberately deferred; see below.
+
+**What upstream asserts**
+
+DBOS's `cancel_workflow` "sets its status to `CANCELLED`, removes it from its
+queue and preempts its execution (interrupting it at the beginning of its next
+step)". `resume_workflow` then "immediately starts it from its last completed
+step", and the documentation is explicit that this covers "workflows that are
+cancelled **or have exceeded their maximum recovery attempts**".
+
+**What cleat does**
+
+Cancellation is **cooperative and is not a state transition**. `POST
+/api/workflows/:id/cancel` runs
+
+    UPDATE workflow_instances SET cancellation_requested = 1, cancellation_reason = ?
+
+and nothing else. A workflow observes it by calling `h.PollCancellation()` and
+decides what to do; one that never asks runs to completion, and the endpoint
+answers 200 either way. There is no `cancelled` status — the engine writes
+`ready`, `running`, `done`, `failed`, `terminated`, `terminating` and
+`dead_lettered`. A workflow that observed its cancellation and returned ends in
+`done`, the same status as one that succeeded.
+
+Both facts are already pinned by `tests/test_cancellation.py`.
+
+**Assessment: this is a deliberate difference and cleat has the better of it.**
+
+`resume` is not an endpoint cleat is missing. It is an operation with **no state
+to act on**: there is no paused run to restart, so adding `/resume` would close
+nothing.
+
+And resume-after-cancel is not merely unnecessary here, it is **unsound in the
+presence of compensations**. If a saga is cancelled at step 5 and its
+compensations run, the history records step 5 as completed while the world has
+had it undone. "Start from the last completed step" then resumes into a state
+that has been compensated away. cleat's saga port exists because compensation is
+a first-class pattern, so this is not a hypothetical.
+
+A weaker but real second reason: if cancel is reversible, an operator can never
+say "I stopped it", only "I stopped it for now".
+
+**The open question is somewhere else, and it is worth deciding on the record.**
+
+DBOS puts two operations behind one verb, and only one of them is about cancel.
+The other — resuming work that **exceeded its recovery attempts** — is cleat's
+dead-letter queue, where the *system* gave up rather than an operator, and none
+of the objections above apply.
+
+cleat has that re-drive, and `test_reprocessing_starts_a_new_run_and_leaves_the_original`
+pins its shape: reprocess creates a **fresh run** with a new id and leaves the
+original `dead_lettered`. So a workflow that dead-lettered at step 9 of 10
+repeats eight steps of completed durable work. Where those steps are a payment,
+a transfer or an expensive model call, that is the cost that matters.
+
+**What makes this a real question rather than a feature request: cleat already
+does checkpoint resumption.** It is exactly what recovery after a worker crash
+is, and `tests/test_recovery.py::test_a_workflow_survives_the_loss_of_its_worker`
+asserts that the pre-crash durable call is *not* repeated. The machinery exists
+and is tested. Reprocess-from-scratch is a choice, not a limitation.
+
+**Deliberately deferred (2026-09-08), and the deferral is the decision.** Either
+answer is defensible — from-scratch is safer if a step's side effect might be
+half-applied, from-checkpoint is cheaper and uses a guarantee cleat already
+makes — and there is currently no evidence about which case actually arises.
+Choosing now would be picking on aesthetics.
+
+What is recorded here is that the current behaviour is a **choice**, not a
+limitation, so nobody re-derives it as a defect. Revisit when there is
+information the reading cannot supply:
+
+  - a workflow that dead-letters late in an expensive chain, where the cost of
+    repeating completed steps is real rather than theoretical
+  - a case where reprocess-from-scratch *causes* a problem — a step whose side
+    effect is not safely repeatable being redone on re-drive
+  - an operator asking for it
+
+Until one of those, from-scratch stands. The point of this entry is that the
+next person meets a documented decision rather than an accident.
+
+**The rest of the surface, for completeness**
+
+| DBOS | cleat | verdict |
+|---|---|---|
+| `cancel_workflow` | `POST /cancel` | present, different semantics (above) |
+| `resume_workflow` | nothing | no state to resume; see above |
+| `fork_workflow` (new id, start from step N) | nothing | absent, low priority — an operator patching tool that does not touch the durability contract |
+| `delete_workflow` | nothing | absent. Retention purges exist internally (`deleteCompletedWorkflowsBatch`) but no API reaches them |
+| `list_workflows` | `GET /api/workflows` | present |
+| `list_workflow_steps` | `GET /:id/history` | present |
+| `update_workflow_attributes` | **not** `/:id/update` | **name collision, not a counterpart.** DBOS replaces a searchable custom-attributes dictionary. cleat's `/update` is a Temporal-style workflow *update* (`poll_update` / `complete_update`) — an entirely different mechanism that maps cleanly on a grep and not at all in behaviour |
+
+Two corrections to earlier notes, recorded so they are not repeated: **DBOS has
+no `restart_workflow` and no `pause_workflow`.** Neither appears in the Python
+API or in `DBOSClient`. This port's README described `test_workflow_management.py`
+as covering "cancel, resume, fork, list, restart"; the last of those does not
+exist.
+
+Method: the cleat column is read from the route dispatch in
+`cmd/cleat-worker/server.go:297-470`, which is the only place routing happens —
+not from grep, which has already missed a column in this repo once. The DBOS
+column is from the published API reference rather than from memory or source.
+
+## 22. Concurrent steps inside a workflow are refused by the determinism analyzer
+
+**Class:** Deliberate difference
+**Upstream test:** `tests/test_concurrency.py` — 9 of 11 cases, headed by
+`test_high_async_concurrency`, `test_gather_manysteps`,
+`test_gather_distinct_steps_deterministic_order`
+**Status:** Closed — unportable in principle, not pending a fix
+
+**Count first, because the inventory is wrong about this file too.** The README
+listed 21 cases. Counted by collection at the pin it is **11**; the 21 is the
+`grep '^def test_'` figure, the same inflation corrected for `test_queue.py` in
+#20. Re-derive with `scripts/count-queue-cases.py`.
+
+**What upstream asserts**
+
+Nine of the eleven are `async def`, most using `asyncio.gather`. They exercise
+the Python SDK's async model — several steps of **one** workflow running
+concurrently, streams written from concurrent tasks, event set/get under load,
+and thread starvation during recovery:
+
+    test_gather_manythings                                 events, streams
+    test_gather_manysteps
+    test_gather_many_send_async
+    test_gather_many_write_stream
+    test_gather_many_write_stream_from_step                streams
+    test_gather_many_set_event                             events
+    test_high_async_concurrency                            asyncio.gather
+    test_async_recovery_direct_child_no_thread_starvation  asyncio.gather, recovery
+    test_gather_distinct_steps_deterministic_order         asyncio.gather
+
+The remaining two (`test_concurrent_workflows`, `test_concurrent_getevent`) are
+synchronous and use threads to drive **separate** workflows. Those look
+portable — starting N workflows and asserting all complete is something cleat
+does — and are the work-list for this file.
+
+**What cleat does: refuses the constructs at build time.**
+
+Not "does not support" — the analyzer rejects the whole family, syntactically
+and before anything runs (`internal/closure/closure.go`):
+
+| code | construct | site |
+|---|---|---|
+| **E001** | `go` statement | `:275` |
+| **E002** | channel send | `:288`, `:308` |
+| **E012** | `close()` | `:386` |
+| **E013** | `sync.{Mutex, RWMutex, WaitGroup, Once, Cond, Pool, Map}` | `:412` |
+| **E013** | calls on a sync-typed variable, e.g. `mu.Lock()` | `:441` |
+
+That last row matters: the ban catches `mu.Lock()` where `mu` is a
+`sync.Mutex` variable, not merely the written-out selector, so it is not
+evadable by ordinary indirection.
+
+**Assessment**
+
+A DBOS workflow may `asyncio.gather` its steps. **A cleat workflow may not run
+anything concurrently at all, by design.** E001's own message states the reason:
+
+> goroutines introduce non-deterministic scheduling across replays
+
+So these cases are not unportable because a control is missing. They are
+unportable because **no implementation that preserves replay determinism could
+pass them.** That distinction is the whole entry: "cleat lacks a control"
+invites someone to add the control, and here there is nothing to add.
+
+Already pinned by `ports/samples-go/tests/nondeterminism_test.go`
+(`TestForbiddenConstructsAreRefusedAtBuildTime`), the port of upstream
+`goroutine/` and `mutex/`, which records the same refusal from the other
+direction.
+
+**Note the near-miss, because it is the useful part.**
+
+This file was first assessed against #20's criterion — `ConcurrencyKey` is a
+mutex not a semaphore, so bounded parallelism is unrepresentable. That criterion
+is **correct and is the wrong instrument here**: it would have bucketed all nine
+async cases as "needs a control cleat lacks", which is true of the queue file
+and false of this one.
+
+The conclusion would have been right — the cases are unportable — with the
+reason wrong. **Nothing downstream would have contradicted it**, because the
+tests really do fail and the entry really would have explained why. A correct
+conclusion with a wrong reason survives every check that only looks at the
+conclusion.
+
+What caught it was counting the cases and reading what they exercise, rather
+than applying the criterion that had just worked on the neighbouring file.
+
+**Method:** the cleat column is read from `internal/closure/closure.go` with line
+numbers, verified independently by a second session. The upstream column is
+collected and characterised by AST from the pinned commit — names and constructs,
+**not bodies** — so the 2-portable / 9-unportable split is directional rather
+than exact.
+
+This almost certainly covers much of `tests/test_async.py` (57 by the old count,
+uncounted by collection, 0 ported), which nobody has assessed. Same question,
+larger file.
