@@ -236,6 +236,32 @@ start() {
 {"providers":{"ollama":{"base_url":"$CLEAT_PORTS_FIXTURE_URL","enabled":true,"default_model":"llama3.2"}}}
 JSON
 
+  # CLEAT_PORTS_WORKER_EXTRA_FLAGS appends flags to the worker.
+  #
+  # The flags above are the ones every port needs. A test that needs the worker
+  # configured differently -- a short --retention-days, a --retention-interval
+  # -- had no way to ask for it, so a whole class of behaviour was unreachable
+  # from the suite regardless of how the test was written.
+  #
+  # Word-split deliberately, so a caller can pass more than one flag:
+  #
+  #   CLEAT_PORTS_WORKER_EXTRA_FLAGS="-retention-days 1 -retention-interval 5s"
+  #
+  # which means a value containing whitespace cannot be passed this way. That
+  # is the documented limit rather than an oversight: an array would carry it,
+  # and an array cannot survive an environment variable, which is the interface
+  # a pytest fixture actually has.
+  #
+  # It is also recorded in the log, because a worker started with different
+  # flags is a different worker and a run that cannot say which one it had is
+  # not reproducible.
+  local extra=()
+  if [ -n "${CLEAT_PORTS_WORKER_EXTRA_FLAGS:-}" ]; then
+    # shellcheck disable=SC2206
+    extra=( $CLEAT_PORTS_WORKER_EXTRA_FLAGS )
+    echo "worker extra flags: ${extra[*]}"
+  fi
+
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
       -driver "$CLEAT_PORTS_DIALECT" \
@@ -244,6 +270,7 @@ JSON
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
       -plugin-config "$PLUGIN_CONFIG" \
       -enable-admin-api \
+      ${extra[@]+"${extra[@]}"} \
       >"$LOGFILE" 2>&1 ) &
   echo $! > "$PIDFILE"
 

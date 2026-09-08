@@ -312,3 +312,25 @@ someone else's before starting anything.
 `make clean` removes only this run's subdirectory. A bare `rm -rf
 .port-results` would delete every concurrent session's state at once, which is
 a worse version of the bug this layout exists to prevent.
+
+## Giving the worker different flags
+
+`scripts/worker.sh` starts the worker with the flags every port needs. A test
+that needs a differently-configured worker — a short
+`-completed-workflow-retention-days`, a faster `-poll` — had no way to ask, so
+that behaviour was unreachable from the suite no matter how the test was
+written.
+
+    CLEAT_PORTS_WORKER_EXTRA_FLAGS="-completed-workflow-retention-days 1 -poll 250ms"
+
+The value is word-split, so several flags can be passed and **a value containing
+whitespace cannot**. That is the documented limit rather than an oversight: an
+array would carry it and an array cannot survive an environment variable, which
+is the interface a pytest fixture actually has.
+
+`worker.sh` echoes the extra flags when it starts. A worker started with
+different flags is a different worker, and a run that cannot say which one it
+had is not reproducible.
+
+Restarting the worker to change flags means stopping it first — `ensure` reuses
+a healthy worker and will not notice that you wanted a different one.
