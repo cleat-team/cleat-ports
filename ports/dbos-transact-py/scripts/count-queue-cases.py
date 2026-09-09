@@ -224,6 +224,16 @@ MAPPING = {
                         "past pickle, and cleat substitutes rather than failing"),
     "test_plugins.py": (None, "cleat has no upstream analogue; plugin calls through a real worker"),
     "test_versions.py": (None, "cleat-specific version reporting across a suspension"),
+    # None, and deliberately so. Upstream has no cross-process case to port:
+    # DBOS DEFERS a task blocked by a concurrency limit and runs it when the
+    # limit frees, so its assertions are about queueing. cleat REFUSES with a
+    # 409, because ConcurrencyKey is a mutex -- key_hash as PRIMARY KEY with
+    # ON CONFLICT DO NOTHING (ISSUES.md #20). Crediting these against
+    # test_queue.py would count coverage of a file whose cases assert the
+    # opposite behaviour.
+    "test_cross_worker.py": (None, "cleat-specific: mutual exclusion across two "
+                             "worker PROCESSES, which needs the second_worker "
+                             "fixture and has no upstream analogue"),
 }
 
 

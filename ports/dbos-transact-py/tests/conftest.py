@@ -641,6 +641,65 @@ def worker():
 
 
 @pytest.fixture(scope="session")
+def second_worker(api_key: str):
+    """A SECOND cleat-worker against the same database, for cross-worker cases.
+
+    `cleat-worker` serves the HTTP API and runs workflows in one process, and
+    this harness started exactly one -- so a class of assertions could not be
+    written here at all, only described in the README's "what this suite
+    structurally cannot catch". This fixture is the half of that entry that was
+    fixable.
+
+    WHAT IT MAKES EXPRESSIBLE. A concurrency key contended across PROCESSES
+    rather than serialised inside one. A signal delivered to a workflow another
+    worker owns. A stale-but-living run writing its outcome after a takeover --
+    the shape of upstream's `test_workflow_outcome_is_owned_by_the_pending_row`,
+    which cleat answers with a generation fence.
+
+    WHAT IS SHARED, AND THAT IS THE POINT. The database, the API key and the
+    fixture service. Two workers against one database IS the configuration
+    under test; a second worker with its own database would prove nothing. Only
+    the pid file, the log and the API port differ.
+
+    It yields the second worker's base URL. Address it with a `Cleat` client of
+    your own -- the session-scoped `cleat` fixture points at the first worker,
+    and a test that wants to contend across processes needs both.
+
+    NOT started for every run: session-scoped and only constructed by tests
+    that ask for it, so a suite that never contends pays nothing.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    script = str(root / "scripts" / "worker.sh")
+    env = {**os.environ, "CLEAT_PORTS_WORKER_INSTANCE": "2"}
+
+    done = subprocess.run([script, "ensure"], capture_output=True, text=True, env=env)
+    if done.returncode != 0:
+        pytest.fail(f"second worker failed to start:\n{done.stderr[-2000:]}")
+
+    base = os.environ["CLEAT_PORTS_API"]
+    host, _, port = base.rpartition(":")
+    second = f"{host}:{int(port) + 1}"
+
+    # Assert it is actually serving before any test believes it exists. A
+    # fixture that yields a URL nothing listens on turns every assertion in the
+    # test into a connection error attributed to the code under test.
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"{second}/healthz", timeout=2) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        pytest.fail(f"second worker did not become healthy at {second}")
+
+    yield second
+
+    subprocess.run([script, "stop"], capture_output=True, text=True, env=env)
+
+
+@pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")
 
