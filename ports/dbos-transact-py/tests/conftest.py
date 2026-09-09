@@ -539,6 +539,30 @@ def fixture_calls():
 
 
 @pytest.fixture(scope="session")
+def fixture_peak():
+    """Read the largest number of calls the fixture held open at once, per key.
+
+    The concurrency analogue of fixture_calls: that one counts how many times
+    the service was reached, this one how many of those overlapped. A count
+    cannot answer a CONCURRENCY question -- fifty calls made one after another
+    and fifty made at once are fifty calls either way.
+
+    This exists so the parallel-execution assertion needs no clock. Upstream's
+    test_max_parallel_workflows infers concurrency from wall time (50 workflows
+    in under 30s where serial would take 250s), and a threshold between two
+    timings is the shape that went wrong in cleat-ports#115. A peak has no
+    threshold to tune: a serial engine reports exactly 1.
+    """
+    base = os.environ.get("CLEAT_PORTS_FIXTURE_URL", "http://127.0.0.1:8098")
+
+    def peak(key: str) -> int:
+        with urllib.request.urlopen(f"{base}/peak/{key}", timeout=10) as resp:
+            return json.loads(resp.read())["peak"]
+
+    return peak
+
+
+@pytest.fixture(scope="session")
 def detached_workflow(cleat: Cleat, retry_workflow: str) -> str:
     """Deploy the detached-execution workflow.
 
@@ -888,6 +912,17 @@ def second_worker(api_key: str):
 @pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")
+
+
+@pytest.fixture(scope="session")
+def parallel_unit_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow whose durable call the fixture holds open.
+
+    Holding the WORKER SLOT is the property under test, which is why this is
+    not a sleeping workflow: DurableSleepMs suspends the run instead, and fifty
+    suspended runs finish in one sleep-duration on a strictly serial engine.
+    """
+    return _build_and_deploy("parallelunit", "parallel_unit")
 
 
 @pytest.fixture(scope="session")

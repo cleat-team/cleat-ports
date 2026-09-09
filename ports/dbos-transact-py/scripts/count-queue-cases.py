@@ -240,6 +240,8 @@ MAPPING = {
     "test_workflow_management.py": ("test_workflow_management.py",
                                     "force-complete, force-fail, and their refusals"),
     "test_children.py": ("test_concurrency.py", "concurrent execution and isolation"),
+    "test_parallelism.py": ("test_async.py",
+                            "the one portable case: workflows actually run at once"),
     # The other half of upstream test_concurrency.py, and the only half of it
     # that is portable: nine of its eleven cases drive asyncio.gather inside one
     # workflow, which the determinism analyzer refuses at build time (ISSUES 22).
