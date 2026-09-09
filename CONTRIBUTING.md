@@ -13,6 +13,25 @@ Findings go in the port's `ISSUES.md`, and are promoted to core per
 only in this repo protects nothing: `cleat-team/cleat`'s `tier1-gate.yml` is what
 blocks merges, and this repo cannot.
 
+**Take the entry number at merge time, not at write time.** Several sessions
+work this repo at once and each holds unpushed branches, so "the next number"
+computed from your own base is a number somebody else is also using. Neither
+branch conflicts — the entries land at different offsets with different text —
+and the collision only shows up in the cross-references, which are by number
+(`ISSUES.md 26`). Before pushing:
+
+```sh
+git fetch origin
+git show origin/develop:ports/<port>/ISSUES.md | grep -E '^## [0-9]+\.' | tail -1
+gh pr list --state open --search 'ISSUES'      # someone may hold the next one
+```
+
+`scripts/check-issue-numbers.sh` enforces this in CI and will tell you which
+two entries collided. It also rejects **holes**: a skipped number is the first
+half of the next collision. Note that the file's two `## Template …` headings
+are not entries — counting them is how one of the two collisions on 2026-09-09
+was caused by the advice given to prevent the other.
+
 ## Merging
 
 `develop` uses a **merge queue**, so do not rebase a pull request by hand to
@@ -34,6 +53,7 @@ as a deadlock. Both required checks — `All ports` and `Validate branch name` �
 carry the trigger, and `Validate branch name` additionally short-circuits in
 queue context because the ref under test is GitHub's own queue branch and
 matches no allowed prefix.
+
 
 ## The one rule that is not negotiable
 
