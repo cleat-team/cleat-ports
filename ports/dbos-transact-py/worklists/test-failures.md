@@ -104,3 +104,32 @@ per-call timeout — and it accounts for nine of the thirty-seven.** If anything
 this file is worth building toward, it is that.
 
 ---
+
+### Ported since this section was written — 2 of the 5
+
+| upstream case | where | note |
+|---|---|---|
+| `test_step_retries_no_final_sleep` | `test_retries.py::test_no_backoff_is_slept_after_the_final_attempt` | the async twin merged into it: the sync/async split is an SDK concern |
+| `test_recovery_during_retries` | `test_recovery.py::test_a_worker_lost_mid_backoff_resumes_the_retry_rather_than_restarting_it` | produced ISSUES 32 |
+| `test_step_should_retry_on_last_attempt` | `test_retries.py::test_a_permanent_failure_is_not_reported_as_an_exhausted_budget` | |
+
+**One parameter in the mid-backoff case is load-bearing and looks arbitrary.**
+`DefaultHostRetryBudget` is 60s and a policy whose *worst-case* backoff
+`(attempts-1) * interval` exceeds it is refused outright -- `callErrorCode 6`,
+`RetryPolicyTooLong`. 3 attempts at 20s is 40s and stays on the host path; 3 at
+45s is 90s and does not. The 45s variant makes **one** fixture call and still
+reports `done`, because the policy was refused before any retry. A test
+drifting over that boundary stops testing recovery and stays green.
+
+**And a timing lesson that cost a wrong conclusion.** The first version of the
+final-sleep test compared 3000ms against 4500ms -- a ~1.5x question -- and
+failed at 4036ms, which looks exactly like the defect upstream shipped. cleat
+is correct: 1, 2 and 3 attempts at a 2000ms interval take 254ms, 2109ms and
+4300ms. A cold run's ~1s of overhead lands between the two hypotheses. Rewritten
+with a budget of **one** attempt, correct is ~250ms and the defect ~2250ms, a 9x
+separation needing no model of the overhead.
+
+**Remaining: 2** -- `test_notification_errors` and the async twin already
+merged above. `test_notification_errors` drops the notification connection and
+asserts a signal still arrives within a bound; cleat wakes on `pgNotify` with
+polling behind it and nothing exercises that fallback.
