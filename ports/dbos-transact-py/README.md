@@ -34,11 +34,11 @@ application or a web framework.
 | `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 30 |
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 6 |
-| `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
+| `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 23 |
 | `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 17 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 13 |
-| **Total in scope** | **371** | | **120** |
+| **Total in scope** | **371** | | **121** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -328,6 +328,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_recovery.py` | 4 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_results.py` | 5 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
+| `test_run_metadata.py` | 1 | `test_dbos.py` — a repeat start is deduplication rather than recovery, and the run's own clock is ordered |
 | `test_retries.py` | 16 | `test_failures.py` |
 | `test_schedule_timezones.py` | 3 | `test_scheduler.py` — cron zones and the default zone |
 | `test_scheduling.py` | 13 | `test_scheduler.py` — cron and delayed invocation |
@@ -336,7 +337,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **130** (5 skipped outright) | **120** mapped to an upstream file, **10** cleat-specific |
+| **Total** | **131** (5 skipped outright) | **121** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
