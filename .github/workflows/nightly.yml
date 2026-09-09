@@ -30,50 +30,102 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ports: ${{ steps.list.outputs.ports }}
+      dialects: ${{ steps.list.outputs.dialects }}
     steps:
       - uses: actions/checkout@v5
       - id: list
-        run: echo "ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+        # Both dimensions come from here so the matrix and the `complete` gate
+        # below cannot drift. If they were listed separately, the gate would
+        # verify the matrix against a copy of its own definition.
+        run: |
+          echo "ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo 'dialects=["postgres","mysql","mssql"]' >> "$GITHUB_OUTPUT"
 
   port:
-    name: ${{ matrix.port }} vs cleat@${{ inputs.cleat_ref || 'develop' }}
+    name: ${{ matrix.port }} on ${{ matrix.dialect }} vs cleat@${{ inputs.cleat_ref || 'develop' }}
     needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         port: ${{ fromJSON(needs.discover.outputs.ports) }}
-    services:
-      postgres:
-        image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cleat_ports
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 12
+        dialect: ${{ fromJSON(needs.discover.outputs.dialects) }}
+    # No `services:` block. The databases come up through `make deps`, which is
+    # the path the harness is built around and the one a developer runs. SQL
+    # Server in particular needs a step no service container performs: its image
+    # creates no user database, so `deps` runs
+    # `sqlcmd -Q "IF DB_ID('cleat_ports') IS NULL CREATE DATABASE cleat_ports"`.
+    # Hand-rolling the containers reproduces a failure that is not real.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with: { go-version: "1.25" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
+      - name: Start ${{ matrix.dialect }}
+        run: make deps DIALECT=${{ matrix.dialect }}
       - name: Install cleat @ ${{ inputs.cleat_ref || 'develop' }}
         run: make install-cleat CLEAT_REF=${{ inputs.cleat_ref || 'develop' }}
       - name: Record cleat commit under test
         id: build
-        run: cat bin/.cleat-build >> "$GITHUB_OUTPUT"
+        # Per leg, not once for the run: ports CI builds cleat from a moving
+        # CLEAT_PINNED_REF, so a nightly can go red because CLEAT changed with no
+        # ports commit involved. Without the SHA in each leg's log that costs an
+        # investigation (cleat-ports#87) for information the run already had.
+        run: |
+          cat bin/.cleat-build >> "$GITHUB_OUTPUT"
+          echo "--- ${{ matrix.port }} on ${{ matrix.dialect }}: $(tr '\n' ' ' < bin/.cleat-build)"
       - name: Run port
-        run: make port PORT=${{ matrix.port }}
+        run: make port PORT=${{ matrix.port }} DIALECT=${{ matrix.dialect }}
+      - name: Prove this leg used ${{ matrix.dialect }}
+        # The matrix key is a string we wrote; asserting on it proves only that
+        # someone can type. This asks the database two independent questions --
+        # what it says it is, and whether the run's rows are in it and NOT in
+        # postgres, which is up for every dialect and is where a silent fallback
+        # would land.
+        run: scripts/assert-dialect.sh ${{ matrix.dialect }}
+      - name: Record that this leg reported
+        if: always()
+        run: |
+          mkdir -p .leg
+          echo "${{ matrix.port }} ${{ matrix.dialect }} $(tr '\n' ' ' < bin/.cleat-build 2>/dev/null)" \
+            > ".leg/${{ matrix.port }}--${{ matrix.dialect }}"
+      - name: Upload leg marker
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leg-${{ matrix.port }}--${{ matrix.dialect }}
+          path: .leg/
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: log-${{ matrix.port }}
+          name: log-${{ matrix.port }}--${{ matrix.dialect }}
           path: .port-results/
           if-no-files-found: ignore
+
+  complete:
+    name: Every port ran on every dialect
+    needs: [discover, port, complete]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: { pattern: "leg-*", path: legs, merge-multiple: true }
+      - name: Every expected leg reported
+        # `needs:` is NOT the gate. A job that depends on a matrix succeeds when
+        # the matrix is EMPTY, so an aggregate gating only on `needs: port`
+        # passes when zero legs were generated -- a green run that tested
+        # nothing, which is the cleat#1068 shape.
+        #
+        # So this recomputes ports x dialects from the same `discover` outputs
+        # the matrix used and requires every element BY NAME. Comparing sets,
+        # not counts: a count is satisfied by the wrong legs reporting.
+        env:
+          PORTS: ${{ needs.discover.outputs.ports }}
+          DIALECTS: ${{ needs.discover.outputs.dialects }}
+        run: scripts/assert-legs-complete.sh legs
 
   report:
     name: Report to core
