@@ -215,12 +215,27 @@ Checked as a **partition**: every one of the 35 appears in exactly one bucket, n
 
 ## `tests/test_dbos.py` — 61 cases, read at `833794f7`
 
-**17 portable · 0 already covered · 2 answered differently on purpose · 42 need something cleat does not have.**
+**9 portable · 0 already covered · 0 answered differently on purpose · 42 need
+something cleat does not have · 10 are not engine assertions at all.**
+(9 + 42 + 10 = 61.)
 
-Count reconciled before classifying: 61 by `def`, and **zero** parametrize
-expansion, so def-count equals collection count here and matches the inventory
-table's 61. Checked because the 44-vs-46 discrepancy on
+> **This line was rewritten.** It read *"17 portable · 0 already covered · 2
+> answered differently on purpose · 42 need something cleat does not have"* until
+> the buckets were enumerated and re-derived. The blocker table under *What blocks
+> the 42* and the subsections below it are the **superseded** classification, kept
+> because the reasoning in them is still the reasoning; read *The 17 does not
+> reproduce* at the end of this section first. `docs/next-upstream.md` carries the
+> same correction as an arrow (#114).
+
+Count reconciled before classifying: **61 top-level test functions**, and **zero**
+parametrize expansion, so the definition count equals the collection count here
+and matches the inventory table's 61. Checked because the 44-vs-46 discrepancy on
 `test_workflow_management.py` was entirely one `@parametrize`d case.
+
+This said "61 by `def`" until the enumeration below was verified. `^def test_`
+returns **56**: five of the cases are `async def`. The number was right and the
+method named under it was not, which is the narrower version of the same problem
+this section is now a correction to.
 
 ### What blocks the 42
 
@@ -324,6 +339,244 @@ Recorded here rather than silently corrected.
 The four ambiguous cases were classified by reading their assertions. The other
 nine internal-API cases were classified from setup lines and names, which is
 weaker — open the case before trusting its bucket.
+
+### The 17 does not reproduce — it is 9, enumerated
+
+The bucket line above has been **rewritten**, not annotated: this is a reference
+section, and a header stating a number the body then contradicts is worse than
+either alone. The superseded line was
+
+> 17 portable · 0 already covered · 2 answered differently on purpose · 42 need
+> something cleat does not have
+
+and `docs/next-upstream.md` carries the same correction as an arrow (#114),
+where the arrow is right because that file is a summary a reader may have
+already acted on.
+
+**It survived because it was never enumerated.** Every other survey in this repo
+was caught or confirmed by reconciling two derivations — 9c's two routes
+disagreed on 5 of 33, and the `test_workflow_management.py` classifier bug
+surfaced only because ISSUES 23 claimed a different total. A bare set of totals
+offers nothing to disagree with, so nothing did.
+
+**The superseded blocker table has the same shape of problem, and it is worth
+stating because it is not an error.** Its rows sum to 44 (16 + 13 + 7 + 5 + 3)
+against a stated 42 blocked. That is *consistent* with two cases carrying two
+blockers each and being counted under both — which is what the table almost
+certainly did — but the section never says which convention it used, so a reader
+cannot tell a double-count from a miscount. The enumeration below adopts the
+other convention and states it: **each case appears under exactly one bucket, so
+the buckets partition the file and sum to 61.** Multi-blocker cases are named
+explicitly underneath.
+
+Re-derived from the same pin by classifying each case on the DBOS API its body
+calls. **Collection and display are separate steps here, deliberately.** Every
+applicable blocker was collected per case — not the first one matched, which is
+the bug that mis-bucketed two cases in the `test_workflow_management.py` survey
+— and each case is then *displayed* under one of them, so the buckets partition
+the file. The cases carrying more than one are named after the sum:
+
+**Portable — 9**
+
+    test_child_workflow
+    test_retrieve_workflow
+    test_retrieve_workflow_in_workflow
+    test_send_idempotency_key
+    test_send_recv
+    test_send_recv_temp_wf
+    test_set_get_events
+    test_simple_workflow_attempts_counter
+    test_sleep
+
+**`@DBOS.transaction` — SQL from inside a step — 12**
+
+    test_child_workflow_assigned_id
+    test_custom_database
+    test_custom_names
+    test_custom_schema
+    test_debug_logging
+    test_double_decoration
+    test_duplicate_registration
+    test_exception_workflow
+    test_nonserializable_values
+    test_start_workflow
+    test_temp_workflow
+    test_temp_workflow_errors
+
+**An explicit recovery API — 11**
+
+    test_duplicate_recovery_does_not_rerun_running_workflow
+    test_recovery_appversion
+    test_recovery_empty_id_dead_letters
+    test_recovery_reenqueue_is_ownership_conditional
+    test_recovery_temp_workflow
+    test_recovery_thread
+    test_recovery_workflow
+    test_recovery_workflow_step
+    test_workflow_returns_none
+    test_workflow_timeout
+    test_workflow_wrapped_by_custom_decorator
+
+**Not an engine assertion — 10**
+
+    test_custom_engine
+    test_destroy
+    test_destroy_semantics
+    test_destroy_semantics_async
+    test_eid_reset
+    test_get_event_delivered_by_notifier_without_trigger
+    test_notification_fallback_polling
+    test_recv_wakeup_trigger_is_kept
+    test_step_without_dbos
+    test_timeout_cleanup_on_destroy
+
+**`send_bulk` — 5**
+
+    test_send_bulk
+    test_send_bulk_duplicate_key_within_batch
+    test_send_bulk_empty
+    test_send_bulk_from_workflow
+    test_send_bulk_idempotency_key
+
+**`fork_workflow` — 4**
+
+    test_get_event_timeout
+    test_recv_timeout
+    test_send_bulk_send_to_forks
+    test_without_appdb
+
+**Step introspection from inside a step — 3**
+
+    test_run_step
+    test_run_step_async
+    test_simple_workflow
+
+**Client-side select over handles — 3**
+
+    test_wait_first
+    test_wait_first_async
+    test_wait_first_empty
+
+**Enumerate a workflow's events (ISSUES 28) — 2**
+
+    test_get_events
+    test_multi_set_event
+
+**Step listing with function names — 1**
+
+    test_nested_steps
+
+**An application-version registry — 1**
+
+    test_app_version
+
+**And the enumeration is machine-checkable against the pin, which is the whole
+point of having one.** Verified 2026-09-09 against `dbos-inc/dbos-transact-py`
+at `833794f7`, read in a scratch clone outside this repository:
+
+```python
+import ast, re
+tree = ast.parse(open('tests/test_dbos.py').read())
+real = {n.name for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name.startswith('test_')}
+listed = re.findall(r'^    (test_[A-Za-z0-9_]+)\s*$', open('WORKLIST.md').read(), re.M)
+assert len(listed) == len(set(listed))   # no case listed twice
+assert set(listed) == real               # no phantom, no omission
+```
+
+| | |
+|---|---:|
+| cases at the pin | 61 |
+| names listed here | 61, all distinct |
+| listed but not in the file | **0** |
+| in the file but not listed | **0** |
+
+**Use the AST, not a grep.** `^def test_` returns **56** here — five cases are
+`async def` — so the obvious count is short by five and looks like a plausible
+answer. `^\s*def test_` returns 121 and the AST finds 138 test-named functions
+including nested ones, because inner fixtures are themselves called `test_step`
+and `test_workflow`. Three readings, three numbers, one of which is the
+collection count. That is the same denominator hazard this section's own header
+paragraph flags for `@parametrize`, one level down.
+
+Two classification claims were re-derived the same way rather than asserted:
+**16 cases contain an `@DBOS.transaction`-decorated inner function** (matching
+the superseded table's 16 exactly, from a different route), and all **10**
+not-an-engine-assertion cases do reference DBOS internals — `_sys_db`,
+`DBOS.destroy`, `_timeout_tasks`, `_registry`, `dbos_notifications_trigger` —
+with none unaccounted for.
+
+**Sum: 9 + 12 + 11 + 10 + 5 + 4 + 3 + 3 + 2 + 1 + 1 = 61**, which is the file's
+case count by `def` and matches the inventory table. The partition is the check;
+the individual bucket sizes are not independently verified against anything.
+Cases carrying more than one blocker are listed under the first; `test_simple_workflow`,
+`test_without_appdb` and `test_get_event_timeout` each carry two.
+
+**Two corrections to the original numbers, in opposite directions.**
+
+**Portable is 9, not 17.** Six of the eight I lost are cases whose *subject* is a
+capability the survey did not screen for: `wait_first` (3 — a client-side select
+over arbitrary handles, which `cleat_await_any_child` does **not** cover, because
+it is a host call inside a workflow and only over children), step introspection
+from inside a step (`DBOS.step_status`, `step_id` — 3). The other two enumerate a
+workflow's events and belong to ISSUES 28.
+
+**Ten cases are not engine assertions at all, where the original recorded none.**
+This is the `test_client.py` pattern ws3 found. They assert on DBOS's own
+implementation: that a Postgres trigger named `dbos_notifications_trigger` exists
+(`test_recv_wakeup_trigger_is_kept`) or has been dropped
+(`test_get_event_delivered_by_notifier_without_trigger`); that `recv` still works
+when LISTEN/NOTIFY falls back to polling; that `DBOS.destroy()` then
+`DBOS.launch()` leaves the library usable; that `len(dbos._timeout_tasks) == 0`;
+that a caller-supplied SQLAlchemy engine is the one used. No engine can be
+right or wrong about any of these. Filing them as gaps inflates the number
+against nothing.
+
+**16 cases use `@DBOS.transaction`, confirming the original's count of the
+workflow-side gap exactly** — that number was independently re-derived and holds.
+12 of them have it as their *first* blocker above; the other 4 carry it alongside
+another.
+
+### Validation of the re-derivation
+
+Each case name announces a subject, so the classifier can be checked against it.
+Eight cases were flagged where the name and the bucket disagree:
+
+| case | name announces | classified | verdict |
+|---|---|---|---|
+| `test_get_event_timeout` | event timeout | needs fork | classifier right |
+| `test_recv_timeout` | recv timeout | needs fork | classifier right |
+| `test_without_appdb` | no app database | needs fork + txn | classifier right |
+| `test_workflow_returns_none` | return value | needs recovery API | classifier right |
+| `test_exception_workflow` | exceptions | needs txn | classifier right |
+| `test_simple_workflow` | nothing specific | step introspection + txn | classifier right |
+| `test_start_workflow` | starting | needs txn | classifier right |
+| `test_workflow_timeout` | timeouts | needs recovery API | classifier right |
+
+**Eight flagged, zero real** — these cases genuinely call `fork_workflow`,
+`_recover_pending_workflows` or `DBOS.sql_session` while being named for
+something else. Upstream frequently tests a timeout *by forking*.
+
+That is the opposite outcome from the `test_workflow_management.py` section,
+where the name check passed and the error was found by reconciling against an
+independent count. **Neither check subsumes the other**, and the count
+reconciliation is the one that has now caught a real error; here there was no
+second count to reconcile against, because the 17 was never enumerated.
+
+### What this section cannot settle
+
+`test_nested_steps` asserts `list_workflow_steps` returns one entry carrying a
+`function_name`. cleat's nearest surface is `GET /api/workflows/:id/history`,
+which is an **event** log (`CountEventHistory`, `cmd/cleat-worker/server.go:1139`)
+rather than a step list. Whether that answers the assertion is a judgement this
+survey did not make; it is filed as blocked, and it is the single
+lowest-confidence call in the table. Anyone reopening it should start there.
+
+`test_simple_workflow_attempts_counter` is filed as portable on the strength of
+cleat having `generation` and `reclaim_count`, which is a claim about
+availability rather than about equivalence of meaning. Read the case before
+porting it.
 
 ## `tests/test_client.py` — 57 cases, read at `833794f7`
 
