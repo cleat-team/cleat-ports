@@ -82,8 +82,16 @@ number this repo has had to retract.
 ## The headline: `next-upstream.md` and ISSUES 29 are the wrong lens for the recursion cases
 
 `next-upstream.md` classifies the six recursion cases against **ISSUES 29**,
-which says cleat's cancellation is `WHERE id = $1` with no `parent_workflow_id`
+which said cleat's cancellation is `WHERE id = $1` with no `parent_workflow_id`
 traversal, and treats them as probing an open question.
+
+**That description of ISSUES 29 is out of date as of 2026-09-09** — the entry
+has been rewritten twice and measured. `WHERE id = $1` is true of
+`CancelWorkflow` and false of the engine: `enforceParentClosePolicy` has a
+`REQUEST_CANCEL` arm that does traverse `parent_workflow_id`. The section below
+is unaffected — its point is that ISSUES 29 is about *cancel* while four of the
+six cases are about *terminate*, and that stands. It is now understated if
+anything, since cancel has a cascade of its own.
 
 ISSUES 29 is about **cancel**. Four of the six are about **terminate**, and
 cleat's terminate is a different mechanism that ISSUES 29 does not describe.

@@ -70,8 +70,21 @@ completion.
 This is **not** the divergence ISSUES 21 already settles. That entry establishes
 that cancellation is cooperative rather than a state transition, and concludes
 cleat is right about it. Propagation is a separate axis: a cooperative flag could
-perfectly well be set on every descendant and still be cooperative. It is not,
-and nothing recorded that. Filed as ISSUES 29.
+perfectly well be set on every descendant and still be cooperative. Filed as
+ISSUES 29.
+
+**Corrected 2026-09-09.** This paragraph used to end "It is not, and nothing
+recorded that." That is wrong, and entry 29 has been rewritten: cleat *does*
+propagate, through `enforceParentClosePolicy`'s `REQUEST_CANCEL` arm, in all
+three dialects — measured, a live child is reached about 1.75s after the
+cancel. Two things make it easy to miss. The default `parent_close_policy` is
+`ABANDON`, so a child gets nothing unless it opted in; and `CancelWorkflow`
+itself touches one row, so reading only the cancel path shows no traversal.
+
+What upstream asserts and cleat does not do is **stop the parent**: `AwaitChild`
+never checks `PollCancellation`, so a parent blocked on its children finishes on
+its own schedule. That is the open question now, and it is narrower than the one
+this section originally filed.
 
 ### Validation, including where the check was wrong
 
