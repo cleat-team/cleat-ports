@@ -387,6 +387,18 @@ MSG
     stop_worker
     stop_fixture
     ;;
+  stop-worker)
+    # Stops the WORKER and leaves the fixture service running.
+    #
+    # `stop` takes the fixture down too, which is right when a run is ending
+    # and wrong for anything that stops one worker while the suite continues.
+    # The fixture service is SHARED -- one per session, not one per instance --
+    # so a second worker's teardown calling `stop` silently removes the service
+    # every remaining test depends on. Observed: tearing down instance 2 after
+    # tests/test_cross_worker.py left tests/test_priority_order.py failing on
+    # URLError, which reads as a product defect and is a harness one.
+    stop_worker
+    ;;
   url) echo "$API_URL" ;;
-  *) echo "usage: worker.sh <ensure|crash|stop|url>" >&2; exit 2 ;;
+  *) echo "usage: worker.sh <ensure|crash|stop|stop-worker|url>" >&2; exit 2 ;;
 esac

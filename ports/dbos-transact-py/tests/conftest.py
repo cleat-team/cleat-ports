@@ -640,7 +640,7 @@ def worker():
     w.restart()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def second_worker(api_key: str):
     """A SECOND cleat-worker against the same database, for cross-worker cases.
 
@@ -665,8 +665,24 @@ def second_worker(api_key: str):
     your own -- the session-scoped `cleat` fixture points at the first worker,
     and a test that wants to contend across processes needs both.
 
-    NOT started for every run: session-scoped and only constructed by tests
-    that ask for it, so a suite that never contends pays nothing.
+    MODULE-SCOPED, AND THAT IS NOT A STYLE CHOICE. A second worker CLAIMS
+    WORK. Every workflow it picks up is one the first worker did not, so while
+    it runs it changes the outcome of any test that reasons about which worker
+    got what -- or how many claimed at once, or in what order.
+
+    Session scope was the first version of this fixture and CI caught it. Once
+    any test requested it the second worker ran for the remainder of the
+    session, and two tests ordered after `test_cross_worker.py` failed:
+
+        test_priority_order.py::test_priority_orders_the_second_batch
+            margin 3.5, want >= 12 -- priority ordering diluted because two
+            workers were claiming concurrently
+        test_misfire.py::test_a_schedule_set_to_catch_up_delivers_what_it_missed
+            timed out -- two schedule loops against one set of schedules
+
+    Neither test mentions workers, neither asked for this fixture, and both
+    would have been debugged as flakes. A fixture that starts a competing
+    process must not outlive the module that asked for it.
     """
     root = pathlib.Path(__file__).resolve().parents[3]
     script = str(root / "scripts" / "worker.sh")
@@ -696,7 +712,9 @@ def second_worker(api_key: str):
 
     yield second
 
-    subprocess.run([script, "stop"], capture_output=True, text=True, env=env)
+    # stop-worker, NOT stop: the fixture service is shared across the whole
+    # session, and `stop` takes it down with the worker.
+    subprocess.run([script, "stop-worker"], capture_output=True, text=True, env=env)
 
 
 @pytest.fixture(scope="session")
