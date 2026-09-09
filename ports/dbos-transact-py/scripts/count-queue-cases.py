@@ -238,6 +238,7 @@ MAPPING = {
     "test_retries.py": ("test_failures.py", ""),
     "test_recovery.py": ("test_failures.py", "recovery counts after a crash"),
     "test_dead_letters.py": ("test_failures.py", "retries exhausted, and what is retained"),
+    "test_notify_fallback.py": ("test_failures.py", "upstream test_notification_errors -- the polling safety net behind pg_notify"),
     "test_cancellation.py": ("test_workflow_management.py", ""),
     "test_detached.py": ("test_workflow_management.py", "the nearest thing cleat has to fork"),
     "test_workflow_management.py": ("test_workflow_management.py",

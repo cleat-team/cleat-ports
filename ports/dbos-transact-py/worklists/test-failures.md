@@ -129,7 +129,25 @@ is correct: 1, 2 and 3 attempts at a 2000ms interval take 254ms, 2109ms and
 with a budget of **one** attempt, correct is ~250ms and the defect ~2250ms, a 9x
 separation needing no model of the overhead.
 
-**Remaining: 2** -- `test_notification_errors` and the async twin already
-merged above. `test_notification_errors` drops the notification connection and
-asserts a signal still arrives within a bound; cleat wakes on `pgNotify` with
-polling behind it and nothing exercises that fallback.
+**Remaining: 0.** `test_notification_errors` was the last one and is ported --
+`tests/test_notify_fallback.py`, ports#136. It drops the notification
+connection and asserts a signal still arrives within a bound; cleat wakes on
+`pgNotify` with polling behind it, and nothing exercised that fallback.
+
+The port does it with `-notify-channel=` ("empty disables") rather than by
+severing a connection, which keeps it inside the HTTP-only rule. Two things
+found while writing it are worth carrying forward:
+
+- **The fixture has to verify the running process.** If a restart silently
+  fails to apply the flag, NOTIFY still delivers and the test passes having
+  asserted nothing. It reads the per-session pidfile and requires the flag on
+  the live argv. That guard fired on the first run.
+- **The wake is 0.22s, not the ~3s the backoff ceiling predicts** -- the
+  awaiting row is already dispatchable when the signal lands, so it comes back
+  on the next 500ms tick rather than after any backoff.
+
+**This file is now mined out**, which for `test_failures.py` means: 6 ported,
+7 already covered, 2 answered differently on purpose, 23 blocked on something
+cleat does not have. The 23 are the number to look at next, and they are
+concentrated rather than scattered -- see the paragraph above on where the
+unportable value sits.

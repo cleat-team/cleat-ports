@@ -607,6 +607,42 @@ def bad_result_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("badresult", "badresult")
 
 
+def worker_command_line(instance: str | None = None) -> str:
+    """The running worker's argv, or "" if there is no live worker.
+
+    Here rather than in the one test that needs it, because both halves of this
+    are things the next caller will otherwise get wrong -- and one of them
+    already cost a red CI run on a duplicate port of the same case (ports#141).
+
+    `ps -ww`, AND IT IS LOAD-BEARING. GNU ps truncates to 80 columns when stdout
+    is not a tty, which every CI step and every captured subprocess is. The
+    worker's `-api-addr` begins around column 152, so an unwidened read cannot
+    see the flags this exists to inspect. On macOS `pgrep -fl` returns the full
+    argv, so the truncating version passes locally and can NEVER pass in CI:
+    deterministic, and inverted by platform rather than flaky.
+
+    THE PIDFILE, NOT A SCAN. `.port-results/` is keyed per session (ports#69)
+    and several sessions share this checkout, so matching on process name or on
+    who holds the API port answers about *a* worker when the question is about
+    *mine*. scripts/worker.sh's `owned()` makes the same two choices for the
+    same two reasons.
+    """
+    instance = instance or os.environ.get("CLEAT_PORTS_WORKER_INSTANCE", "1")
+    name = "worker.pid" if instance == "1" else f"worker.{instance}.pid"
+    results = os.environ.get(
+        "CLEAT_PORTS_RESULTS_DIR",
+        str(pathlib.Path(__file__).resolve().parents[3] / ".port-results"
+            / os.environ.get("COMPOSE_PROJECT_NAME", "default")),
+    )
+    try:
+        pid = int((pathlib.Path(results) / name).read_text().strip())
+    except (OSError, ValueError):
+        return ""
+    done = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "command="],
+                          capture_output=True, text=True)
+    return done.stdout.strip()
+
+
 @pytest.fixture(scope="session")
 def cancellable_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("cancellation", "cancellable")
