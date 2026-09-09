@@ -36,9 +36,9 @@ application or a web framework.
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 6 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
-| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 11 |
+| `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 17 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **109** |
+| **Total in scope** | **371** | | **115** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -306,7 +306,6 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives; two of its cases are arguably workflow-management |
 | `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
-| `test_identity_isolation.py` | 1 | `test_concurrency.py` — a run reports its own id under concurrency |
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
 | `test_concurrency.py` | 5 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
@@ -316,6 +315,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_executor_identity.py` | 1 (1 skipped) | `test_queue.py` — upstream test_queue_executor_id -- which worker ran a completed run; skipped, ISSUES.md 26 |
+| `test_identity_isolation.py` | 1 | `test_concurrency.py` — a run reports its own id under concurrency |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
@@ -328,13 +328,14 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_results.py` | 5 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
 | `test_retries.py` | 16 | `test_failures.py` |
-| `test_scheduling.py` | 10 | `test_scheduler.py` — cron and delayed invocation |
+| `test_schedule_timezones.py` | 3 | `test_scheduler.py` — cron zones and the default zone |
+| `test_scheduling.py` | 13 | `test_scheduler.py` — cron and delayed invocation |
 | `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **119** (5 skipped outright) | **109** mapped to an upstream file, **10** cleat-specific |
+| **Total** | **125** (5 skipped outright) | **115** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the

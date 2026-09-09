@@ -281,7 +281,8 @@ class Cleat:
 
     def create_schedule(self, name: str, cron: str, def_name: str,
                         entry_point: str = "", inp=_OMIT, misfire: str = "",
-                        catch_up_limit: int = 0, overlap_policy: str = ""):
+                        catch_up_limit: int = 0, overlap_policy: str = "",
+                        timezone: str = ""):
         """POST /api/schedules -- the operator path.
 
         The scheduling tests that use h.ScheduleCron go in through GUEST code,
@@ -298,6 +299,12 @@ class Cleat:
         entirely used to answer 500, since workflow_schedules.input is
         NOT NULL DEFAULT '{}' and a column default does not apply to an INSERT
         that names the column (cleat#997). Sending {} never exercised it.
+
+        timezone is the IANA zone the cron's wall-clock fields are read in.
+        Sent only when non-empty, for the same reason misfire is: "" and the
+        default's NAME are different requests. The engine reads "" as
+        DefaultScheduleTimezone and the stores write 'UTC' rather than '', so a
+        test that wants to know what omitting DOES must be able to omit.
         """
         body = {"name": name, "cron": cron, "def_name": def_name}
         if entry_point:
@@ -310,6 +317,8 @@ class Cleat:
             body["catch_up_limit"] = catch_up_limit
         if overlap_policy:
             body["overlap_policy"] = overlap_policy
+        if timezone:
+            body["timezone"] = timezone
         return self._req("POST", "/api/schedules", body)
 
     def schedules(self):

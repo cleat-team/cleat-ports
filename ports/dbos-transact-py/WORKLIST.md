@@ -23,7 +23,7 @@ missing verbs rather than on a thin scatter across the surface:
 | file | cases | the blockers, and how much they account for |
 |---|---:|---|
 | `test_failures.py` | 37 | per-call timeout, transactions, SQLite backend |
-| `test_scheduler.py` | 35 | `apply_schedules` 8 · `trigger_schedule` 6 · `backfill_schedule` 2 — 24 of 35 |
+| `test_scheduler.py` | 35 | `apply_schedules` 8 · `trigger_schedule` 6 · `backfill_schedule` 2 — 24 of 35 (**the 5 portable are ported**) |
 | `test_dbos.py` | 61 | `@DBOS.transaction` 16 · step listing 7 · bulk send 5 · fork 3 — 42 of 61 |
 | `test_client.py` | 57 | transactional enqueue 16 · client-library internals 14 · otel/identity/send-key 5 — 35 of 57 |
 
@@ -164,15 +164,59 @@ Established from the **store methods**, not the HTTP routes — routes are what 
 
 **There is no get-by-name, no update, no trigger and no backfill.** Those four absences account for sixteen of the twenty-four blocked cases.
 
-### Portable — 5
+### Portable — 5 · **all five ported 2026-09-09**
 
-| upstream case | property |
+| upstream case | property | ported as |
+|---|---|---|
+| `test_dynamic_scheduler_replace_schedule` | replacing a schedule's definition takes effect and the old one stops firing — cleat has no update, but delete+create is the same property | `test_scheduling.py::test_replacing_a_schedule_under_one_name_replaces_what_it_starts` |
+| `test_long_schedule_shutdown` | a long-running scheduled workflow does not block worker shutdown | `test_scheduling.py::test_a_long_running_scheduled_workflow_does_not_hold_up_shutdown` |
+| `test_backfill_with_timezone` | a cron in a named zone fires at the right wall-clock instant — cleat models `Timezone`, so this is portable without the backfill *call* | `test_schedule_timezones.py::test_a_cron_in_a_named_zone_is_scheduled_on_that_zones_clock` |
+| `test_backfill_naive_datetime` | the naive/aware distinction, against cleat's `DefaultScheduleTimezone` | `test_schedule_timezones.py::test_a_schedule_that_names_no_zone_gets_the_documented_default` |
+| `test_scheduled_workflow_datetime_with_portable_serializer` | a scheduled run's input survives the store unchanged | `test_scheduling.py::test_a_schedules_input_reaches_its_workflow_unchanged` |
+
+**A sixth test was added that is not an upstream case**, and it is named here so
+the count above stays honest:
+`test_schedule_timezones.py::test_an_unloadable_timezone_is_refused`. It is the
+control the two timezone cases need. Both of those send a zone and read a value
+back, and neither can tell *honoured* from *accepted, discarded, and UTC is what
+you get anyway*; a refusal can. Upstream has no equivalent because DBOS resolves
+the zone in the client process, where an unloadable name raises before anything
+is stored.
+
+#### What the timezone pair does NOT assert, stated because the weaker reading is the natural one
+
+They pin the instant cleat **computes** at creation, not the instant a workflow
+starts. That is deliberate: a zone changes *when* a schedule fires and the
+smallest observable difference is an hour, while `* * * * *` — the only
+expression that fires soon enough to wait for — has the same next instant in
+every zone on earth. So the property is unobservable by waiting and exact by
+reading, and the tests are 1.6s rather than an hour.
+
+The half they skip is already covered:
+`test_a_newly_created_schedule_is_not_already_due` is the case where a computed
+instant was never acted on (cleat#998, every API-created schedule firing on the
+next tick regardless of its cron).
+
+#### Falsification
+
+Each test was run against a deliberately broken `cleat-worker` built from
+`.cleat-src`, one mutation at a time, and each mutation moved only the tests it
+was about:
+
+| mutation | what went red |
 |---|---|
-| `test_dynamic_scheduler_replace_schedule` | replacing a schedule's definition takes effect and the old one stops firing — cleat has no update, but delete+create is the same property |
-| `test_long_schedule_shutdown` | a long-running scheduled workflow does not block worker shutdown |
-| `test_backfill_with_timezone` | a cron in a named zone fires at the right wall-clock instant — cleat models `Timezone`, so this is portable without the backfill *call* |
-| `test_backfill_naive_datetime` | the naive/aware distinction, against cleat's `DefaultScheduleTimezone` |
-| `test_scheduled_workflow_datetime_with_portable_serializer` | a scheduled run's input survives the store unchanged |
+| `handleCreateSchedule` computes `NextRunAt` in the default zone, ignoring the request | the named-zone case, `12:00Z` against a wanted `16:00Z` |
+| `scheduleTimezoneOrDefault` returns `tz` unchanged | the default-zone case, reading back `''` |
+| `ValidateTimezone` never consulted | the refusal case, `201` against a wanted `400` |
+| the scheduler starts runs with a fixed input instead of `sch.Input` | both the replace case and the input case, each on its own `wait_until` |
+| the worker ignores `SIGTERM` | the shutdown case, **5.20s** against an idle baseline of **0.29s** |
+
+The last is the one whose instrument needed choosing rather than accepting.
+`scripts/worker.sh stop` signals, waits 5s in 0.25s steps, then `SIGKILL`s — so
+it **always** returns and its exit status can never fail. Only the duration
+separates "exited on SIGTERM" (~0.3s) from "was killed at the cap" (~5s), and
+the assertion is `< 3.0s` — below the cap on purpose, so a pass means the worker
+chose to exit rather than that the harness eventually shot it.
 
 ### Already covered — 6
 

@@ -454,3 +454,193 @@ def test_a_newly_created_schedule_is_not_already_due(cleat, cron_workflows, clea
         f"next_run_at is {next_run}, which is already past (now {now.isoformat()}). "
         "A schedule created just now is due immediately."
     )
+
+
+# --------------------------------------------------------------------------
+# Ported from upstream `test_dynamic_scheduler_replace_schedule` and
+# `test_scheduled_workflow_datetime_with_portable_serializer`.
+#
+# Both go in through POST /api/schedules rather than h.ScheduleCron, because
+# both need to control the schedule's INPUT and guest registration does not
+# carry one. That also makes them operator-path tests, like the policy block
+# above.
+# --------------------------------------------------------------------------
+
+
+def test_replacing_a_schedule_under_one_name_replaces_what_it_starts(
+    cleat, cron_workflows, fixture_calls, cleanup_schedules
+):
+    """Delete-and-recreate under the same name runs the NEW input, not the old.
+
+    Upstream replaces a schedule's definition in place; cleat has no update, so
+    delete + create is the same property expressed with the operations cleat
+    has. What is being asked is whether the name is a live binding or a
+    write-once one -- a schedule whose row was replaced while the scheduler
+    kept firing the definition it had loaded would be a real defect, and the
+    scheduler does hold state (`LastRunID`, `next_run_at`) that a stale copy
+    could carry.
+
+    ONE cron minute, not two. The old schedule is replaced within seconds of
+    being created, so it is not given a chance to fire and this does NOT assert
+    that a schedule which HAS fired stops firing after replacement -- that
+    would cost a second minute and is a different claim. What it asserts is
+    that after replacement the name starts the new input, and that the old
+    input is never seen. Said plainly because the weaker reading is the one a
+    reader will assume.
+    """
+    name = f"replace-{uuid.uuid4().hex[:8]}"
+    old_key, new_key = f"old-{uuid.uuid4().hex[:8]}", f"new-{uuid.uuid4().hex[:8]}"
+
+    status, body = cleat.create_schedule(
+        name, "* * * * *", "cron_target", inp={"key": old_key, "tag": "before"},
+    )
+    assert status in (200, 201), f"create rejected: {status} {body}"
+    cleanup_schedules.append(name)
+
+    del_status, del_body = cleat.delete_schedule(name)
+    assert del_status == 200, f"delete rejected: {del_status} {del_body}"
+
+    status, body = cleat.create_schedule(
+        name, "* * * * *", "cron_target", inp={"key": new_key, "tag": "after"},
+    )
+    assert status in (200, 201), f"recreate rejected: {status} {body}"
+
+    row = [r for r in cleat.schedules()[1] if r.get("name") == name]
+    assert len(row) == 1, f"expected one schedule named {name} after replacement, got {row!r}"
+
+    wait_until(
+        lambda: fixture_calls(new_key) >= 1,
+        timeout=CRON_FIRE_TIMEOUT,
+        what="the replaced schedule to start its workflow with the NEW input",
+    )
+    assert fixture_calls(old_key) == 0, (
+        f"the replaced schedule started the OLD input as well ({fixture_calls(old_key)} "
+        "calls). The name is bound to a definition the scheduler loaded once, so a "
+        "replacement leaves both running and the operator has no way to stop the first."
+    )
+
+
+def test_a_schedules_input_reaches_its_workflow_unchanged(
+    cleat, cron_workflows, fixture_calls, cleanup_schedules
+):
+    """A timestamp stored in a schedule's input arrives byte-identical.
+
+    Upstream'"'"'s case is a datetime surviving its serializer. cleat has no
+    datetime in the wire format -- the input is JSON and a timestamp is a
+    string -- so the portable question is whether the string survives the
+    round trip through `workflow_schedules.input` and into the entry point.
+
+    The marker carries the two things that break in transit and are silent
+    when they do: an ISO-8601 offset -- the `+` is what a form-encoder eats --
+    and a colon-heavy time. The assertion is exact because the fixture counts
+    calls PER KEY: a mangled marker is not a mismatched value to compare, it
+    is a key that was never called, so a partial round trip reads as zero
+    rather than as something close.
+
+    THE MARKER IS ASCII, and that is a limit of the instrument rather than a
+    judgement that unicode is uninteresting. `fixture_calls` reads
+    `GET /calls/<key>`, so the key travels in a URL PATH, and http.client
+    encodes a request line as ASCII: a marker containing `caf\u00e9` raises
+    UnicodeEncodeError in the test process before any request is sent. That
+    failure looks like a cleat defect in the traceback and is not one -- it
+    was measured here on the first run of this test. Widening it would mean
+    changing the fixture'"'"'s key channel, which is a harness change and does not
+    belong in a port.
+
+    Note what this needs a cron minute for and could not get otherwise. The
+    schedule row can be read back over the API, which would pin storage; only
+    an actual firing pins that the STORED input is what the workflow is
+    started with, and those are different halves -- the same distinction this
+    module'"'"'s header draws about schedules generally.
+    """
+    marker = f"2026-09-09T12:34:56+00:00~{uuid.uuid4().hex[:8]}"
+    name = f"input-{uuid.uuid4().hex[:8]}"
+
+    status, body = cleat.create_schedule(
+        name, "* * * * *", "cron_target", inp={"key": marker, "tag": "roundtrip"},
+    )
+    assert status in (200, 201), f"create rejected: {status} {body}"
+    cleanup_schedules.append(name)
+
+    row = [r for r in cleat.schedules()[1] if r.get("name") == name]
+    assert len(row) == 1, f"expected one schedule named {name}, got {row!r}"
+    stored = row[0].get("input")
+    stored = json.loads(stored) if isinstance(stored, str) else stored
+    assert stored.get("key") == marker, (
+        f"the schedule row stores key={stored.get('key')!r}, want {marker!r}. "
+        "The input was altered on the way into the store, so every run this "
+        "schedule ever starts will be started with something the caller did not send."
+    )
+
+    wait_until(
+        lambda: fixture_calls(marker) >= 1,
+        timeout=CRON_FIRE_TIMEOUT,
+        what="the scheduled workflow to reach the fixture under the exact input it was given",
+    )
+
+
+def test_a_long_running_scheduled_workflow_does_not_hold_up_shutdown(
+    cleat, recovery_workflow, fixture_calls, worker, cleanup_schedules
+):
+    """A worker asked to stop exits on SIGTERM while a scheduled run sleeps.
+
+    Upstream's `test_long_schedule_shutdown`. The risk it guards is that the
+    component which STARTED a long run also waits for it: a scheduler thread
+    that joins its own work turns an operator's rolling restart into an
+    outage as long as the longest scheduled workflow, and the failure is
+    invisible until someone has a slow one.
+
+    HOW THE MEASUREMENT WORKS, because the number alone would not say.
+    `scripts/worker.sh stop` sends SIGTERM, waits up to 5s in 0.25s steps, and
+    then SIGKILLs. So it ALWAYS returns and its exit status can never fail --
+    the only thing that separates the two outcomes is how long it took:
+
+      * exits on SIGTERM              -> ~0.3s, measured on an idle worker
+      * blocked, killed at the cap    -> ~5s, the escalation loop in full
+
+    The bound is 3s, deliberately below the 5s cap rather than near it. That
+    is what makes a pass mean "the worker chose to exit" instead of "the
+    harness eventually shot it", and it is a 10x margin over the idle
+    baseline rather than a factor to reason about.
+
+    A shutdown that took 4.9s would be a FAILURE by this test and a success by
+    the harness, which is the point of asserting on the duration and not on
+    the return code.
+
+    The run is real, not merely created: the fixture is polled for the
+    workflow's FIRST call, so the schedule has fired, the workflow has been
+    claimed, and it is inside a 120s DurableSleepMs when the signal arrives.
+    Creating the schedule and stopping immediately would measure an idle
+    worker and pass against anything.
+    """
+    key = f"shutdown-{uuid.uuid4().hex[:8]}"
+    name = f"longsched-{uuid.uuid4().hex[:8]}"
+
+    status, body = cleat.create_schedule(
+        name, "* * * * *", "recovery",
+        inp={"key": key, "sleepMs": 120000},
+    )
+    assert status in (200, 201), f"create rejected: {status} {body}"
+    cleanup_schedules.append(name)
+
+    wait_until(
+        lambda: fixture_calls(f"{key}-before") >= 1,
+        timeout=CRON_FIRE_TIMEOUT,
+        what="the scheduled long-running workflow to start and reach its first call",
+    )
+
+    # Everything observable goes down with the worker -- worker.sh stop also
+    # stops the fixture service -- so nothing may be read after this point
+    # until the restart below.
+    started = time.monotonic()
+    worker.stop()
+    elapsed = time.monotonic() - started
+    worker.restart()
+
+    assert elapsed < 3.0, (
+        f"stopping the worker took {elapsed:.2f}s while a scheduled workflow was "
+        "inside a 120s sleep; an idle stop is ~0.3s and worker.sh escalates to "
+        "SIGKILL at 5s. A duration in that range means the worker did not exit on "
+        "SIGTERM and was killed, so a rolling restart waits for the longest "
+        "scheduled run rather than for the worker."
+    )
