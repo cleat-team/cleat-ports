@@ -39,6 +39,32 @@ clear a `BEHIND` state. Add it to the queue and GitHub tests it against the
 projected tip — this branch plus everything ahead of it in the batch — then
 merges it. Batch size is 5.
 
+**That rule covers staleness and not conflict, and `mergeStateStatus` will not
+tell you which you have.** It mixes staleness, conflict and admission into one
+field, which is exactly why the two get conflated. The discriminator is
+`mergeable`:
+
+| `mergeable` | `mergeStateStatus` | what to do |
+|---|---|---|
+| `MERGEABLE` | `BEHIND` | queue it; the queue rebases |
+| `CONFLICTING` | `DIRTY` | rebase by hand; the queue cannot help |
+
+A PR can read `mergeable=MERGEABLE`, `mergeStateStatus=CLEAN` **while its queue
+entry reads `UNMERGEABLE`**, and both are correct: the PR fields answer against
+`develop` as it is now, the queue entry answers against the projected tip. So
+`CLEAN` does not mean the queue will take it, and nothing in the PR view hints
+that a second base exists. **Sample the queue entry's own `state`**, not the
+PR's.
+
+You can ask the projected question before the tip exists:
+
+```sh
+git merge-tree --write-tree <head-ahead-of-you> <your-head>   # exit 1 = will conflict
+```
+
+That names the conflicting files, so "one more rebase" becomes confirmed and
+bounded rather than predicted.
+
 The queue exists because `strict: true` means every merge invalidates every
 other open pull request, and this repo took 23 merges in 12 hours on
 2026-09-09 with five open PRs stale simultaneously. One of them needed three
