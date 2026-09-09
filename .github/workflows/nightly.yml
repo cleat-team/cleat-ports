@@ -31,7 +31,6 @@ jobs:
     outputs:
       ports: ${{ steps.list.outputs.ports }}
       dialects: ${{ steps.list.outputs.dialects }}
-      exclude: ${{ steps.list.outputs.exclude }}
     steps:
       - uses: actions/checkout@v5
       - id: list
@@ -41,11 +40,6 @@ jobs:
         run: |
           echo "ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo 'dialects=["postgres","mysql","mssql"]' >> "$GITHUB_OUTPUT"
-          # Excluded cells live here too, so the matrix and the completeness
-          # gate subtract the SAME set. Defined in two places they would drift,
-          # and the gate would then verify the matrix against its own copy --
-          # which is the failure the gate exists to prevent.
-          echo 'exclude=[{"port":"dbos-transact-py","dialect":"mssql"}]' >> "$GITHUB_OUTPUT"
 
   port:
     name: ${{ matrix.port }} on ${{ matrix.dialect }} vs cleat@${{ inputs.cleat_ref || 'develop' }}
@@ -56,36 +50,6 @@ jobs:
       matrix:
         port: ${{ fromJSON(needs.discover.outputs.ports) }}
         dialect: ${{ fromJSON(needs.discover.outputs.dialects) }}
-        # ONE CELL EXCLUDED, with the reason stated rather than a
-        # known-failures list. Measured 2026-09-09 against develop:
-        #
-        #   dbos-transact-py  mysql   108 passed, 5 skipped, 0 failed  14m40s
-        #   samples-go        mysql    42 passed,            0 failed    119s
-        #   samples-go        mssql    pass,                 0 failed    185s
-        #   dbos-transact-py  mssql   103 passed, 6 skipped, 4 FAILED  34m19s
-        #
-        # The four:
-        #   test_concurrency.py::test_distinct_keys_do_not_block_each_other
-        #   test_dead_letters.py::test_terminating_a_dead_lettered_run_removes_it_from_the_queue
-        #   test_dead_letters.py::test_retrying_a_run_that_is_not_dead_lettered_is_refused
-        #   test_dead_letters.py::test_dead_lettering_survives_a_workflow_rewriting_the_error
-        #
-        # THREE OF THE FOUR ARE TimeoutError ON THE HTTP SOCKET -- the client
-        # giving up on the API, not an assertion failing. Only the first is
-        # behavioural. Worker-side during that window: repeated
-        # `audit-log: record event error="context deadline exceeded"`, a
-        # `WATCHDOG: loop did not exit within 5s of cancellation`, and
-        # `Invalid TDS stream: did not get cancellation confirmation`. At 2.3x
-        # MySQL's wall time on a container sharing a laptop with ten others,
-        # that is a system under duress rather than four defects.
-        #
-        # Excluded rather than listed as known failures ON PURPOSE. A
-        # known-failures list that records a timing artifact as an expectation
-        # is worse than no list, because it becomes the thing nobody rechecks.
-        # This cell is UNEXPLAINED, not accepted. Removing the exclude is one
-        # line once a repeat run says whether the same four recur (a finding) or
-        # a different set does (a resource artifact).
-        exclude: ${{ fromJSON(needs.discover.outputs.exclude) }}
     # No `services:` block. The databases come up through `make deps`, which is
     # the path the harness is built around and the one a developer runs. SQL
     # Server in particular needs a step no service container performs: its image
@@ -120,9 +84,16 @@ jobs:
       # causes before the real one. Nobody has hit it because a single manual
       # run never switches dialects.
       #
-      # Do not consolidate these legs into a single job to save runner minutes
-      # without re-reading that trap first. Fresh-VM-per-combination is what
-      # makes the bug dormant here, not anything this workflow does.
+      # cleat-ports#94 fixes that trap at `port`, `all-ports` and
+      # `worker-down`. It is still worth knowing here, because the sequential
+      # local sweep is exactly what someone reproducing a red nightly by hand
+      # will run.
+      #
+      # Do not consolidate these legs into a single job to save runner minutes.
+      # Fresh-VM-per-combination is what keeps the trap dormant, and -- since
+      # #94 -- it is also what keeps the legs out of contention with each
+      # other. Contention on one runner is the condition that produced the one
+      # red dbos/mssql run.
       - name: Start ${{ matrix.dialect }}
         run: make deps DIALECT=${{ matrix.dialect }}
       - name: Install cleat @ ${{ inputs.cleat_ref || 'develop' }}
@@ -136,6 +107,21 @@ jobs:
         run: |
           cat bin/.cleat-build >> "$GITHUB_OUTPUT"
           echo "--- ${{ matrix.port }} on ${{ matrix.dialect }}: $(tr '\n' ' ' < bin/.cleat-build)"
+      # TIMING-SENSITIVE LEG, stated here rather than discovered later.
+      # dbos-transact-py on mssql went red once under load with four failures,
+      # then fully green on re-run at UNDER HALF the wall time (34m19s ->
+      # 15m05s). Three of the four were TimeoutError on the HTTP socket -- the
+      # client giving up on the API, not an assertion -- alongside
+      # `context deadline exceeded`, `WATCHDOG: loop did not exit within 5s of
+      # cancellation`, and `Invalid TDS stream: did not get cancellation
+      # confirmation`. That is contention, and it will recur on a loaded runner.
+      #
+      # RE-RUN THAT LEG ONCE BEFORE BELIEVING A RED. Not silencing it: a leg
+      # that reddens under contention is saying something true about the
+      # engine, and confirming costs 15 minutes. An `exclude:` naming those
+      # four tests was drafted and withdrawn -- it would have encoded a
+      # machine's bad half-hour as a permanent property of SQL Server, which is
+      # a known-failures list by another name: an expectation nobody rechecks.
       - name: Run port
         run: make port PORT=${{ matrix.port }} DIALECT=${{ matrix.dialect }}
       - name: Prove this leg used ${{ matrix.dialect }}
@@ -186,7 +172,6 @@ jobs:
         env:
           PORTS: ${{ needs.discover.outputs.ports }}
           DIALECTS: ${{ needs.discover.outputs.dialects }}
-          EXCLUDE: ${{ needs.discover.outputs.exclude }}
         run: scripts/assert-legs-complete.sh legs
 
   report:
