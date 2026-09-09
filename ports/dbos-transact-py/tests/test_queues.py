@@ -81,6 +81,80 @@ def test_the_same_idempotency_key_starts_one_run(cleat, retry_workflow, fixture_
     )
 
 
+def test_a_completed_run_still_answers_for_its_idempotency_key(
+    cleat, retry_workflow, fixture_calls
+):
+    """A key stays bound to its run after that run has finished.
+
+    UPSTREAM ANSWERS THIS THE OTHER WAY, and the difference is the point.
+    `test_queue.py::test_queue_deduplication` ends by re-enqueuing under a
+    deduplication ID it has already used, and asserts the enqueue SUCCEEDS --
+    "no longer in the queue" is its comment. DBOS scopes the ID to queue
+    residency: once the workflow dequeues, the ID is free and the next
+    submission is a new run.
+
+    cleat scopes it to the record instead. `idempotency_keys` rows carry
+    `expires_at DEFAULT now() + INTERVAL '7 days'` (migrations/postgres/001),
+    so the binding outlives the run by a week regardless of how the run ended.
+
+    Neither is more correct in the abstract; they answer different questions.
+    DBOS's ID means "is this job already waiting", cleat's means "have I
+    already submitted this job". But a caller that retries a submission after
+    a delay -- the ordinary reason to hold an idempotency key at all -- gets
+    one execution from cleat and two from DBOS, so the difference is reachable
+    from normal use and worth a test rather than a sentence.
+
+    The side-effect count carries the assertion, not the id. A start that
+    returned the old id while running the body again is the failure that
+    matters, and comparing ids cannot see it -- which is the same reason
+    test_the_same_idempotency_key_starts_one_run counts fixture calls.
+    """
+    key = f"dedup-after-{uuid.uuid4().hex[:8]}"
+    idem = f"idem-{uuid.uuid4().hex[:8]}"
+    payload = {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50,
+               "failTimes": 0, "failStatus": 0}
+
+    status_a, first = cleat.start(retry_workflow, payload, idempotency_key=idem)
+    assert status_a == 201, f"first start rejected: {status_a} {first}"
+
+    final = cleat.await_terminal(first["id"], timeout=60.0)
+    assert final["status"] == "done", (
+        f"the first run did not finish, so this test would be re-submitting "
+        f"against a LIVE run and would prove the in-flight case the test above "
+        f"already covers: {final!r}"
+    )
+    assert fixture_calls(key) == 1, (
+        f"the first run called the fixture {fixture_calls(key)} times, not once; "
+        f"the count below cannot distinguish a second execution from a first "
+        f"that ran twice"
+    )
+
+    status_b, second = cleat.start(retry_workflow, payload, idempotency_key=idem)
+
+    assert second.get("workflow_id") == first["id"], (
+        f"re-submitting a completed run's idempotency key started a DIFFERENT "
+        f"run: first={first['id']!r} second={second!r}. cleat's key binding is "
+        f"stored with a 7-day expiry rather than released at completion, so a "
+        f"caller retrying a submission would get a second execution of work it "
+        f"had already had. (This is where DBOS deliberately differs -- see the "
+        f"docstring -- so a change here is a decision, not a bug fix.)"
+    )
+    assert status_b == 200, (
+        f"a start deduplicated against a COMPLETED run answered {status_b}, not "
+        f"200. 201 claims the run was created by this call, which it was not: "
+        f"{second!r}"
+    )
+    assert second.get("already_started") == "true", (
+        f"the response does not mark this start as a duplicate, so a caller "
+        f"cannot tell that the result it is about to read belongs to an earlier "
+        f"submission: {second!r}"
+    )
+    assert fixture_calls(key) == 1, (
+        f"the workflow body ran {fixture_calls(key)} times. The second start "
+        f"reported the first run's id and executed anyway, which is the failure "
+        f"an id-only assertion cannot see."
+    )
+
 def test_different_idempotency_keys_start_different_runs(cleat, retry_workflow):
     """Dedup is keyed, not global.
 

@@ -240,6 +240,11 @@ MAPPING = {
     "test_workflow_management.py": ("test_workflow_management.py",
                                     "force-complete, force-fail, and their refusals"),
     "test_children.py": ("test_concurrency.py", "concurrent execution and isolation"),
+    # The other half of upstream test_concurrency.py, and the only half of it
+    # that is portable: nine of its eleven cases drive asyncio.gather inside one
+    # workflow, which the determinism analyzer refuses at build time (ISSUES 22).
+    "test_identity_isolation.py": ("test_concurrency.py",
+                                   "a run reports its own id under concurrency"),
     "test_complex_args.py": ("test_queue.py",
                              "upstream test_complex_type -- a nested struct argument "
                              "survives the store, including across a suspension"),

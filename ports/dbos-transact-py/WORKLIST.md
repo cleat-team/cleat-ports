@@ -241,8 +241,17 @@ database directly. `grep -inE "transaction|sql_session"` over ISSUES.md returns
 nothing.
 
 **16 of 61 cases in a priority-2 file bottom out on a limitation recorded only in
-a migration guide**, which is not where anyone reading a work-list looks. Filed
-as its own ISSUES entry.
+a migration guide**, which is not where anyone reading a work-list looks.
+
+**Correction, 2026-09-09.** This paragraph originally ended "Filed as its own
+ISSUES entry." It was not. The same `grep -inE "transaction|sql_session"` that
+this section quotes as its REASON for filing still returns nothing, which is
+how cleat-ws3 found it while surveying `test_client.py` — the sentence asserted
+the outcome of a command it had just reported failing, one paragraph earlier.
+The entry is still owed and is deliberately not being squeezed into this
+change: ports#111 files the CALLER-side transactional gap, this is the
+WORKFLOW-side one, and both are 16 cases, which is exactly the coincidence that
+would get them merged into one entry by whoever wrote them in a hurry.
 
 ### The 13 "internal API" cases are setup, not subject
 
@@ -710,3 +719,180 @@ blocker already recorded against another file.
 `RunDetached` handle gap already recorded as a skip. That is the fourth file in a
 row to bottom out on blockers that were already known, which is the strongest
 available evidence that the ledger is closed under this upstream suite.
+
+## `tests/test_queue.py` — 91 cases, read at `833794f7`
+
+The largest file in scope and the last priority-1 one without a work-list. The
+census below is not a fresh reading of all 91: `scripts/count-queue-cases.py`
+already classifies them by the queue controls they touch, and this section
+takes that as given and reads only the 19 it calls plausibly portable. What is
+new here is the second pass — of those 19, which are **already answered in this
+port**, which are **not portable after all**, and which are actually left.
+
+### The classifier's split, quoted rather than recomputed
+
+```
+91 collectible cases
+  needs a control cleat lacks : 61
+  needs only priority/dedup   : 10
+  needs no queue control      : 20
+  ...of those, needs queue SEMANTICS cleat lacks : 11
+  => plausibly portable       : 19
+```
+
+The 61 and the 11 are not revisited. They fail on `worker_concurrency`,
+`limiter`, `partition_concurrency`, named-queue residency and selective queue
+listening, none of which cleat has, and ISSUES.md "no work queues" covers the
+class. **The 19 are the only ones worth a second opinion, because "needs no
+queue control" is a statement about the controls, not about whether cleat can
+express the assertion underneath.**
+
+### Already answered here — 8
+
+| upstream case | where |
+|---|---|
+| `test_complex_type` | `test_complex_args.py` |
+| `test_duplicate_workflow_id` | `test_queues.py` |
+| `test_queue_deduplication_recovery` | `test_concurrency.py` |
+| `test_queue_executor_id` | `test_executor_identity.py`, and ISSUES.md 26 for the half cleat cannot answer |
+| `test_queue_workflow_in_recovered_workflow` | `test_recovery.py` |
+| `test_enqueue_version` | `test_versions.py` |
+| `test_unsetting_timeout` | `test_timeouts.py`, as a documented skip — ISSUES.md 25 |
+| `test_timeout_queue_recovery` | ISSUES.md, same gap |
+
+### Ported by this section — 1
+
+`test_queue_deduplication`'s **final** assertion, which nothing here covered:
+upstream re-enqueues under a deduplication ID it has already used and asserts
+the enqueue **succeeds**, because the workflow has left the queue. cleat
+answers the opposite way — `idempotency_keys.expires_at` defaults to seven days
+out, so the binding outlives the run — and the existing dedup tests all
+re-submit while the first run is still **in flight**, which is a different
+question.
+
+`test_queues.py::test_a_completed_run_still_answers_for_its_idempotency_key`.
+It is a deliberate difference, not a defect, and the test says so in its
+docstring so that a future change here reads as a decision rather than a fix.
+
+### Not portable, despite the classifier — 6
+
+The classifier asks "does this need a queue control", which is the right
+question for 85 of 91 cases and the wrong one for these:
+
+| upstream case | why not |
+|---|---|
+| `test_enqueued_async_workflow_survives_gc` | asserts on `dbos._workflow_tasks` and Python future garbage collection — a property of the DBOS runtime, not of a durable engine |
+| `test_listen_queue` | selective queue listening; there is no queue to listen to |
+| `test_enqueue_options_require_a_queue_async` | asserts enqueue **options** are rejected without a queue; both halves are absent |
+| `test_queue_transaction` | DBOS transactions; the gap is documented outside the ledger, see the `test_dbos.py` section above |
+| `test_queue_step` | enqueues a **step** as a top-level unit; cleat steps exist only inside a workflow body |
+| `test_simple_queue` | see below — the residue is timestamps cleat does not record |
+
+### The one that produced a new ISSUES entry
+
+`test_simple_queue` looked portable and mostly is: "the workflow runs once, its
+step runs once, a re-invoke under the same id does not re-run the body" is
+already covered twice over in `test_queues.py`. What is left is its last two
+lines:
+
+```python
+assert status.dequeued_at >= status.created_at
+```
+
+**cleat records no start time.** `workflow_instances` has `created_at` and
+`completed_at`; `heartbeat_at` is rewritten continuously so it is the latest
+sign of life rather than the first, and a schema-wide search for
+`start|claim|dequeue|first_run` returns only `reclaim_count`. So queue latency
+and execution time are both unavailable, and `completed_at - created_at`
+collapses them into one number. ISSUES.md 30.
+
+### Still open — 2, and both are async mirrors
+
+`test_simple_queue_async` and `test_queue_deduplication_async` are the async
+forms of cases whose sync form is now covered. README.md's priority note for
+`test_async.py` applies here for the same reason: the async surface is the
+SDK's, and re-asserting an engine property through it tests the client.
+
+`test_enqueue_version_async` is the third, and the same applies.
+
+### What this says about where to go next
+
+`test_queue.py` is **mined out**, and that is the useful conclusion. Its 91
+cases were the largest single gap in the coverage table — 19 of 91 — and the
+gap is a ceiling rather than a backlog: 72 need queue machinery cleat does not
+have, 8 were already answered elsewhere in this port, 6 are not engine
+assertions at all, and 3 are async mirrors. One case was genuinely missing and
+is now ported; one produced an ISSUES entry.
+
+**The coverage table's `Cases here` column should be read as "what this port
+can say about that file", not as progress toward the case count.** For
+`test_queue.py` the reachable maximum is around 20 of 91, and it is now 20.
+
+---
+
+## `tests/test_concurrency.py` — 11 cases, read at `833794f7`
+
+**ISSUES.md 22 had already surveyed this file**, and the grep that found it took
+one command. The entry classifies nine of the eleven as unportable in principle
+— `asyncio.gather` inside a single workflow, which cleat's determinism analyzer
+refuses at build time rather than at run time (E001/E002/E012/E013) — and names
+the remaining two as "the work-list for this file".
+
+So this section is not a survey. It is the two cases entry 22 left, read and
+disposed of.
+
+| upstream case | disposition |
+|---|---|
+| `test_concurrent_workflows` | **ported** — `test_identity_isolation.py` |
+| `test_concurrent_getevent` | open, see below |
+
+### `test_concurrent_workflows`, and why it is not the smoke test it looks like
+
+Ten workflows started from a thread pool, each under a caller-supplied id, each
+returning its own. Read quickly it asserts "ten workflows finish". The
+assertion that carries it is `assert id == future.result()` — **each run
+returns ITS OWN id** — and that is the only case in the file that would catch a
+host handing a running workflow somebody else's identity.
+
+cleat is where that is most expressible. One worker runs many workflows at
+once, each is a WASM instance the host drives, and `RunID()` is answered out of
+host state rather than out of anything the guest holds. A pooled instance, a
+reused context, or an index into a slice of in-flight runs all produce the same
+symptom: **ten workflows that complete perfectly and report the wrong
+identity.**
+
+Two things the port adds that upstream does not have:
+
+- **An overlap assertion.** Ten sequential 1.5s runs satisfy every identity
+  assertion while demonstrating nothing about concurrency, and nothing in the
+  output would say so. The test measures wall time and requires it under half
+  the serial cost.
+- **Per-run pairing rather than set equality.** Asserting the ten returned ids
+  equal the ten started ids is weaker and a full permutation satisfies it: a
+  host that gave every run its neighbour's identity returns exactly the right
+  *set*. The test compares each run against the id it was started under.
+
+Falsified by doctoring the workflow to return a constant instead of `RunID()`:
+10 of 10 mismatched, **and all ten runs still reached `done`** — which is the
+test's own claim about what a completion-only check cannot see.
+
+### `test_concurrent_getevent` — open
+
+Two threads call `get_event` on the same run and event name while a third runs
+the workflow that sets it; both readers must receive the same value. cleat's
+nearest surface is signals and promises rather than a keyed event map, and
+`test_promises.py` / `test_signals.py` cover single-reader delivery. **Whether
+two concurrent readers of one promise both observe it is untested here**, and
+it is a real question rather than a mechanical port — ISSUES.md 28 records that
+a workflow's readers are all keyed, so the shape of the upstream assertion may
+not have an analogue at all. Left open deliberately rather than ported badly.
+
+Upstream's final line, `assert not dbos._sys_db.workflow_events_map._dict`,
+asserts on SDK internals and has no counterpart in any engine.
+
+### Where this leaves the file
+
+11 upstream cases: 9 unportable in principle (ISSUES 22), 1 ported here, 1
+open. **The ceiling is 2, and it is now 1 of 2.** As with `test_queue.py` and
+`test_workflow_management.py`, the coverage column is a ceiling and not a
+backlog.
