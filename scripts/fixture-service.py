@@ -53,12 +53,29 @@ the thing under test does not.
 import json
 import sys
 import threading
+import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _counts = defaultdict(int)
 _log = defaultdict(list)
 _lock = threading.Lock()
+
+# In-flight accounting, for asserting that cleat runs workflows CONCURRENTLY.
+#
+# `_peak[key]` is the largest number of /call/ requests under `key` that were
+# ever inside the handler at the same moment. A serial engine produces 1; an
+# engine running N workflows at once produces N, bounded by the worker's
+# -concurrency (10 by default, cmd/cleat-worker/config.go).
+#
+# This exists so the parallelism assertion is a DIRECT measurement rather than
+# a wall-clock inference. Upstream's test_max_parallel_workflows asserts 50
+# workflows finish in under 30s where serial would take 250s; that shape is a
+# threshold between two timings, and cleat-ports#115 is the worked example of
+# it going wrong -- a ~1s cold-start landing between the hypotheses. A peak
+# counter has no threshold to tune and no clock to be wrong about.
+_inflight = defaultdict(int)
+_peak = defaultdict(int)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -77,6 +94,14 @@ class Handler(BaseHTTPRequestHandler):
             key = self.path[len("/calls/"):]
             with _lock:
                 return self._send(200, {"key": key, "attempts": _counts[key]})
+        if self.path.startswith("/peak/"):
+            key = self.path[len("/peak/"):]
+            with _lock:
+                return self._send(200, {
+                    "key": key,
+                    "peak": _peak[key],
+                    "attempts": _counts[key],
+                })
         if self.path.startswith("/log/"):
             key = self.path[len("/log/"):]
             with _lock:
@@ -191,6 +216,26 @@ class Handler(BaseHTTPRequestHandler):
                 "key": key,
                 "attempts": attempts,
             })
+
+        # A caller that asks to be held here occupies the worker slot running
+        # it, which is what makes concurrency observable. The sleep is
+        # deliberately OUTSIDE the lock: holding _lock across it would
+        # serialise the handler and the peak would read 1 however many
+        # workflows the engine ran at once -- the measurement would report
+        # exactly the failure it exists to detect, and look correct doing it.
+        # ThreadingHTTPServer gives each request its own thread, so the only
+        # thing that could serialise them is this lock.
+        delay_ms = int(req.get("delay_ms") or 0)
+        if delay_ms:
+            with _lock:
+                _inflight[key] += 1
+                if _inflight[key] > _peak[key]:
+                    _peak[key] = _inflight[key]
+            try:
+                time.sleep(delay_ms / 1000.0)
+            finally:
+                with _lock:
+                    _inflight[key] -= 1
 
         self._send(200, {"ok": True, "key": key, "attempts": attempts, "operation": op})
 

@@ -35,10 +35,10 @@ application or a web framework.
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 6 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
-| `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
+| `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 3 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 17 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 13 |
-| **Total in scope** | **371** | | **120** |
+| **Total in scope** | **371** | | **123** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -134,13 +134,33 @@ replaced, so there is no engine claim in them to port.
 | 1 | answered differently on purpose — this port cannot make it false |
 | 1 | **portable** — `test_max_parallel_workflows` |
 
-**The one portable case is not an async assertion.** It asserts 50 workflows
-complete in wall-clock time that serial execution could not achieve, and
-**nothing in this port asserts that workflows run in parallel at all.** The
-closest, `test_concurrency.py::test_distinct_keys_do_not_block_each_other`,
-asserts both starts are admitted and both complete — which a worker running them
-one after another satisfies. So the file's single useful case is one the *sync*
-suite does not make either.
+**The one portable case is not an async assertion, and it is now ported** as
+`tests/test_parallelism.py`. It asserts 50 workflows complete in wall-clock time
+that serial execution could not achieve, and **nothing in this port asserted
+that workflows run in parallel at all.** The closest,
+`test_concurrency.py::test_distinct_keys_do_not_block_each_other`, asserts both
+starts are admitted and both complete — which a worker running them one after
+another satisfies. So the file's single useful case was one the *sync* suite did
+not make either.
+
+**It is ported without the clock, and that is not fastidiousness.** A direct
+transliteration is green on a strictly serial engine: `DurableSleepMs` suspends
+the run rather than occupying a worker slot, so fifty sleeping runs finish in
+about one sleep-duration however the engine schedules them. The port instead
+makes each run hold a worker slot through a durable call the fixture service
+keeps open, and the service reports the largest number it had in flight at once
+— a direct measurement of overlap, where a serial engine reports exactly 1.
+Falsified by running the worker with `-concurrency 1`: both assertions fail at
+`peak in-flight was 1`, and the negative control that requires serially-issued
+work to report exactly 1 still passes. The two together pin the instrument from
+both sides, which neither does alone.
+
+Worth knowing before anyone ports another throughput case: **the separation
+available is bounded by worker concurrency, not by workflow count.**
+`-concurrency` defaults to 10 (`cmd/cleat-worker/config.go:66`) and
+`scripts/worker.sh` does not override it, so N workflows buy at best N/10 —
+upstream's 50 would buy 5x here, not the order of magnitude their 250s-against-30s
+figures imply.
 
 The reasoning that survives is the part about this port's shape: **the `async`
 that makes these cases distinct upstream has no counterpart on our side to be
@@ -319,6 +339,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_identity_isolation.py` | 1 | `test_concurrency.py` — a run reports its own id under concurrency |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
+| `test_parallelism.py` | 3 | `test_async.py` — the one portable case: workflows actually run at once |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
 | `test_priority_order.py` | 2 | `test_queue.py` — priority is a queue control |
 | `test_promise_wakes.py` | 2 | none — cleat-specific: does the promise wake path share cleat#953's defect |
@@ -336,7 +357,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **130** (5 skipped outright) | **120** mapped to an upstream file, **10** cleat-specific |
+| **Total** | **133** (5 skipped outright) | **123** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the

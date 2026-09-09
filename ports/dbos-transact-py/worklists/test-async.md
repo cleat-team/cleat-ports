@@ -28,9 +28,28 @@ then got wrong.
 
 ### Portable — 1
 
-`test_max_parallel_workflows` — 50 workflows that each sleep 5s complete in under
-30s, both started directly and enqueued. Serial execution would take 250s, so the
-wall clock is the assertion.
+`test_max_parallel_workflows` — **PORTED**, as `tests/test_parallelism.py`, and
+not as a transliteration. 50 workflows that each sleep 5s complete in under 30s
+upstream, where serial would take 250s, so the wall clock is upstream's
+assertion. Two things make that shape unportable here:
+
+- **`DurableSleepMs` suspends the run rather than occupying a worker slot** (see
+  `workflows/concurrency/main.go`, which depends on exactly that). Fifty sleeping
+  runs finish in about one sleep-duration whether the engine runs them one at a
+  time or all at once, so the faithful-looking port is green on a strictly
+  serial engine — it measures nothing.
+- **The separation available is bounded by worker concurrency, not by workflow
+  count.** `-concurrency` defaults to 10 (`cmd/cleat-worker/config.go:66`) and
+  `scripts/worker.sh` does not override it, so N workflows buy at best N/10.
+  Upstream's 50 would buy 5x here, not the order of magnitude their 250s-vs-30s
+  figures suggest.
+
+So the clock is removed rather than widened: the unit of work is a durable call
+the fixture service holds open, and the service reports the largest number it
+had in flight at once. A serial engine reports exactly 1. Falsified by running
+the worker with `-concurrency 1`, where both assertions fail at `peak in-flight
+was 1` and the negative control — serially-issued work must report exactly 1 —
+still passes.
 
 **Nothing in this port asserts that workflows run in parallel.** The closest is
 `test_concurrency.py::test_distinct_keys_do_not_block_each_other`, and it does
