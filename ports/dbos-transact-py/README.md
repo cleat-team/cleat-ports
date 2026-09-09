@@ -328,6 +328,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_recovery.py` | 4 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_results.py` | 5 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
+| `test_run_metadata.py` | 1 | `test_dbos.py` — a repeat start is deduplication rather than recovery, and the run's own clock is ordered |
 | `test_retries.py` | 16 | `test_failures.py` |
 | `test_schedule_timezones.py` | 3 | `test_scheduler.py` — cron zones and the default zone |
 | `test_scheduling.py` | 13 | `test_scheduler.py` — cron and delayed invocation |

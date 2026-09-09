@@ -232,6 +232,9 @@ MAPPING = {
     "test_queues.py": ("test_queue.py", "deduplication by Idempotency-Key, priority accepted"),
     "test_locks.py": ("test_queue.py", "serialising work through a held key"),
     "test_priority_order.py": ("test_queue.py", "priority is a queue control"),
+    "test_run_metadata.py": ("test_dbos.py",
+                             "a repeat start is deduplication rather than recovery, "
+                             "and the run's own clock is ordered"),
     "test_retries.py": ("test_failures.py", ""),
     "test_recovery.py": ("test_failures.py", "recovery counts after a crash"),
     "test_dead_letters.py": ("test_failures.py", "retries exhausted, and what is retained"),
