@@ -13,6 +13,28 @@ Findings go in the port's `ISSUES.md`, and are promoted to core per
 only in this repo protects nothing: `cleat-team/cleat`'s `tier1-gate.yml` is what
 blocks merges, and this repo cannot.
 
+## Merging
+
+`develop` uses a **merge queue**, so do not rebase a pull request by hand to
+clear a `BEHIND` state. Add it to the queue and GitHub tests it against the
+projected tip — this branch plus everything ahead of it in the batch — then
+merges it. Batch size is 5.
+
+The queue exists because `strict: true` means every merge invalidates every
+other open pull request, and this repo took 23 merges in 12 hours on
+2026-09-09 with five open PRs stale simultaneously. One of them needed three
+manual rebases, each costing a full ~20-minute `All ports` run.
+
+**If the queue ever stalls with checks that never start**, the cause is almost
+certainly a required workflow missing its `merge_group:` trigger. A queued
+batch runs on `gh-readonly-queue/develop/pr-N-<sha>`, and a workflow that only
+triggers on `pull_request` produces nothing there. The queue then waits
+forever for a status that cannot arrive, which reads as slowness rather than
+as a deadlock. Both required checks — `All ports` and `Validate branch name` —
+carry the trigger, and `Validate branch name` additionally short-circuits in
+queue context because the ref under test is GitHub's own queue branch and
+matches no allowed prefix.
+
 ## The one rule that is not negotiable
 
 **No copyleft-licensed or unlicensed upstream source enters this repository.**
