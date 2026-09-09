@@ -1374,3 +1374,92 @@ asserts completion and the exact call count, both of which hold whichever way
 the timing question is answered. Pinning 11.4s would pin the reaper's schedule
 into a retry test, and the first person to tune the reaper would have to decide
 whether they had broken retries or a measurement of them.
+
+## 33. A workflow can only ask about its own children, not about an arbitrary workflow
+
+**Class:** Missing capability
+
+Upstream's `test_retrieve_workflow_in_workflow` calls `retrieve_workflow(id)`
+from **inside** a running workflow, for ids the caller did not spawn, and reads
+the status back.
+
+cleat has two guest-side calls that cross a workflow boundary — `cleat_poll_child`
+and `cleat_await_child` — and **both are children-only**. Re-derive from the
+export list:
+
+```sh
+grep -oE '\.Export\("[^"]+"\)' engine/imports.go | sed 's/.*Export("//;s/")//' \
+  | grep -iE 'status|retrieve|get_workflow|poll_child|await'
+# cleat_await_child cleat_await_all_children cleat_await_any_child
+# cleat_poll_child cleat_await_signals cleat_await_promise
+```
+
+Nothing takes an arbitrary workflow id and returns its status. The HTTP API can
+answer it (`GET /api/workflows/:id`) — the gap is specifically **from inside a
+workflow**, where a guest has no client.
+
+**Why this is filed rather than ported around.** The obvious workaround — have
+the parent pass the id and use `cleat_poll_child` — silently changes the
+assertion. The upstream case is about observing a workflow you are not the
+parent of. A port using the child path would pass while testing something else,
+which is the failure mode this ledger exists to prevent.
+
+**Worth noting how it was missed.** This case was published as *portable* in
+WORKLIST.md, because `cleat_poll_child` appears in a scan for cross-workflow
+reads and looks like it covers the case. It is the same near-miss as
+`cleat_await_any_child` against `wait_first`, which the same survey caught one
+case earlier.
+
+## 34. A signal carries no idempotency key, so a re-sent signal is a second signal
+
+**Class:** Missing capability
+
+Upstream's `test_send_idempotency_key` sends with an explicit idempotency key
+and asserts a duplicate send is absorbed.
+
+`cleat_signal_workflow(target, signal, payload)` takes three arguments and no
+key (`engine/imports.go:533`). Nothing else in the 52 exports carries one for
+the signal path.
+
+**cleat has idempotency, on a different operation.** Starting a run accepts an
+`Idempotency-Key` header (`cmd/cleat-worker/server.go:599`) and
+`test_queues.py::test_the_same_idempotency_key_starts_one_run` covers it. So the
+concept exists in the engine and is absent from signals specifically — which is
+the useful shape of this gap, and why it reads as an omission rather than a
+design position.
+
+**Not the same as at-least-once delivery.** A sender retrying after a timeout
+cannot tell a lost signal from a slow one, and without a key the safe retry and
+the duplicate are the same request. That is the practical cost.
+
+## 35. Workflows can be listed but not filtered by id prefix or start time
+
+**Class:** Missing capability
+
+Upstream's `test_send_recv_temp_wf` spends most of its assertions on
+`DBOS.list_workflows(...)` with `workflow_id_prefix` and `start_time` filters,
+including that a `start_time` in the future returns nothing.
+
+cleat lists workflows (`GET /api/workflows`, covered by
+`test_api_surface.py::test_the_workflow_list_contains_a_run_that_was_started`),
+and `engine.WorkflowFilter` is:
+
+```go
+type WorkflowFilter struct {
+    Status        string
+    InputContains string
+    ErrorContains string
+    Search        string
+    Offset        int
+    Limit         int
+}
+```
+
+No id prefix, no time window. `Search` is not a substitute: it is a different
+predicate over different columns, and asserting against it would be asserting
+something upstream does not claim.
+
+**The send/recv half of that upstream case is already covered here** by
+`test_send.py::test_a_fire_and_forget_send_reaches_the_service`. Only the
+listing half is blocked, which is why this entry is about listing and not about
+send.
