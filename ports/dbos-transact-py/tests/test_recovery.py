@@ -186,3 +186,115 @@ def test_an_idempotency_key_survives_the_loss_of_its_worker(
         f"More than one means two runs reached the end of the workflow, so the "
         f"deduplication reported above was not real."
     )
+
+
+def test_a_recovered_parent_does_not_start_its_child_a_second_time(
+    cleat, recovery_parent_workflow, fixture_calls, worker
+):
+    """A child already spawned is not spawned again when the parent replays.
+
+    Ports the core of upstream test_queue_workflow_in_recovered_workflow, which
+    crashes a process mid-workflow and asserts the re-run reaches the same
+    single answer rather than enqueueing its child twice.
+
+    WHY THIS IS NOT COVERED BY THE TEST ABOVE, which is the only reason to add
+    it. test_a_workflow_survives_the_loss_of_its_worker proves a completed
+    durable CALL is served from history rather than made again. A child
+    workflow is a different mechanism: the parent records a run id and later
+    awaits it, rather than recording a result. Nothing about the call case
+    implies the child case, and the failure is worse -- a duplicated call
+    repeats one operation, a duplicated child starts a whole second workflow
+    that runs to completion on its own.
+
+    The instrument is the fixture's per-key call count, not the parent's
+    result. A second child would be handed the same input, so it would call the
+    fixture under the same key and the count would be 2. The parent's own
+    result cannot see this: it awaits ONE run id and would report that child's
+    answer perfectly well while a duplicate ran alongside it. Same reason the
+    dedup and recovery tests above assert on counts rather than ids.
+
+    The ordering assertion below is load-bearing. If the child had not yet run
+    when the crash landed there would be nothing to duplicate, and `== 1` would
+    hold for a workflow that had simply started its child once, late.
+
+    FALSIFIED, and the first attempt failed for the wrong reason -- which is
+    why the pre-crash wait is `>= 1` rather than `== 1`. Adding a second
+    ChildWorkflow call with identical input to the parent (the shape a replay
+    would produce if the spawn were not consulted from history) made the
+    original equality poll wait out its full 60s and report "the child workflow
+    never reached the fixture", the opposite of what had happened. Corrected,
+    the same variant fails in 1.85s with "2 children ran before the crash".
+
+    What that establishes and what it does not: the fixture count CAN see a
+    second child, which is the load-bearing capability. It does not construct a
+    replay-induced duplicate specifically, because a workflow cannot detect its
+    own replay in order to spawn one. So the post-crash assertion is validated
+    by the instrument being demonstrably able to count a duplicate, not by
+    having watched recovery produce one.
+    """
+    key = f"childrecover-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(
+        recovery_parent_workflow, {"key": key, "sleepMs": SLEEP_MS}
+    )
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    # The crash must land after the child has actually run, or the central
+    # assertion is vacuous.
+    #
+    # `>= 1`, not `== 1`. An equality poll cannot distinguish "not yet" from
+    # "already more than one", so a duplicate child would leave this waiting
+    # until it timed out -- reporting that the child never reached the fixture,
+    # which is the opposite of what happened. Measured: with a deliberate second
+    # spawn this failed at 60s with "the child workflow never reached the
+    # fixture" rather than with the count assertion below. A real engine defect
+    # would have produced the same misdirection.
+    wait_until(
+        lambda: fixture_calls(key) >= 1,
+        timeout=60.0,
+        what="the child workflow to reach the fixture before the crash",
+    )
+
+    # Split before and after the crash for the same reason test_a_workflow_...
+    # splits its before-key and after-key: a count of 2 at the end means
+    # nothing unless it is known to have been 1 going in. Without this, a
+    # parent that spawned twice on the FIRST pass would fail the assertion
+    # below and be reported as a recovery defect.
+    before_crash = fixture_calls(key)
+    assert before_crash == 1, (
+        f"{before_crash} children ran before the crash. This test attributes a "
+        "duplicate to replay, and it cannot do that if the parent was already "
+        "spawning more than one child on its first pass."
+    )
+
+    worker.crash()
+    worker.restart()
+
+    final = cleat.await_terminal(run_id, timeout=RECOVERY_TIMEOUT)
+    assert final["status"] == "done", (
+        f"the parent did not complete after its worker was killed: {final!r}. "
+        "It was mid-sleep between spawning its child and awaiting it, holding "
+        "a child run id that has to survive the replay for the await to mean "
+        "anything."
+    )
+
+    reached = fixture_calls(key)
+    assert reached == 1, (
+        f"the child ran {reached} times. The parent replays from step 0 after "
+        "recovery, so ChildWorkflow must return the run it already started "
+        "rather than starting another -- otherwise every crash between a spawn "
+        "and its await duplicates an entire workflow, and the duplicate runs to "
+        "completion doing whatever the first one already did."
+    )
+
+    body = _body(final)
+    assert body.get("runID"), (
+        f"the recovered parent returned {body!r} with no child run id; the id "
+        "recorded before the crash has to survive it, not just the fact that a "
+        "child was started"
+    )
+    assert "child" in body, (
+        f"the recovered parent returned {body!r}; awaiting a child it spawned "
+        "before the crash must still yield that child's result"
+    )

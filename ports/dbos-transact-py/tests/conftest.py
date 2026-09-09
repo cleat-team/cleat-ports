@@ -626,6 +626,19 @@ def recovery_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def recovery_parent_workflow(cleat: Cleat) -> str:
+    """Deploy the child before the parent, as the fan-out fixture does.
+
+    The parent spawns `retrycall` by name, so a parent deployed against a
+    missing child fails at run time with "start failed" rather than at deploy
+    time -- and in a recovery test that failure would arrive after a crash and
+    read like a recovery defect.
+    """
+    _build_and_deploy("retry", "retrycall")
+    return _build_and_deploy("recoveryparent", "recovery_parent")
+
+
+@pytest.fixture(scope="session")
 def defer_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("defercleanup", "defer_cleanup")
 
