@@ -170,7 +170,22 @@ owned() {
   # Caught by CI on the commit that introduced it, because the guard fails
   # CLOSED -- had it failed open it would have passed here and protected
   # nothing.
-  ps -ww -p "$pid" -o command= 2>/dev/null | grep -q -- "-api-addr 127.0.0.1:$API_PORT"
+  local cmd
+  cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)" || return 1
+  case "$cmd" in *"-api-addr 127.0.0.1:$API_PORT"*) ;; *) return 1 ;; esac
+  # ...AND serving the database this invocation asked for.
+  #
+  # The api-addr alone is not enough. A worker started for one dialect is this
+  # project's worker on this project's port, so an api-addr check calls it
+  # owned -- and `ensure` then REUSES it for a run against another dialect.
+  # The run authenticates with the new dialect's key against a worker holding
+  # the old dialect's database, and every result is about the wrong store.
+  #
+  # Measured 2026-09-08: a postgres worker was reused for a mysql run, which
+  # produced a whole table of null statuses that looked like a broken build.
+  # Nothing failed, because nothing was wrong -- the question was being put to
+  # the wrong database.
+  case "$cmd" in *"$CLEAT_PORTS_DSN"*) return 0 ;; *) return 1 ;; esac
 }
 
 # refuse_foreign exits rather than signalling a process this project does not
@@ -361,7 +376,11 @@ Reusing it would run this session against another session's database while
 authenticating with this session's key -- which fails as "401 invalid or
 revoked API key" and names the wrong thing.
 
-Set CLEAT_PORTS_API_PORT (and CLEAT_PORTS_FIXTURE_PORT) to a free port.
+If the process above is YOUR worker on the right port but a different -db, this
+is a dialect switch: stop it first with "worker.sh stop". ensure will not reuse
+a worker that is not serving the database this invocation asked for.
+
+Otherwise set CLEAT_PORTS_API_PORT (and CLEAT_PORTS_FIXTURE_PORT) to a free port.
 MSG
         exit 3
       fi
