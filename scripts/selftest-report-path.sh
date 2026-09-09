@@ -78,7 +78,28 @@ ck "token ABSENT -> named a missing credential" 1 \
 
 run env GH_TOKEN="$VALID" CORE_REPO="$NO_SUCH_REPO" RUN_URL=https://example/selftest bash scripts/file-core-issue.sh
 ck "VALID token, missing repo -> does NOT blame the token" 1 \
-   "title=Could not file the nightly report" "HARNESS" "$out" "$rc"
+   "title=Could not reach" "HARNESS" "$out" "$rc"
+
+echo "== scripts/check-core-credential.sh =="
+# The healthy path is probed against THIS repo, not cleat-team/cleat: CI's
+# GITHUB_TOKEN is scoped here, and a case that needs cross-repo access would
+# fail for a reason that has nothing to do with what it is testing.
+run env GH_TOKEN="$VALID" CORE_REPO=cleat-team/cleat-ports bash scripts/check-core-credential.sh
+ck "probe, working credential -> passes" 0 "Proved: the secret is a valid credential" "" "$out" "$rc"
+ck "probe, working credential -> states what it did NOT prove" 0 \
+   "NOT proved: that it can WRITE issues" "" "$out" "$rc"
+
+run env GH_TOKEN="$BAD_TOKEN" bash scripts/check-core-credential.sh
+ck "probe, INVALID credential -> named a rejected credential" 1 \
+   "title=HARNESS: CLEAT_CORE_ISSUE_TOKEN was rejected (401)" "" "$out" "$rc"
+
+run env -u GH_TOKEN bash scripts/check-core-credential.sh
+ck "probe, ABSENT credential -> named a missing credential" 1 \
+   "title=HARNESS: CLEAT_CORE_ISSUE_TOKEN is not set" "" "$out" "$rc"
+
+run env GH_TOKEN="$VALID" CORE_REPO="$NO_SUCH_REPO" bash scripts/check-core-credential.sh
+ck "probe, VALID token + missing repo -> does NOT blame the token" 1 \
+   "title=Could not reach" "HARNESS" "$out" "$rc"
 
 echo "== scripts/render-nightly-summary.sh =="
 mkdir -p "$tmp/none"
