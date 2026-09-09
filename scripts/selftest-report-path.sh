@@ -48,11 +48,20 @@ ck() { # ck <name> <expected-exit> <must-contain> <must-not-contain-or-empty> <o
 # A valid token is REQUIRED, not optional. Case 3 without one degrades into
 # case 2 and reports a pass, which is the exact substitution this file exists
 # to make impossible.
+#
+# PROBE THE CAPABILITY CASE 3 NEEDS, NOT A PROXY FOR IT. This first read
+# `gh api user`, which fails for CI's GITHUB_TOKEN: that is a GitHub App
+# INSTALLATION token, and `GET /user` requires user-to-server auth, so the probe
+# rejected a token that is perfectly able to do what case 3 does. Asking the
+# same question case 3 asks -- can this token list issues -- has no such gap and
+# cannot pass a token that would then fail inside the case.
 VALID="${SELFTEST_VALID_TOKEN:-$(gh auth token 2>/dev/null)}"
-if [ -z "$VALID" ] || ! GH_TOKEN="$VALID" gh api user --jq .login >/dev/null 2>&1; then
+if [ -z "$VALID" ] || ! GH_TOKEN="$VALID" gh issue list --repo cleat-team/cleat-ports \
+     --limit 1 --json number >/dev/null 2>&1; then
   echo "FAIL: no VALID token available. Case 3 -- 'a non-auth failure must NOT be" >&2
   echo "      blamed on the token' -- cannot run, and it is the only case here that" >&2
-  echo "      requires the classifier to disagree. Set SELFTEST_VALID_TOKEN." >&2
+  echo "      requires the classifier to disagree. Set SELFTEST_VALID_TOKEN to a" >&2
+  echo "      token that can list issues on cleat-team/cleat-ports." >&2
   exit 1
 fi
 

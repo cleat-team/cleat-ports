@@ -47,6 +47,12 @@ jobs:
   discover:
     name: Discover ports
     runs-on: ubuntu-latest
+    # issues:read is for the report-path self-test below, whose one case that
+    # needs a real token checks that a NON-auth failure is not blamed on the
+    # credential. Read-only, this repo only.
+    permissions:
+      contents: read
+      issues: read
     outputs:
       ports: ${{ steps.list.outputs.ports }}
     steps:
