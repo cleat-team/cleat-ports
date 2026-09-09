@@ -259,13 +259,16 @@ Checked as a **partition**: every one of the 35 appears in exactly one bucket, n
 
 ## `tests/test_dbos.py` — 61 cases, read at `833794f7`
 
-**9 portable · 0 already covered · 0 answered differently on purpose · 42 need
+**2 portable · 3 already covered · 0 answered differently on purpose · 46 need
 something cleat does not have · 10 are not engine assertions at all.**
-(9 + 42 + 10 = 61.)
+(2 + 3 + 46 + 10 = 61.)
 
-> **This line was rewritten.** It read *"17 portable · 0 already covered · 2
-> answered differently on purpose · 42 need something cleat does not have"* until
-> the buckets were enumerated and re-derived. The blocker table under *What blocks
+> **This line has been rewritten twice.** It read *"17 portable · 0 already
+> covered · 2 answered differently on purpose · 42 need something cleat does not
+> have"* until the buckets were enumerated, and then *"9 portable"* until the
+> nine were audited against cleat's own surface — see *The 9 was 2* at the end of
+> this section, which is the correction that matters, because the 9 was
+> enumerated **and** machine-verified and was still wrong. The blocker table under *What blocks
 > the 42* and the subsections below it are the **superseded** classification, kept
 > because the reasoning in them is still the reasoning; read *The 17 does not
 > reproduce* at the end of this section first. `docs/next-upstream.md` carries the
@@ -621,6 +624,43 @@ lowest-confidence call in the table. Anyone reopening it should start there.
 cleat having `generation` and `reclaim_count`, which is a claim about
 availability rather than about equivalence of meaning. Read the case before
 porting it.
+
+
+### The 9 was 2 — enumeration is not classification
+
+The nine above were listed by name and the list was machine-checked against the
+pin: 61 cases, exact partition, no phantom, no omission. **That check proved a
+claim about the upstream.** "Portable" is a claim about *cleat*, and it was
+screened by scanning cleat's host-call export list — which answers *does cleat
+have something in this area*, not *can a port assert this end to end*.
+
+Audited case by case against cleat's surface and against this port's existing
+tests. The check that settles each one is given, because the previous version's
+failure was that its check was not written down beside its conclusion.
+
+| case | verdict | what settles it |
+|---|---|---|
+| `test_send_recv` | **portable** (one part) | several signals to one workflow arriving in a defined order. Nothing in `test_signals.py` or `test_send.py` asserts ordering. |
+| `test_simple_workflow_attempts_counter` | **portable** | expressible through the API rather than upstream's direct system-DB read: `reclaim_count`/`generation`, plus `started_at >= created_at` (cleat#1090, #1091). |
+| `test_child_workflow` | needs something cleat lacks → **now fixed upstream of us** | the parentage link. `workflow_instances.parent_workflow_id` was written on every child and in no `GetWorkflowByID` SELECT, so no client could read it. Filed as cleat#1103 and fixed; portable once that ships. |
+| `test_retrieve_workflow_in_workflow` | needs something cleat lacks | reads an *arbitrary* workflow's status from **inside** a workflow. `cleat_poll_child` and `cleat_await_child` are the only guest-side cross-workflow reads and both are **children only**. ISSUES 33. |
+| `test_send_idempotency_key` | needs something cleat lacks | `cleat_signal_workflow(target, signal, payload)` — three arguments, no idempotency key. ISSUES 34. |
+| `test_send_recv_temp_wf` | needs something cleat lacks | its send/recv half is covered; its subject is `list_workflows` with id-prefix and start-time filters, and `WorkflowFilter` is `{Status, InputContains, ErrorContains, Search, Offset, Limit}`. ISSUES 35. |
+| `test_sleep` | already covered | duration asserted in `test_complex_args.py:72` and `test_replay.py:76`. Its `sleep_counter == 1` is **not** replay — it is idempotent re-start by workflow id, which is `test_queues.py::test_the_same_idempotency_key_starts_one_run`. |
+| `test_retrieve_workflow` | already covered | `test_api_surface.py::test_an_unknown_run_is_a_clean_404_on_every_read_path`. |
+| `test_set_get_events` | already covered | the missing-key case is in `test_query_state.py`; the rest of the case iterates `use_listen_notify`, which is DBOS's own notification mechanism rather than an engine claim. |
+
+**Why `test_child_workflow` is the instructive one.** `cleat_poll_child` looks
+like it answers "whose child is this" and does not — it is children-only, read
+from the parent's side. That is the same near-miss as `cleat_await_any_child`
+against `wait_first`, which *this survey caught*, one case earlier. Catching a
+trap does not inoculate against it; the check has to be run per case.
+
+**The rule this adds to the three above: name which proposition each check
+establishes.** Enumeration against the pin and portability against cleat are
+different claims requiring different evidence, and satisfying the first says
+nothing about the second. Both shipped in one sentence and only one had been
+checked.
 
 ## `tests/test_client.py` — 57 cases, read at `833794f7`
 
