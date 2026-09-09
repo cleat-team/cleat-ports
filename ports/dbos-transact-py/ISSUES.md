@@ -113,7 +113,7 @@ index, so an entry missing from it is an entry nobody finds.
 | 26 | [Nothing records which worker ran a completed workflow](issues/026-nothing-records-which-worker-ran-a-completed-workflow.md) |
 | 27 | [Repeated reclaim is counted but never bounded — dead-lettering is decided on a different axis](issues/027-repeated-reclaim-is-counted-but-never-bounded-dead-letteri.md) |
 | 28 | [A workflow's readers are all keyed — nothing can enumerate what it published](issues/028-a-workflow-s-readers-are-all-keyed-nothing-can-enumerate-w.md) |
-| 29 | [Cancelling a workflow does not reach its children](issues/029-cancelling-a-workflow-does-not-reach-its-children.md) |
+| 29 | [Cancelling a parent does not stop it, and reaches only opt-in children](issues/029-cancelling-a-parent-does-not-stop-it-and-reaches-only-o.md) |
 | 30 | [A run records when it was created and when it finished, never when it started](issues/030-a-run-records-when-it-was-created-and-when-it-finished-nev.md) |
 | 31 | [A caller cannot enqueue a workflow inside its own database transaction](issues/031-a-caller-cannot-enqueue-a-workflow-inside-its-own-database.md) |
 | 32 | [A worker lost mid-backoff resumes its retry early, discarding the remaining wait](issues/032-a-worker-lost-mid-backoff-resumes-its-retry-early-discardi.md) |

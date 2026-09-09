@@ -328,6 +328,7 @@ assertion, mapped to the upstream file the assertion came from:
 | This suite | Cases | Mapped to |
 |---|---:|---|
 | `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives; two of its cases are arguably workflow-management |
+| `test_cancel_propagation.py` | 3 | `test_workflow_management.py` — upstream test_cancel_workflow_children -- cleat defers propagation to parent close |
 | `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |

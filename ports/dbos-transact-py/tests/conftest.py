@@ -649,6 +649,33 @@ def cancellable_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def cancel_awaiting_parent_workflow(cleat: Cleat) -> str:
+    """The parent that parks in a child await, for ISSUES entry 29.
+
+    Deploys BOTH children as well as the parent. `cancellable` is the long
+    child -- it polls PollCancellation, so the REQUEST_CANCEL flag becomes a
+    result an ordinary GET can read rather than a column no API exposes.
+    """
+    _build_and_deploy("childleaf", "child_leaf")
+    _build_and_deploy("cancellation", "cancellable")
+    return _build_and_deploy("cancelawaitingparent", "cancel_awaiting_parent")
+
+
+@pytest.fixture(scope="session")
+def abandon_variant_workflow(cleat: Cleat) -> str:
+    """The ABANDON control for entry 29 -- identical but for the long child's policy.
+
+    A separate definition rather than a parameter on the one above. Editing the
+    policy in place and redeploying under the same name produced two `v1`
+    deploys, the run kept the old module, and the control silently passed while
+    testing the wrong binary.
+    """
+    _build_and_deploy("childleaf", "child_leaf")
+    _build_and_deploy("cancellation", "cancellable")
+    return _build_and_deploy("abandonvariant", "abandon_variant")
+
+
+@pytest.fixture(scope="session")
 def replay_identity_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("replay", "replay_identity")
 
