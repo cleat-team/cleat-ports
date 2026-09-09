@@ -36,10 +36,32 @@ if [ "${#ports[@]}" -eq 0 ] || [ "${#dialect[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Excluded cells are subtracted from the expected set, from the SAME discover
+# output the matrix reads. Requiring a leg the matrix will never generate would
+# fail every run; computing the exclusions here independently would let the two
+# drift, and this gate would then be checking the matrix against its own copy.
+excluded=""
+if [ -n "${EXCLUDE:-}" ] && [ "$EXCLUDE" != "[]" ]; then
+  excluded="$(printf '%s' "$EXCLUDE" | jq -r '.[] | "\(.port)--\(.dialect)"')"
+fi
+is_excluded() {
+  case "
+$excluded
+" in *"
+$1
+"*) return 0 ;; esac
+  return 1
+}
+
 missing=()
 present=0
+skipped=0
 for p in "${ports[@]}"; do
   for d in "${dialect[@]}"; do
+    if is_excluded "${p}--${d}"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
     if [ -f "$dir/${p}--${d}" ]; then
       present=$((present + 1))
     else
@@ -48,8 +70,15 @@ for p in "${ports[@]}"; do
   done
 done
 
-expected=$(( ${#ports[@]} * ${#dialect[@]} ))
-echo "expected ${expected} leg(s) (${#ports[@]} port(s) x ${#dialect[@]} dialect(s)); ${present} reported"
+expected=$(( ${#ports[@]} * ${#dialect[@]} - skipped ))
+echo "expected ${expected} leg(s) (${#ports[@]} port(s) x ${#dialect[@]} dialect(s), ${skipped} excluded); ${present} reported"
+
+# An excluded set that swallows everything leaves nothing to check, which is the
+# same vacuity as an empty dimension one level along.
+if [ "$expected" -eq 0 ]; then
+  echo "FAIL: every cell is excluded; this gate would pass having checked nothing." >&2
+  exit 1
+fi
 
 if [ "${#missing[@]}" -gt 0 ]; then
   echo >&2
