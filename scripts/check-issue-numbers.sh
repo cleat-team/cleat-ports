@@ -44,6 +44,31 @@ numbers_of() {
   grep -E '^## [0-9]+\.' | sed -E 's/^## ([0-9]+)\..*/\1/'
 }
 
+# report_numbers -- the duplicate and hole checks, on a list of numbers.
+# Factored out so the two layouts cannot drift apart: a bug fixed for one
+# would otherwise stay live in the other.
+report_numbers() {
+  local nums="$1" label="$2" rc=0 dupes max first missing
+  dupes="$(echo "$nums" | sort -n | uniq -d)"
+  if [ -n "$dupes" ]; then
+    rc=1
+    while read -r n; do
+      [ -z "$n" ] && continue
+      echo "ERROR: $label has $(echo "$nums" | grep -cx "$n") entries numbered $n" >&2
+    done <<< "$dupes"
+  fi
+  max="$(echo "$nums" | sort -n | tail -1)"
+  first="$(echo "$nums" | sort -n | head -1)"
+  missing="$(comm -23 <(seq "$first" "$max") <(echo "$nums" | sort -n | uniq))"
+  if [ -n "$missing" ]; then
+    rc=1
+    echo "ERROR: $label numbers $first..$max with $(echo "$missing" | wc -l | tr -d ' ') missing: $(echo "$missing" | tr '\n' ' ')" >&2
+    echo "  A hole is the first half of a collision: the next writer takes" >&2
+    echo "  max+1 and the gap stays open indefinitely." >&2
+  fi
+  return $rc
+}
+
 report_file() {
   local path="$1" label="$2" rc=0
   local nums dupes
@@ -164,7 +189,37 @@ while IFS= read -r d; do
     continue
   fi
   found=1
-  report_file "$REPO_ROOT/$f" "$f" || rc=1
+
+  # Two layouts, and which one a port uses is decided by the tree rather than
+  # by a flag: a port with an issues/ directory keeps one entry per file and
+  # ISSUES.md is a generated index of them; a port without one keeps every
+  # entry appended into ISSUES.md itself. samples-go is still the second kind.
+  if [ -d "$REPO_ROOT/$d/issues" ]; then
+    # The numbers come from the FILENAMES, which is the whole point of the
+    # split -- two sessions adding entries touch different files and cannot
+    # collide on the tail of one.
+    entries="$(cd "$REPO_ROOT/$d/issues" && ls -1 *.md 2>/dev/null | sed -n 's/^0*\([0-9][0-9]*\)-.*/\1/p')"
+    if [ -z "$entries" ]; then
+      echo "ERROR: $d/issues exists but holds no NNN-*.md entries." >&2
+      rc=1; continue
+    fi
+    report_numbers "$entries" "$d/issues" || rc=1
+
+    # AND THE INDEX MUST NOT DRIFT. A generated table that quietly stops
+    # listing an entry is the same defect as a guard that stops seeing a file:
+    # everything downstream reads the index, so an entry missing from it is an
+    # entry nobody finds, and nothing else would notice.
+    listed="$(sed -n 's#^| *\([0-9][0-9]*\) *| .*(issues/.*#\1#p' "$REPO_ROOT/$f" | sort -n)"
+    have="$(echo "$entries" | sort -n)"
+    if [ "$listed" != "$have" ]; then
+      echo "ERROR: $f does not list exactly the entries in $d/issues/." >&2
+      echo "  only in the index:     $(comm -23 <(echo "$listed") <(echo "$have") | tr '\n' ' ')" >&2
+      echo "  only in the directory: $(comm -13 <(echo "$listed") <(echo "$have") | tr '\n' ' ')" >&2
+      rc=1
+    fi
+  else
+    report_file "$REPO_ROOT/$f" "$f" || rc=1
+  fi
 # NF>2 keeps only paths with something INSIDE a port directory, which is what
 # makes this a list of directories rather than of entries under ports/.
 # `ports/README.md` is a tracked file directly under ports/ and was reported as
