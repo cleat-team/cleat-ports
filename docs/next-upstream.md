@@ -197,10 +197,37 @@ Not a general argument — three specific cases, read at
 **`Test_TerminateOrchestration_Recursive`** builds Root → L1 → L2, terminates
 the root **parametrised over `recurse` true and false**, and asserts
 `assert.NotEqual(t, recurse, executedActivity)` — descendants must run their
-activity when recursion is off and must not when it is on. cleat's cancellation
-is `WHERE id = $1` with no `parent_workflow_id` traversal on any dialect
-(cleat-ports ISSUES 29). Upstream tests both directions of a choice cleat has
-not made.
+activity when recursion is off and must not when it is on.
+
+**Correction: the sentence that stood here was scope-wrong, and it inverts the
+conclusion.** It said cleat's cancellation is `WHERE id = $1` with no
+`parent_workflow_id` traversal, citing ISSUES 29. That is true of **cancel**.
+These cases exercise **terminate**, and cleat's terminate has a configurable
+cascade already: `parent_close_policy` with three legal values —
+`ABANDON` (default), `TERMINATE`, `REQUEST_CANCEL` — validated by
+`ValidateParentClosePolicy` (`engine/parent_close_policy.go`), enforced by
+`enforceParentClosePolicy` with a per-arm `UPDATE ... WHERE parent_workflow_id
+= ?` on all three dialects, called from every terminal path.
+
+So `WithRecursiveTerminate(true|false)` is expressible today. The decision sits
+at **child spawn** rather than at the **terminate call**, and both branches of
+upstream's parametrised assertion have a counterpart.
+
+That moves these four cases from *"probes a choice cleat has not made"* to
+**"cleat made this choice, at a different layer, and nothing has ever tested
+it"** — which is a stronger argument for the port, not a weaker one. Found by
+cleat-ws3 while surveying the file; verified here independently before this
+correction was written.
+
+One question is deliberately left unfiled. Upstream builds **three** levels,
+and cleat's cascade is one level of SQL: a `TERMINATE` child is set to
+`status='failed'` directly by that UPDATE, bypassing `FailWorkflow` — which is
+what calls `enforceParentClosePolicy` for the next level down. Read that way a
+grandchild is reached only when the intermediate child owed a defer phase. That
+is three correct citations and a chain with no branch in it, which is the exact
+shape of a prediction retracted eight hours earlier in ports#129. **A
+three-level `TERMINATE` fixture settles it in one run**, and until one exists
+this is a question rather than a finding.
 
 **`Test_SingleActivity_ReuseInstanceID{Ignore,Terminate,Error}`** makes
 instance-id reuse a **configurable policy** — ignore the second, terminate the
@@ -232,7 +259,16 @@ such concept" — the failure mode that consumed most of `dbos-transact-py`.
 ## Predicted yield, and how to check it
 
 **This is a prediction, not a survey.** The `dbos-transact-py` surveys exist
-because a prediction of this kind was wrong four times. The 26 cases in
+because a prediction of this kind was wrong four times. **The count below is
+also wrong: it says 26, and the collected total is 30.** Four functions are
+`for _, x := range []bool{true, false}` loops with a `t.Run` inside, so each
+contributes two cases — `Test_ExternalEventTimeout` over `raiseEvent`, and the
+three `_Recursive` tests over `recurse`. 22 plain + 4×2 = 30, which makes 50
+in scope across the three files rather than 46.
+
+That is the definitions-versus-collected-cases distinction this repo's own
+README documents, made one document after quoting it. Two derivations agreed at
+26 and neither helped, because both counted functions. The 26 cases in
 `tests/orchestrations_test.go`, classified by whether cleat has the surface at
 all:
 
