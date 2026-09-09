@@ -98,7 +98,7 @@ This repo follows the same DCO sign-off and branch-naming conventions as
 adds `Signed-off-by` for you — so a session can land many PRs there without ever
 typing `-s` and reasonably conclude sign-off is automatic. A fresh clone of
 *this* repo has no `core.hooksPath` and no `.githooks`, so nothing signs for
-you and the DCO check fails on the first push. Confirm with:
+you. Confirm with:
 
 ```sh
 git config --get core.hooksPath   # empty here; `.githooks` in cleat-team/cleat
@@ -106,6 +106,24 @@ git config --get core.hooksPath   # empty here; `.githooks` in cleat-team/cleat
 
 Worth stating because the failure is invisible until it happens somewhere else:
 the habit that works is the one that was never yours.
+
+**Nothing here enforces it, and this paragraph used to claim otherwise.** It
+said "the DCO check fails on the first push". There is no DCO workflow in
+`.github/`, no DCO status context, and no DCO check run — the contexts this
+repo produces are `All ports`, `dbos-transact-py`, `samples-go`,
+`Discover ports` and `Validate branch name`, of which only the first and last
+are required. Unsigned commits merge here today.
+
+That correction is the point rather than a footnote. A paragraph written to
+warn about an invisible habit — core signs for you, so you conclude signing is
+automatic — introduced the same defect one line further down, by promising a
+failure that never arrives. Anyone who *tested* the claim learned the opposite
+of what it teaches. Found by cleat-agent1-31, whose unsigned #107 passed every
+check.
+
+The convention still stands: sign off, because these commits are proposed
+upstream to a repo that does enforce it. But it stands on the convention, not
+on a gate.
 
 ## Branches and merges
 
