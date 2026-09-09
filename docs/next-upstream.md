@@ -281,6 +281,13 @@ all:
 Plus 20 backend-contract cases whose portability is genuinely unknown until
 someone reads them against `engine`.
 
+**SUPERSEDED for `orchestrations_test.go` by
+`durabletask-go-orchestrations-survey.md`, which read the cases** — and the
+first thing that survey corrected was the denominator here: 26 is the
+*function* count, four functions are `range []bool{true,false}` loops, and the
+file collects **30**. The prediction below is kept because it was wrong in an
+instructive way, not because it is usable.
+
 **Do not trust this table.** It was produced by reading 26 test *names* and one
 body each for four of them, which is precisely the method that reported
 `test_client.py` as 8 covered when it was 13, and `test_async.py` as "mostly
