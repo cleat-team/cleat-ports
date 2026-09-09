@@ -286,7 +286,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
 | `test_concurrency.py` | 4 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
-| `test_cross_worker.py` | 2 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
+| `test_cross_worker.py` | 3 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
 | `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
 | `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
@@ -310,7 +310,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **111** (5 skipped outright) | **103** credited upstream, **8** cleat-specific |
+| **Total** | **112** (5 skipped outright) | **103** credited upstream, **9** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
