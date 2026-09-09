@@ -209,6 +209,9 @@ MAPPING = {
     "test_complex_args.py": ("test_queue.py",
                              "upstream test_complex_type -- a nested struct argument "
                              "survives the store, including across a suspension"),
+    "test_timeouts.py": ("test_queue.py",
+                         "upstream test_unsetting_timeout -- a per-run deadline "
+                         "and whether a child inherits it; skipped, ISSUES.md 25"),
     "test_replay.py": ("test_dbos.py", ""),
     "test_send.py": ("test_dbos.py", "`send` delivery semantics"),
     "test_promises.py": ("test_dbos.py", "`set_event`/`get_event`"),
