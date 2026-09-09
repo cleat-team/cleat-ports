@@ -31,14 +31,14 @@ application or a web framework.
 | Upstream file | Cases | Priority | Cases here |
 |---|---:|---|---:|
 | `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 20 |
-| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 28 |
+| `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 29 |
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 6 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 11 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **107** |
+| **Total in scope** | **371** | | **108** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -324,7 +324,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
 | `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
 | `test_queues.py` | 6 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
-| `test_recovery.py` | 3 | `test_failures.py` — recovery counts after a crash |
+| `test_recovery.py` | 4 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_results.py` | 5 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
 | `test_retries.py` | 15 | `test_failures.py` |
@@ -334,7 +334,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **117** (5 skipped outright) | **107** mapped to an upstream file, **10** cleat-specific |
+| **Total** | **118** (5 skipped outright) | **108** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the

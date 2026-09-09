@@ -298,3 +298,97 @@ def test_a_recovered_parent_does_not_start_its_child_a_second_time(
         f"the recovered parent returned {body!r}; awaiting a child it spawned "
         "before the crash must still yield that child's result"
     )
+# Long enough that the crash lands inside the wait with room to spare -- the
+# window is one whole interval and the crash is fired the moment the first
+# attempt is observed -- and SHORT ENOUGH TO STAY ON THE HOST RETRY PATH,
+# which is the half that looks arbitrary and is not.
+#
+# engine.DefaultHostRetryBudget is 60s, and a policy is refused
+# (callErrorCode 6, RetryPolicyTooLong) when its WORST-CASE total backoff
+# exceeds it. Worst case here is (attempts - 1) * interval, so 3 attempts at
+# 20s is 40s and stays on the host; 3 at 45s is 90s and does not. Measured:
+# the 45s variant makes ONE fixture call and still reports `done`, because the
+# policy was refused before any retry and the workflow reported the failure as
+# its result. That is a different code path, not a slower version of this one,
+# and a test drifting across the boundary would silently stop testing recovery.
+#
+# 40s against a 60s ceiling leaves one attempt of headroom. Raising `attempts`
+# to 4 here puts the worst case exactly at the ceiling.
+RETRY_BACKOFF_MS = 20_000
+
+
+def test_a_worker_lost_mid_backoff_resumes_the_retry_rather_than_restarting_it(
+    cleat, retry_workflow, fixture_calls, worker
+):
+    """A run killed between two attempts finishes, and does not re-spend the budget.
+
+    Upstream `test_failures.py::test_recovery_during_retries`. The tests above
+    kill a worker during a durable CALL; this kills it during the WAIT between
+    two attempts, which is a different moment in the same path and the one with
+    no coverage here.
+
+    It is a different moment because the run is durably suspended rather than
+    executing. Nothing is in flight to be lost -- what has to survive is the
+    *position in the retry policy*, and the two ways to get that wrong point in
+    opposite directions:
+
+      * The run is never rescheduled, and a workflow that was one attempt from
+        succeeding sits forever. The completion assertion catches that.
+      * The run resumes but the policy restarts from attempt one, so the budget
+        is re-spent and the side effect happens more times than the caller
+        authorised. The call-count assertion catches that, and nothing about
+        the run's final status would.
+
+    THE FIXTURE FAILS EXACTLY ONCE, which makes the count decisive rather than
+    approximate. A correct engine calls twice in total -- the failure before the
+    crash, the success after it. An engine that restarts the policy calls three
+    times: the replayed first attempt, its replayed failure, then the success.
+    Two and three are far enough apart to read, and neither is a bound that
+    needs a margin.
+
+    The pre-crash assertions are the control. Crashing before the first attempt
+    lands would leave nothing to resume, and every assertion below would hold
+    for a run that had simply never started -- the same vacuity the sibling
+    tests guard against with their `-after` count.
+    """
+    key = f"midbackoff-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key, "attempts": 3,
+        "intervalMs": RETRY_BACKOFF_MS, "failTimes": 1, "failStatus": 0,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    # The first attempt must have failed before the crash, or there is no
+    # backoff in progress to be interrupted.
+    wait_until(
+        lambda: fixture_calls(key) == 1,
+        timeout=60.0,
+        what="the first attempt to reach the fixture and fail",
+    )
+    assert fixture_calls(key) == 1, (
+        f"the fixture saw {fixture_calls(key)} calls before the crash. If the "
+        f"second attempt has already run, the crash lands after the retry "
+        f"rather than inside it and this test measures the case above instead."
+    )
+
+    worker.crash()
+    worker.restart()
+
+    final = cleat.await_terminal(run_id, timeout=RECOVERY_TIMEOUT)
+    assert final["status"] == "done", (
+        f"the run did not finish after its worker was killed mid-backoff: "
+        f"{final!r}. It was durably waiting between two attempts and owned by a "
+        f"worker that never came back -- nothing was executing, so there is no "
+        f"in-flight work to blame, only a schedule nobody resumed."
+    )
+
+    assert fixture_calls(key) == 2, (
+        f"the fixture was called {fixture_calls(key)} times for a policy that "
+        f"permits one failure and one success. Two means the retry resumed "
+        f"where it stopped. Three means recovery restarted the policy from "
+        f"attempt one and re-spent a budget the caller had already partly "
+        f"used -- which the run's status cannot show, because it succeeds "
+        f"either way."
+    )
