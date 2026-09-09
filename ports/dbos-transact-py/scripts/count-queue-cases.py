@@ -24,8 +24,24 @@ Usage:
 import ast, re, sys
 
 # Controls cleat has no counterpart for. See ISSUES.md "no work queues".
-BLOCK = re.compile(r'worker_concurrency\s*=|global_concurrency\s*=|\blimiter\s*='
-                   r'|partition_\w*\s*=|Queue\(\s*"[^"]*"\s*,\s*\d+|[^_]\bconcurrency\s*=')
+#
+# Both separators, deliberately. Upstream passes these options two ways: as
+# keyword arguments (`Queue(name, worker_concurrency=2)`) and as dict literals
+# in a parametrize table (`({"partition_concurrency": 0}, "at least 1")`).
+# Matching only `=` missed the second form entirely and called
+# test_partition_limit_validation portable -- twelve parametrized cases, every
+# one of them constructing a Queue with a control cleat does not have, sitting
+# in the work-list as 28% of it. A dict key is the same control as a kwarg; the
+# syntax it is written in is not a property of cleat.
+# `\w*partition\w*` rather than `partition_\w+`: upstream spells the same
+# concept `partition_concurrency`, `partition_limiter` and
+# `queue_partition_key`, and the last is a PREFIXED identifier. The
+# original pattern caught it only as a substring of `queue_partition_key=`,
+# which is the right verdict reached by an accident that a token-boundary
+# fix would silently undo -- and did, on first attempt.
+_CONTROLS = r'worker_concurrency|global_concurrency|limiter|\w*partition\w*|concurrency'
+BLOCK = re.compile(r'(?<![_\w])["\']?(?:' + _CONTROLS + r')["\']?\s*[:=]'
+                   r'|Queue\(\s*"[^"]*"\s*,\s*\d+')
 # Controls cleat does have.
 HAVE  = re.compile(r'priority|deduplication_id|dedup|app_version')
 

@@ -232,7 +232,7 @@ no moment at which the host could run guest code.
 ## 20. cleat has no work queues, so most of the upstream queue suite is unportable
 
 **Class:** Missing API
-**Upstream test:** `tests/test_queue.py` — 45 of 77 cases, headed by
+**Upstream test:** `tests/test_queue.py` — 61 of 91 cases, headed by
 `test_one_at_a_time`, `test_one_at_a_time_with_limiter`, `test_limiter`,
 `test_dynamic_concurrency_takes_effect`
 **Status:** Open
