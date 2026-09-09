@@ -14,6 +14,9 @@ on:
     # re-checked against the branch rules for its NEW base, and a base change
     # fires no other trigger.
     types: [opened, synchronize, reopened, edited]
+  # Required checks must report in the merge queue too, or the queue deadlocks
+  # waiting for a status nothing will produce.
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +30,28 @@ jobs:
     name: Validate branch name
     runs-on: ubuntu-latest
     steps:
+      # In the queue this check is both impossible and pointless.
+      #
+      # Impossible: a merge_group event carries no pull_request payload, so
+      # `context.payload.pull_request.head.ref` below is undefined and the
+      # script throws.
+      #
+      # Pointless: the branch under test is GitHub's own
+      # `gh-readonly-queue/develop/pr-N-<sha>`, which matches none of the
+      # allowed prefixes and never could. The contributor's branch name was
+      # already validated on the pull request, and a name cannot change between
+      # there and here.
+      #
+      # Reporting success rather than skipping the job is deliberate: a skipped
+      # JOB still satisfies a required check, but a job that fails to start
+      # does not, and the difference is invisible until the queue stalls.
+      - name: Branch name was validated on the pull request
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "merge_group: the source branch was checked when the PR was opened."
+          echo "The ref under test here is GitHub's own queue branch, ${{ github.ref }}."
       - name: Check branch naming convention
+        if: github.event_name != 'merge_group'
         uses: actions/github-script@v8
         with:
           script: |

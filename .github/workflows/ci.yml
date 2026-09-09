@@ -35,6 +35,18 @@ on:
     branches: [main, develop]
   push:
     branches: [main, develop]
+  # The merge queue runs the required checks against the PROJECTED tip -- this
+  # branch plus everything ahead of it in the batch -- on a temporary
+  # `gh-readonly-queue/...` ref. Without this trigger the checks never start in
+  # queue context, the queue waits for a status that cannot arrive, and NOTHING
+  # MERGES. It is the failure mode to know about before enabling the queue,
+  # because it looks like the queue is merely slow.
+  #
+  # Safe to add here with no other change: nothing in this workflow reads
+  # `github.event.pull_request`. It checks out and runs, which is exactly what
+  # the queue needs. branch-naming.yml is not in that position and carries a
+  # guard for it.
+  merge_group:
 
 permissions:
   contents: read
