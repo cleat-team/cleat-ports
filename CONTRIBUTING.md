@@ -56,6 +56,28 @@ entry reads `UNMERGEABLE`**, and both are correct: the PR fields answer against
 that a second base exists. **Sample the queue entry's own `state`**, not the
 PR's.
 
+This is not "the PR fields lag". **The PR view has no representation for the
+queue's question at all**, so a watcher polling them is not reading a stale
+answer — it is answering a different question, and no amount of patience
+converges. Three PRs in genuinely different states render identically:
+
+| PR | actually | `mergeable` | `mergeStateStatus` | queue entry |
+|---|---|---|---|---|
+| #107 | stuck | `MERGEABLE` | `CLEAN` | `UNMERGEABLE` |
+| #110 | progressing | `MERGEABLE` | `CLEAN` | `AWAITING_CHECKS` |
+| #109 | never queued | `MERGEABLE` | `CLEAN` | *absent* |
+
+A watcher gating on the first three columns sampled one of these ninety times
+and timed out. It never reported a false green — it gated on `state == MERGED`
+— but it could not tell waiting from stuck, because nothing it was reading
+moved.
+
+`mergeable` also returns **`UNKNOWN`** for a while after the base branch moves.
+That is "recomputing", not a verdict, and treating it as one is a third way to
+read a field that is not answering. `git merge-tree` answers immediately,
+locally, and against a tip that does not exist yet — when GitHub says
+`UNKNOWN`, stop asking GitHub.
+
 You can ask the projected question before the tip exists:
 
 ```sh
