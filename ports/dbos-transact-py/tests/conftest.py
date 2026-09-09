@@ -11,6 +11,7 @@ import os
 import pathlib
 import re
 import subprocess
+import uuid
 import time
 import urllib.error
 import urllib.request
@@ -427,7 +428,7 @@ def cleat(api: str, api_key: str) -> Cleat:
     return Cleat(api, api_key)
 
 
-def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
+def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") -> str:
     """Build one workflow package to WASM and deploy it under a stable name."""
     root = pathlib.Path(__file__).resolve().parents[3]
     pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / pkg_name
@@ -441,9 +442,16 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
     )
     out = pathlib.Path(results) / "wasm" / pkg_name
 
+    env = os.environ.copy()
+    if build_flags:
+        # Forwarded to `cleat build` by scripts/build-workflow.sh. The only
+        # current use is `-version N`, which sets the version embedded in the
+        # WASM metadata; cmd/deploy-workflow prefers that over auto-increment,
+        # so it is how a test deploys two KNOWN versions of one definition.
+        env["CLEAT_PORTS_BUILD_EXTRA_FLAGS"] = build_flags
     built = subprocess.run(
         [str(root / "scripts" / "build-workflow.sh"), str(pkg), str(out)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=env,
     )
     if built.returncode != 0:
         pytest.fail(f"building {pkg_name} failed:\n{built.stderr[-2000:]}")
@@ -636,6 +644,49 @@ def recovery_parent_workflow(cleat: Cleat) -> str:
     """
     _build_and_deploy("retry", "retrycall")
     return _build_and_deploy("recoveryparent", "recovery_parent")
+
+
+@pytest.fixture(scope="session")
+def version_marked_workflow(cleat: Cleat) -> str:
+    """Deploy ONLY v1 of the definition. The test deploys v2 itself.
+
+    Deliberately not both. A fixture that deployed v1 and v2 up front would
+    leave nothing in flight across a version change, and a test named for what
+    a running workflow does when a new version lands would be asserting about a
+    run that started after both deploys had already happened -- true, green,
+    and about something else. Ordering is the subject here, so the test has to
+    own it.
+
+    The two versions are separate packages rather than one package built twice,
+    because they must differ in what they RETURN, not only in the version they
+    carry. One package built twice produces two binaries that behave
+    identically and no assertion could tell which executed.
+
+    THE NAME IS UNIQUE PER SESSION, and that is not tidiness. `workflow_defs`
+    rows outlive a pytest process: a previous run that deployed v2 leaves it
+    there, so a later run's "only v1 is deployed" premise is false before the
+    first line executes and a start picks up the newest row. Measured -- this
+    test passed once and then failed on the next run against the same database,
+    reporting "two" for a run that should have been pinned to v1, which reads
+    exactly like an engine defect and was leftover state. A fresh name makes
+    each run's version history entirely its own.
+    """
+    global _VERSION_MARK_NAME
+    _VERSION_MARK_NAME = f"version_mark_{uuid.uuid4().hex[:8]}"
+    return _build_and_deploy(
+        "versionone", _VERSION_MARK_NAME, build_flags="-version 1"
+    )
+
+
+_VERSION_MARK_NAME = ""
+
+
+def deploy_version_two() -> str:
+    """Deploy v2 over the same definition name. Called mid-test, on purpose."""
+    assert _VERSION_MARK_NAME, "version_marked_workflow must be requested first"
+    return _build_and_deploy(
+        "versiontwo", _VERSION_MARK_NAME, build_flags="-version 2"
+    )
 
 
 @pytest.fixture(scope="session")
