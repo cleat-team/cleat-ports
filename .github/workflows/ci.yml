@@ -97,6 +97,36 @@ jobs:
         with: { python-version: "3.12" }
       - name: Install pinned cleat
         run: make install-cleat
+      # Surface WHICH cleat this run built, in the job summary rather than
+      # buried in the log.
+      #
+      # CLEAT_PINNED_REF is `develop` (see cleat-version.env), so the toolchain
+      # moves between runs and a red result has two possible causes: the port
+      # changed, or cleat did. install-cleat.sh already records the resolved SHA
+      # in bin/.cleat-build, and run-port.sh echoes it -- but only into the log
+      # body, where nobody thinks to look. nightly.yml promotes it to a step
+      # output; this job did not, so on a PR run it was effectively invisible.
+      #
+      # That cost three sessions an investigation on 2026-09-09: ports develop
+      # went red, and the leading hypothesis was the adjacent port commit. The
+      # actual cause was cleat#1046 landing upstream one commit before the SHA
+      # this run built. With the SHA in the summary, that is a two-run diff
+      # instead of a reconstruction from merge timestamps.
+      - name: Record which cleat this run built
+        if: always()
+        run: |
+          if [ -f bin/.cleat-build ]; then
+            {
+              echo "### cleat build"
+              echo
+              echo '```'
+              cat bin/.cleat-build
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "bin/.cleat-build absent: install-cleat did not complete" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Run port
         # Set explicitly rather than relying on run-port.sh's default, which is
         # 5442 so that a local run does not collide with cleat's own dev
