@@ -173,6 +173,91 @@ a judgement that `tests/test_retries.py`, `test_children.py`, `test_defer.py`,
 It has **not** been checked case by case against those files, and that check is
 the first thing to do before anyone treats the number below as a backlog.
 
+### The check, done 2026-09-09 — the bucket is 8, not 12, and it moves UP
+
+Read each of the twelve at `3fe35d9` against this port's tests. **Four do not
+belong in this bucket**, and the correction runs in the opposite direction from
+the one this document warned about.
+
+| upstream case | verdict |
+|---|---|
+| `Test_EmptyOrchestration` | covered |
+| `Test_SingleTimer` | **split — the timestamp half is a DECLINE** |
+| `Test_SingleActivity` | **split — the unicode half is UNCOVERED** |
+| `Test_ActivityChain` | covered |
+| `Test_ActivityRetries` | covered — `test_retries.py::test_a_retryable_failure_is_retried_with_backoff` |
+| `Test_ActivityFanOut` | covered — order *and* parallelism, see below |
+| `Test_SingleSubOrchestrator_Completed` | covered |
+| `Test_SingleSubOrchestrator_Failed` | **UNCOVERED** |
+| `Test_SingleSubOrchestrator_Failed_Retries` | **UNCOVERED** |
+| `Test_ContinueAsNew` | covered |
+| `Test_ExternalEventOrchestration` | covered |
+| `Test_TerminateOrchestration` | covered — `test_workflow_management.py::test_force_complete_moves_a_running_workflow_to_done` |
+
+**The two clean misses: nothing in this port has a child that FAILS.** All five
+cases in `tests/test_children.py` use successful children, and the only
+error-shaped assertion is `assert not r.get("error")` — the *absence* of one.
+`Test_SingleSubOrchestrator_Failed` asserts the opposite direction: the child's
+message reaches the parent's failure details
+(`assert.Contains(metadata.FailureDetails.ErrorMessage, "Child failed")`). The
+retries variant asserts the same after the child has exhausted a policy.
+
+Both are portable — cleat has children, child failure, and an error field on the
+parent — and both are novel. This is the single largest gap the check found and
+it was invisible from the case names, which say `SingleSubOrchestrator` and look
+like the `Completed` case that *is* covered.
+
+**`Test_SingleActivity` is two assertions and only one of them is covered.** The
+completion and the output value are; the output value is `"Hello, 世界!"`, and
+**no test in this port puts a non-ASCII byte in a workflow input or an asserted
+result.** Checked mechanically: 46 lines contain non-ASCII and every one is an
+em-dash in prose.
+
+This is *not* the limitation `test_scheduling.py` already records. That one is
+real and is about the **fixture key channel** — keys travel in a URL path and
+`http.client` encodes the request line as ASCII, so a non-ASCII key raises
+`UnicodeEncodeError` in the test process. A workflow **result** travels in a JSON
+body and is not affected. Different channel, and the existing note explicitly
+calls itself "a limit of the instrument rather than a judgement that unicode is
+uninteresting".
+
+**`Test_SingleTimer` is a decline, not a coverage item.** Beyond completion it
+asserts `metadata.LastUpdatedAt >= metadata.CreatedAt`. cleat records no start
+time and ISSUES 30 records that `GET /api/workflows/:id` returns `created_at` as
+`0001-01-01T00:00:00Z` to a client. The ordering is unaskable here, so it belongs
+with the eight declines rather than the covered bucket.
+
+**`Test_ActivityFanOut` is fully covered and worth saying why**, because it was
+the one I expected to fail. It asserts a specific output ordering and a duration
+bound. `test_children.py::test_await_all_children_returns_every_child_s_own_result`
+pins `tags == ["child-0", "child-1", "child-2"]` — spawn order, not completion
+order — and `test_parallelism.py` pins peak concurrency above 1 and at least 3.
+Between them both halves are asserted.
+
+### What this does to the totals
+
+    before   8 declines · 10 portable and novel · 12 unverified
+    after    9 declines · 12 portable and novel ·  8 verified as covered
+
+**The direction is the finding.** This document warned that the 12 must not be
+added to the 10 because the dbos `test_dbos.py` figure went 17 → 9 → 2 as it was
+read — an "already covered" bucket shrinking a gap that was really there. Here
+it went the other way: the bucket was too *generous* about what this port
+already asserts, and reading it made the backlog bigger.
+
+So the warning was right that the number was unreliable and wrong about which
+way. Worth recording, because "assume the optimistic number is optimistic" is
+itself a heuristic that can point the wrong way, and the only fix for either is
+to read the cases.
+
+### What was NOT done
+
+Each verdict rests on reading the upstream assertions and grepping this port for
+an equivalent. **No test was run to confirm a "covered" verdict actually passes
+for the reason claimed**, and a test can assert a property while passing for an
+unrelated one. The two UNCOVERED verdicts are the stronger claims here: they
+rest on absence, which a grep establishes better than presence.
+
 ---
 
 ## What this adds up to, and what it does not
