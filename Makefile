@@ -81,21 +81,33 @@ install-cleat: ## Install the cleat toolchain at CLEAT_REF (default: pinned)
 port: ## Run one port: make port PORT=dbos-transact-py
 	@test -n "$(PORT)" || { echo "usage: make port PORT=<name>  (have: $(PORTS))" >&2; exit 2; }
 	@test -d "ports/$(PORT)" || { echo "no such port: $(PORT)" >&2; exit 2; }
-	@trap './scripts/worker.sh stop' EXIT INT TERM; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh "$(PORT)"
+	@# CLEAT_PORTS_DIALECT is EXPORTED rather than prefixed onto run-port.sh,
+	@# because the trap runs in this shell and a command prefix does not reach
+	@# it. Prefixed, cleanup ran as the default dialect: worker.sh matches the
+	@# running process against $$CLEAT_PORTS_DSN, so a postgres stop could not
+	@# match a mysql or mssql worker, called this run's OWN worker foreign and
+	@# refused. Every non-postgres run then stranded its worker and the next
+	@# run at a different dialect was refused.
+	@export CLEAT_PORTS_DIALECT=$(DIALECT); \
+	 trap './scripts/worker.sh stop' EXIT INT TERM; ./scripts/run-port.sh "$(PORT)"
 
 .PHONY: worker-up
 worker-up: ## Start the shared cleat worker (normally done for you by `make port`)
 	CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/worker.sh ensure
 
 .PHONY: worker-down
-worker-down: ## Stop the shared cleat worker
-	./scripts/worker.sh stop
+worker-down: ## Stop the shared cleat worker: make worker-down DIALECT=mysql
+	@# Needs DIALECT too -- worker.sh identifies the worker by its DSN, so a
+	@# bare `make worker-down` cannot stop a mysql or mssql worker.
+	CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/worker.sh stop
 
 .PHONY: all-ports
 all-ports: ## Run every port; keeps going on failure and fails at the end
-	@trap './scripts/worker.sh stop' EXIT INT TERM; \
+	@# Exported for the reason on `port` above: the trap cannot see a prefix.
+	@export CLEAT_PORTS_DIALECT=$(DIALECT); \
+	trap './scripts/worker.sh stop' EXIT INT TERM; \
 	rc=0; for p in $(PORTS); do \
-	  echo "=== $$p"; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh "$$p" || rc=1; \
+	  echo "=== $$p"; ./scripts/run-port.sh "$$p" || rc=1; \
 	done; exit $$rc
 
 .PHONY: new-port
