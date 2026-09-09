@@ -336,14 +336,54 @@ JSON
   # than it needs to be or, on a cold database that has migrations to run,
   # too short -- and too short shows up as a confusing connection-refused in
   # the first test rather than as a worker problem.
-  for _ in $(seq 1 60); do
+  #
+  # The budget is 90s *without output*, not 30s in total. Progress is the log
+  # growing: a worker that is still writing gets more time, one that has gone
+  # quiet is abandoned.
+  #
+  # WHAT ACTUALLY GOES WRONG HERE, measured rather than assumed. A cold start
+  # is not slow because of the migration set -- that is 4-6s of the old 30s
+  # (postgres 0.6s, mssql 1.7s, mysql 5.9s locally; 0.9/1.9/4.4s on the CI
+  # runner, same commit as the failing run). It is slow because MySQL applies
+  # the set TWICE, once for the main database and once per tenant, and the
+  # phase between the two passes -- TenantDB -> CreateTenantDatabase -- logs
+  # nothing at all. Over four cold runs the two migration passes took 2s every
+  # time and the silent gap between them took 1s, 1s, 9s, 1s. The variance is
+  # entirely in the part that produces no output.
+  #
+  # So the failure this replaces was a SILENT stall of roughly 22-26s hitting
+  # a 30s cap, not a migration set outgrowing its budget. That is why the
+  # no-output budget is 90s and not 30s: the thing being waited through is
+  # invisible by construction, so the margin has to cover it rather than track
+  # it. cleat#1084 asks for a log line before CreateTenantDatabase; if that
+  # lands, this loop sees the phase and the 90s stops doing any work.
+  #
+  # The cost is that a genuinely hung worker takes 90s rather than 30s to
+  # report. That is the honest price of not being able to tell the two apart.
+  # last_size starts BELOW any real size so the first pass always counts as
+  # progress. Starting it at 0 made the stall counter run one tick ahead of
+  # the elapsed counter, and the give-up message then reported a longer stall
+  # than the wait that contained it -- "29s elapsed, last 30s of it with
+  # nothing written".
+  local waited=0 stalled=0 size=0 last_size=-1
+  while [ "$waited" -lt 600 ]; do          # 300s absolute ceiling
     healthy && { mint_key; echo "worker ready at $API_URL (pid $(cat "$PIDFILE"))"; return 0; }
     running || { echo "worker exited during startup; log follows:" >&2
                  tail -20 "$LOGFILE" >&2; rm -f "$PIDFILE"; exit 1; }
+    size=$(wc -c <"$LOGFILE" 2>/dev/null | tr -d ' ')
+    if [ "${size:-0}" -gt "$last_size" ]; then
+      last_size="$size"; stalled=0
+    else
+      stalled=$((stalled + 1))
+      [ "$stalled" -ge 180 ] && break
+    fi
     sleep 0.5
+    waited=$((waited + 1))
   done
 
-  echo "worker did not become healthy within 30s; log follows:" >&2
+  echo "worker did not become healthy: $((waited / 2))s elapsed," \
+       "last $((stalled / 2))s of it with nothing written to the log;" \
+       "log follows:" >&2
   tail -20 "$LOGFILE" >&2
   stop_worker
   exit 1
