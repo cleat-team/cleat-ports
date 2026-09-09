@@ -40,6 +40,21 @@ So a backend-contract case is portable here only if it has an **HTTP- or
 harness-reachable analogue**. That is a stricter test than "cleat has something
 in this area", and two cases already fail it — see below.
 
+## In progress
+
+**`Test_SingleSubOrchestrator_Failed` and `_Failed_Retries` — claimed 2026-09-09,
+cleat-agent1 (session_01QPgBuD).** Claimed here rather than announced elsewhere,
+because two sessions ported the same upstream case tonight by each assuming the
+other had not.
+
+They came out of ports#145's re-check of the twelve cases classed as already
+asserted by the dbos port. **Nothing in that port has a child that fails**: all
+five cases in `test_children.py` use successful children, and its only
+error-shaped assertion is `assert not r.get("error")` — the *absence* of one.
+Upstream asserts the opposite direction, that a failed child's message reaches
+the parent's failure details, and the `_Retries` variant asserts it after the
+child exhausts a retry policy.
+
 ## Cases examined first-hand, and what each check established
 
 Named because a survey of upstream establishes what **upstream** asserts; it
