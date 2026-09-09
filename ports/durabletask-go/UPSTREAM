@@ -1,0 +1,19 @@
+project:  Durable Task Framework for Go
+url:      https://github.com/microsoft/durabletask-go
+license:  Apache-2.0
+commit:   3fe35d93fe1d2bdab21a3d85c14867532adef0b0
+derived:  2026-09-09
+
+# Upstream source is not vendored. This port re-expresses upstream's assertions
+# against cleat's own surface. See ../../docs/licensing.md.
+#
+# THE LICENCE WAS VERIFIED BY READING THE FILE, and the reason that is worth
+# saying is next door: ports/samples-go/UPSTREAM records an upstream whose
+# LICENSE is a short-form Apache NOTICE, which GitHub's classifier answers
+# `NOASSERTION` for and this repo's own table recorded as MIT. Three answers,
+# one file.
+#
+# Here the two agree -- `gh api repos/microsoft/durabletask-go --jq
+# .license.spdx_id` says Apache-2.0, and LICENSE is the full 201-line Apache
+# 2.0 text. The agreement is only evidence because the file was read; it would
+# have read identically if only the API had been consulted.
