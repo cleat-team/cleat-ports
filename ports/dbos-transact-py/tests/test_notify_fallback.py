@@ -49,7 +49,7 @@ import uuid
 
 import pytest
 
-from conftest import wait_until
+from conftest import wait_until, worker_command_line
 
 # The receiver's own await budget. Generous: it bounds how long the workflow is
 # willing to sit there, not how quickly the signal is expected to land, and the
@@ -79,14 +79,14 @@ _ROOT = pathlib.Path(__file__).resolve().parents[3]
 _WORKER_SH = _ROOT / "scripts" / "worker.sh"
 
 
-def _results_dir() -> pathlib.Path:
-    return pathlib.Path(os.environ.get(
-        "CLEAT_PORTS_RESULTS_DIR",
-        str(_ROOT / ".port-results" / os.environ.get("COMPOSE_PROJECT_NAME", "default")),
-    ))
-
-
 def _worker(command: str, extra_flags: str = "") -> subprocess.CompletedProcess:
+    """Drive scripts/worker.sh, optionally with extra worker flags.
+
+    The env var is cleared rather than left alone when extra_flags is empty:
+    teardown restarts the worker WITHOUT the flag, and inheriting a stale
+    CLEAT_PORTS_WORKER_EXTRA_FLAGS from the caller's environment would leave
+    the shared worker poll-only for the rest of the session.
+    """
     env = os.environ.copy()
     if extra_flags:
         env["CLEAT_PORTS_WORKER_EXTRA_FLAGS"] = extra_flags
@@ -97,22 +97,8 @@ def _worker(command: str, extra_flags: str = "") -> subprocess.CompletedProcess:
 
 
 def _worker_command_line() -> str:
-    """The running worker's argv, or "" if there is no live worker.
-
-    Read from the pidfile rather than from `pgrep cleat-worker`: several
-    sessions share this checkout and a name match would find somebody else's
-    process. The pidfile is per-session (ports#69).
-    """
-    instance = os.environ.get("CLEAT_PORTS_WORKER_INSTANCE", "1")
-    name = "worker.pid" if instance == "1" else f"worker.{instance}.pid"
-    pidfile = _results_dir() / name
-    try:
-        pid = int(pidfile.read_text().strip())
-    except (OSError, ValueError):
-        return ""
-    out = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "command="],
-                         capture_output=True, text=True)
-    return out.stdout.strip()
+    """See conftest.worker_command_line -- `ps -ww` and the pidfile both matter."""
+    return worker_command_line()
 
 
 @pytest.fixture(scope="module")
