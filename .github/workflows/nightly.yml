@@ -153,7 +153,7 @@ jobs:
 
   complete:
     name: Every port ran on every dialect
-    needs: [discover, port, complete]
+    needs: [discover, port]
     if: always()
     runs-on: ubuntu-latest
     steps:
