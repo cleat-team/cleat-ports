@@ -68,3 +68,49 @@ under the same id does not re-run the body — is covered by
 `test_a_completed_run_still_answers_for_its_idempotency_key`. The timestamps
 are the residue, and there is no proxy for them that would not be inventing a
 measurement cleat does not take. See WORKLIST.md, `tests/test_queue.py`.
+
+---
+
+**Correction, 2026-09-09 evening: this entry understated the gap, and the
+method error is the reusable part.**
+
+The text above says `completed_at - created_at` measures wait plus execution,
+and offers that as what you *can* measure. True of the schema. Not true of the
+API. Measured against a live worker:
+
+```
+GET /api/workflows/:id   created_at = 0001-01-01T00:00:00Z
+the database row         created_at = 2026-09-09 19:47:14.252472+00
+```
+
+The column is populated correctly and **the per-run endpoint never selected
+it**. So for a client using that endpoint neither term of the subtraction was
+available -- not just the start time this entry asks for.
+
+**I checked `information_schema` and reported a claim about what a client can
+read.** Those are different propositions and only the first was verified.
+`started_at` genuinely did not exist; `created_at` existed and was unreachable;
+and a schema search cannot tell those two apart, because it is not looking at
+the thing that answers the question.
+
+Found by cleat-agent1-31 while fixing cleat#1105, and their response is the
+better one. Rather than fix a fourth field, a guard that writes one row with
+every column deliberately non-zero, fetches it through `GetWorkflowByID` on
+each dialect, and fails naming any JSON-tagged field left at its zero value --
+driven by reflection over the struct, so a field added later is covered without
+anyone remembering. It found a fifth defect on its first run,
+`pending_terminal_status`, that nobody was looking for:
+
+| field | defect | issue |
+|---|---|---|
+| `completed_at` | selected, scanned into a local, never assigned | cleat#1091 |
+| `started_at` | the column did not exist | cleat#1090 |
+| `parent_workflow_id` | written on every child, never selected | cleat#1103 |
+| `created_at` | never selected -- reported as year one | cleat#1105 |
+| `pending_terminal_status` | never selected -- **found by the guard** | cleat#1105 |
+
+Four were found one at a time by someone tripping over them. The fifth was
+found by asking what class they belonged to.
+
+Queue latency becomes computable once cleat#1094 and cleat#1105 are both in --
+not with #1094 alone, which is what this entry's original framing implied.
