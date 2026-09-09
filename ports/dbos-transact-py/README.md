@@ -37,8 +37,8 @@ application or a web framework.
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
 | `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 17 |
-| `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **115** |
+| `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 13 |
+| **Total in scope** | **371** | | **120** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -315,6 +315,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_executor_identity.py` | 1 (1 skipped) | `test_queue.py` — upstream test_queue_executor_id -- which worker ran a completed run; skipped, ISSUES.md 26 |
+| `test_idempotency_key_form.py` | 5 | `test_client.py` — upstream test_client_enqueue_rejects_empty_workflow_id -- a blank identifier must not become a real one |
 | `test_identity_isolation.py` | 1 | `test_concurrency.py` — a run reports its own id under concurrency |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
@@ -335,7 +336,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **125** (5 skipped outright) | **115** mapped to an upstream file, **10** cleat-specific |
+| **Total** | **130** (5 skipped outright) | **120** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the

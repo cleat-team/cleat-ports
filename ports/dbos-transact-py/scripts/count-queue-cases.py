@@ -282,6 +282,9 @@ MAPPING = {
     # than left implicit: the TOTAL is right and the DISTRIBUTION is off by two
     # between these rows. This is the standing cost of per-module mapping, and
     # any module that spans two upstream files pays it.
+    "test_idempotency_key_form.py": ("test_client.py", "upstream test_client_enqueue_"
+                                    "rejects_empty_workflow_id -- a blank identifier must "
+                                    "not become a real one"),
     "test_api_surface.py": ("test_client.py", "the HTTP surface a client drives; "
                             "two of its cases are arguably workflow-management"),
     "test_results.py": ("test_failures.py",
