@@ -236,6 +236,7 @@ MAPPING = {
     "test_recovery.py": ("test_failures.py", "recovery counts after a crash"),
     "test_dead_letters.py": ("test_failures.py", "retries exhausted, and what is retained"),
     "test_cancellation.py": ("test_workflow_management.py", ""),
+    "test_cancel_propagation.py": ("test_workflow_management.py", "upstream test_cancel_workflow_children -- cleat defers propagation to parent close"),
     "test_detached.py": ("test_workflow_management.py", "the nearest thing cleat has to fork"),
     "test_workflow_management.py": ("test_workflow_management.py",
                                     "force-complete, force-fail, and their refusals"),

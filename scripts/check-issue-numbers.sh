@@ -115,6 +115,43 @@ report_file() {
   return $rc
 }
 
+# report_links checks that every issues/ link in an index RESOLVES and that the
+# linked file's heading matches the text the index shows for it.
+#
+# The number check above compares SETS OF NUMBERS, so it is satisfied by an
+# index whose row 29 points at a file that no longer exists under a title that
+# is no longer true. That is not hypothetical: renaming entry 29 on 2026-09-09
+# left exactly that, and every existing check stayed green -- the number 29 was
+# still listed and still present.
+#
+# Takes an index path and a port directory; prints each problem and returns 1
+# if there were any.
+report_links() {
+  local idx="$1" dir="$2" rc=0 line title target head filetitle
+  while IFS= read -r line; do
+    title="${line%%$'\t'*}"
+    target="${line#*$'\t'}"
+    if [ ! -f "$dir/$target" ]; then
+      echo "ERROR: $idx links to $target, which does not exist." >&2
+      echo "  A renamed entry file leaves the index pointing at the old slug." >&2
+      rc=1
+      continue
+    fi
+    head="$(head -1 "$dir/$target")"
+    filetitle="$(printf '%s' "$head" | sed -n 's/^##[[:space:]]*[0-9][0-9]*\.[[:space:]]*//p')"
+    if [ -n "$filetitle" ] && [ "$filetitle" != "$title" ]; then
+      echo "ERROR: $idx and $target disagree about the entry's title." >&2
+      echo "  index: $title" >&2
+      echo "  file : $filetitle" >&2
+      echo "  The index is what people read; a stale row here misdescribes a" >&2
+      echo "  finding that has since been corrected." >&2
+      rc=1
+    fi
+  done < <(grep -o '\[[^]]*\](issues/[^)]*\.md)' "$idx" \
+             | sed 's/^\[//; s/\](/\t/; s/)$//')
+  return $rc
+}
+
 if [ "${1:-}" = "--self-test" ]; then
   fails=0
   tmp="$(mktemp -d)"
@@ -152,7 +189,27 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "SELF-TEST FAIL: template headings were counted as entries" >&2; fails=1
   fi
 
-  [ "$fails" -eq 0 ] && echo "SELF-TEST: 5 cases pass (three known-positive, two known-negative)"
+  # Known-positive 4: a link that does not resolve.
+  mkdir -p "$tmp/p/issues"
+  printf '## 1. real title\n' > "$tmp/p/issues/001-real.md"
+  printf '| 1 | [real title](issues/001-gone.md) |\n' > "$tmp/p/IDX.md"
+  if report_links "$tmp/p/IDX.md" "$tmp/p" 2>/dev/null; then
+    echo "SELF-TEST FAIL: a broken issues/ link was not reported" >&2; fails=1
+  fi
+
+  # Known-positive 5: a link that resolves to a file with a different title.
+  printf '| 1 | [stale title](issues/001-real.md) |\n' > "$tmp/p/IDX.md"
+  if report_links "$tmp/p/IDX.md" "$tmp/p" 2>/dev/null; then
+    echo "SELF-TEST FAIL: a title disagreeing with its file was not reported" >&2; fails=1
+  fi
+
+  # Known-negative 3: a link that resolves with a matching title.
+  printf '| 1 | [real title](issues/001-real.md) |\n' > "$tmp/p/IDX.md"
+  if ! report_links "$tmp/p/IDX.md" "$tmp/p" 2>/dev/null; then
+    echo "SELF-TEST FAIL: a correct index row was reported" >&2; fails=1
+  fi
+
+  [ "$fails" -eq 0 ] && echo "SELF-TEST: 8 cases pass (five known-positive, three known-negative)"
   exit "$fails"
 fi
 
@@ -217,6 +274,7 @@ while IFS= read -r d; do
       echo "  only in the directory: $(comm -13 <(echo "$listed") <(echo "$have") | tr '\n' ' ')" >&2
       rc=1
     fi
+    report_links "$REPO_ROOT/$f" "$REPO_ROOT/$d" || rc=1
   else
     report_file "$REPO_ROOT/$f" "$f" || rc=1
   fi
@@ -231,5 +289,5 @@ if [ "$found" -eq 0 ]; then
   exit 1
 fi
 
-[ "$rc" -eq 0 ] && echo "OK: every port has an ISSUES.md with unique, contiguous entry numbers."
+[ "$rc" -eq 0 ] && printf 'OK: every port ISSUES.md has unique contiguous numbers, lists exactly\n    the entries in its issues/ directory, and links to titles that match.\n'
 exit "$rc"
