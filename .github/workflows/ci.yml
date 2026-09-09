@@ -47,6 +47,12 @@ jobs:
   discover:
     name: Discover ports
     runs-on: ubuntu-latest
+    # issues:read is for the report-path self-test below, whose one case that
+    # needs a real token checks that a NON-auth failure is not blamed on the
+    # credential. Read-only, this repo only.
+    permissions:
+      contents: read
+      issues: read
     outputs:
       ports: ${{ steps.list.outputs.ports }}
     steps:
@@ -61,6 +67,23 @@ jobs:
       # Here rather than in its own job: it needs no database and no services,
       # so it costs a few seconds on a runner that is already up, and it adds
       # no new required-check context to the branch policy.
+      - name: The nightly's reporting path still classifies its failures
+        # Here rather than in its own job, for the reason the step below gives:
+        # no database, no services, seconds on a runner that is already up, and
+        # no new required-check context.
+        #
+        # `ci.yml` does not run `nightly.yml`, so nothing else in PR CI touches
+        # the report path -- a green PR is not evidence that it works. These
+        # cases are all known-positives (a bad token, a missing token, zero leg
+        # markers), because every branch there fires only when something is
+        # already wrong and would otherwise be verified by never running.
+        env:
+          # A valid token is REQUIRED. The case that needs it is the only one
+          # that asks the classifier to disagree -- a non-auth failure must not
+          # be blamed on the credential -- and without a token it silently
+          # becomes the missing-token case and reports a pass.
+          SELFTEST_VALID_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/selftest-report-path.sh
       - name: Inventory tables match the tree
         # The dbos-transact-py README's two tables are generated. They were
         # hand-maintained until 2026-09-08 and drifted -- eight cases across

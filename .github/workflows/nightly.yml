@@ -138,7 +138,13 @@ jobs:
           # files by default, so `.leg/` uploaded nothing while the step still
           # reported success -- if-no-files-found defaults to `warn`.
           mkdir -p leg-markers
-          echo "${{ matrix.port }} ${{ matrix.dialect }} $(tr '\n' ' ' < bin/.cleat-build 2>/dev/null)" \
+          # The OUTCOME goes in the marker, not just the leg's name. Without it
+          # the only record of which leg failed is the run's job list, which is
+          # readable by a human on the page and by nothing else -- so the
+          # `report` job below, which has to say what failed, would have had to
+          # ask the API for it, with a token, which is the single point of
+          # failure this change exists to remove.
+          echo "${{ matrix.port }} ${{ matrix.dialect }} ${{ job.status }} $(tr '\n' ' ' < bin/.cleat-build 2>/dev/null)" \
             > "leg-markers/${{ matrix.port }}--${{ matrix.dialect }}"
       - name: Upload leg marker
         if: always()
@@ -189,42 +195,42 @@ jobs:
     if: always() && needs.port.result == 'failure'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: { pattern: "leg-*", path: legs, merge-multiple: true }
+
+      # TOKEN-FREE, AND FIRST, AND THE ORDER IS THE WHOLE POINT.
+      #
+      # Until 2026-09-09 this job had one step, and it needed a cross-repo PAT.
+      # That night the PAT came back `401 Bad credentials` (run 34340316935), so
+      # a real failure -- dbos-transact-py on mysql -- was found and reported to
+      # nobody. The route from "the nightly found something" to "a human knows"
+      # ran entirely through one credential.
+      #
+      # Worse than the expiry: `report` runs only when the matrix FAILED, so the
+      # token is exercised only on the nights it matters. A green night never
+      # touches it. Its breakage is therefore perfectly correlated with the
+      # event it exists to report, and nothing can discover it early, because
+      # the only thing that would is the thing it breaks.
+      #
+      # So the breakdown is rendered here, from this run's own artifacts, with
+      # no network and no credential, BEFORE anything that can fail on auth.
+      # `did last night's nightly find something` is now answerable by opening
+      # the run.
+      - name: Which legs failed
+        run: scripts/render-nightly-summary.sh legs | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Open or update the tracking issue on cleat-team/cleat
         env:
           # A PAT (or GitHub App token) with `issues: write` on cleat-team/cleat.
           # The default GITHUB_TOKEN is scoped to THIS repo and cannot open an
-          # issue on another one. If the secret is absent the step says so and
-          # exits clean rather than failing the run for a configuration reason
-          # that has nothing to do with cleat's behaviour.
+          # issue on another one.
           GH_TOKEN: ${{ secrets.CLEAT_CORE_ISSUE_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::CLEAT_CORE_ISSUE_TOKEN is not set — cannot file the tracking issue."
-            echo "Nightly ports failed. See $RUN_URL"
-            exit 0
-          fi
-
-          TITLE="cleat-ports nightly failing against develop"
-          BODY=$(printf '%s\n' \
-            "The [cleat-ports](https://github.com/cleat-team/cleat-ports) nightly suite failed against \`develop\`." \
-            "" \
-            "Run: $RUN_URL" \
-            "" \
-            "These are ports of other durable-execution frameworks' test suites. A failure here means cleat's behaviour diverged from what an equivalent engine's tests expect — it is not automatically a bug, but it is always worth a look." \
-            "" \
-            "Triage per [promotion-checklist.md](https://github.com/cleat-team/cleat-ports/blob/main/docs/promotion-checklist.md): confirm it, classify it as bug / missing API / deliberate difference, and if it is one of the first two, land a hermetic regression test in \`tests/conformance/\`." \
-            "" \
-            "_Filed automatically by cleat-ports nightly. This issue is reused rather than duplicated; check the latest comment for the most recent run._")
-
-          # One tracking issue, reused. A fresh issue per nightly would bury the
-          # core repo in duplicates within a week of any sustained failure.
-          EXISTING=$(gh issue list --repo cleat-team/cleat --state open \
-            --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
-
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --repo cleat-team/cleat --body "Still failing: $RUN_URL"
-            echo "commented on #$EXISTING"
-          else
-            gh issue create --repo cleat-team/cleat --title "$TITLE" --body "$BODY"
-          fi
+        # STILL FATAL ON FAILURE. A reporting step that exits 0 when it could not
+        # report turns "the nightly found something" into a green run, which is
+        # strictly worse than a red one -- there is nothing left to notice. What
+        # changed is the LABEL: the script emits a titled annotation naming a
+        # rejected or missing credential as a HARNESS failure, so the run list
+        # no longer renders "rotate a secret" and "a port diverged" identically.
+        run: scripts/file-core-issue.sh
