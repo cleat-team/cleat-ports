@@ -768,6 +768,80 @@ def await_one_child_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("awaitonechild", "await_one_child")
 
 
+@pytest.fixture
+def worker_without_notify():
+    """Restart the shared worker with PostgreSQL LISTEN/NOTIFY disabled.
+
+    `-notify-channel` defaults to `cleat_dispatch`
+    (cmd/cleat-worker/config.go:70), so every other test in this suite runs
+    with NOTIFY on and the 500ms poll merely behind it. Nothing exercises what
+    happens when NOTIFY is unavailable -- and that is the path that carries
+    correctness when it is.
+
+    This is function-scoped and restores on teardown, including on failure.
+    The worker is SHARED by every test in the run, so a flag left set would
+    silently apply to everything that follows -- the hazard test_timeouts.py
+    records for `--max-workflow-duration`. Restoration is part of the
+    operation, not cleanup.
+
+    Yields the worker's argv, so a test can assert the flag actually took
+    rather than trusting that setting the environment variable was enough. A
+    restart that did not restart looks exactly like a feature that works.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    script = str(root / "scripts" / "worker.sh")
+
+    def run(action: str, env: dict | None = None) -> None:
+        done = subprocess.run([script, action], capture_output=True, text=True,
+                              env=env or os.environ.copy())
+        if done.returncode != 0:
+            pytest.fail(f"worker.sh {action} failed:\n{done.stderr[-2000:]}")
+
+    def argv() -> str:
+        """The argv of the worker serving THIS run's API port.
+
+        Not every `cleat-worker` on the machine: several sessions share it,
+        and a bare `pgrep -fl cleat-worker` matched four of them here. An
+        assertion over that text is satisfied by somebody else's flags, which
+        makes it a check that passes for a reason having nothing to do with
+        the worker under test. Same discriminator worker.sh's `owned` uses,
+        and the one cleat-ports#69 exists to provide: the process serving my
+        port, not the process with my binary's name.
+        """
+        port = os.environ.get("CLEAT_PORTS_API_PORT", "8099")
+        done = subprocess.run(["pgrep", "-fl", "cleat-worker"],
+                              capture_output=True, text=True)
+        mine = [ln for ln in done.stdout.splitlines()
+                if f"-api-addr 127.0.0.1:{port}" in ln]
+        if len(mine) != 1:
+            pytest.fail(
+                f"expected exactly one cleat-worker on api port {port}, found "
+                f"{len(mine)}:\n" + "\n".join(mine))
+        return mine[0]
+
+    env = os.environ.copy()
+    # Empty value, not absent: absent means "use the default", which is the
+    # channel being on. The two are opposite instructions that look alike.
+    env["CLEAT_PORTS_WORKER_EXTRA_FLAGS"] = "-notify-channel="
+
+    run("stop-worker")
+    run("ensure", env)
+    try:
+        yield argv()
+    finally:
+        run("stop-worker")
+        run("ensure")   # os.environ, without the extra flag
+        # Verify the RESTORE, not just that two commands exited 0. Everything
+        # after this test inherits whatever worker is left here, and a restore
+        # that quietly kept -notify-channel= would degrade the rest of the
+        # suite into a second NOTIFY-disabled run reporting itself as normal.
+        # A restore that does not restore looks exactly like one that worked.
+        restored = argv()
+        assert "-notify-channel=" not in restored, (
+            "the shared worker still carries -notify-channel= after teardown; "
+            f"every test after this one is running without NOTIFY. argv: {restored!r}")
+
+
 @pytest.fixture(scope="session")
 def worker():
     """Crash and restart the shared worker.

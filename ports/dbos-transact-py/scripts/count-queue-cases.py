@@ -242,6 +242,10 @@ MAPPING = {
     "test_children.py": ("test_concurrency.py", "concurrent execution and isolation"),
     "test_parallelism.py": ("test_async.py",
                             "the one portable case: workflows actually run at once"),
+    "test_notification_fallback.py": ("test_failures.py",
+                                      "upstream test_notification_errors -- delivery must not "
+                                      "DEPEND on LISTEN/NOTIFY, since that is what is missing "
+                                      "when it fails"),
     # The other half of upstream test_concurrency.py, and the only half of it
     # that is portable: nine of its eleven cases drive asyncio.gather inside one
     # workflow, which the determinism analyzer refuses at build time (ISSUES 22).

@@ -27,8 +27,42 @@ names announce their own answer are a free control.** All five agree —
 | `test_step_retries_no_final_sleep` | the retry loop must not sleep after the **final** failed attempt | `test_retries.py` asserts the budget is finite and what the last attempt returns; nothing asserts elapsed time **excludes** a wasted final backoff. `RetryPolicy` carries `InitialInterval`/`BackoffCoefficient`/`MaxInterval`, so the same defect is available. Upstream shipped it (their #667) |
 | `test_step_retries_no_final_sleep_async` | same property | merge into the case above — the async/sync split is an SDK concern, not an engine one |
 | `test_step_should_retry_on_last_attempt` | a call classified non-retryable **on its final attempt** surfaces its own error, not a wrapped retries-exhausted one | `engine.ErrorCode` has both `Permanent` and `RetriesExhausted`, so which one a client sees is a real distinction, and no case pins it |
-| `test_notification_errors` | send/recv still delivers after the **notification connection is dropped** | cleat wakes on `pgNotify` with polling behind it; nothing drops the LISTEN connection and asserts a signal still arrives within a bound |
+| `test_notification_errors` | send/recv still delivers after the **notification connection is dropped** | **PORTED** as `tests/test_notification_fallback.py` — see the note below |
 | `test_recovery_during_retries` | a worker lost **mid-retry-backoff** recovers and completes | `test_recovery.py` kills a worker during a call, not during a retry wait — a different moment in the same path |
+
+
+#### `test_notification_errors`, ported at the property rather than the mechanism
+
+Upstream drops DBOS's notification connection mid-run. The portable property is
+that **the system must not DEPEND on the notification channel**, because the
+channel is exactly what is missing when it fails.
+
+Cleat's shape matches where it matters: `pgNotify` fires inside the transaction
+that delivers a signal or makes a run ready (`engine/store_notify.go`), the
+worker holds a dedicated LISTEN connection (`cmd/cleat-worker/notify.go`), and
+the dispatch loop selects over that channel and a 500ms poll. **NOTIFY is an
+accelerator; the poll is the guarantee.** Nothing else in this suite ran with it
+off — `-notify-channel` defaults to `cleat_dispatch` — so a regression that made
+cleat depend on NOTIFY would have passed the whole suite.
+
+The port starts the worker with `-notify-channel=` rather than terminating the
+LISTEN backend. Reaching into PostgreSQL would need a database client the suite
+does not have and should not want: every other test drives cleat over HTTP, and
+ISSUES 30 is the worked example of a port reading the database and reporting a
+claim that was false of what a client receives.
+
+**Two tests, because `pgNotify` has two callers.** One covers signal delivery;
+the other covers dispatch, since a regression could leave signals reachable by
+polling while a newly-started run waited forever for a notification — and the
+first test would still pass.
+
+**What it does not cover, stated rather than implied:** recovery. `pq.NewListener`
+reconnects on its own (10s minimum), and whether delivery is continuous *across*
+a drop is a separate question this does not ask.
+
+Falsified by disabling the poll as well (`-notify-channel= -poll 10m`): both
+tests fail with the run still `ready`, i.e. never claimed — dispatch never woke,
+which is the mechanism they name.
 
 ### Already covered — 7
 
