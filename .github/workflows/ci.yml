@@ -168,6 +168,16 @@ jobs:
           scripts/check-issue-numbers.sh --self-test
           scripts/check-issue-numbers.sh
 
+      - name: A rewritten ISSUES entry names the files that cite it
+        # Against the PR's merge base, so it asks "what did THIS change rewrite"
+        # rather than "what has ever been rewritten". continue-on-error because
+        # it over-reports by design: a mention is not always a citation, and the
+        # judgement belongs to a reader rather than to a gate.
+        continue-on-error: true
+        run: |
+          scripts/check-issue-citations.sh --self-test
+          scripts/check-issue-citations.sh "origin/${{ github.base_ref || 'develop' }}"
+
   port:
     name: ${{ matrix.port }}
     needs: discover
