@@ -47,14 +47,16 @@ def test_the_same_idempotency_key_starts_one_run(cleat, retry_workflow, fixture_
 
     status_a, first = cleat.start(
         retry_workflow,
-        {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50, "failTimes": 0},
+        {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50,
+         "failTimes": 0, "failStatus": 0},
         idempotency_key=idem,
     )
     assert status_a == 201, f"first start rejected: {status_a} {first}"
 
     status_b, second = cleat.start(
         retry_workflow,
-        {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50, "failTimes": 0},
+        {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50,
+         "failTimes": 0, "failStatus": 0},
         idempotency_key=idem,
     )
 
@@ -87,7 +89,7 @@ def test_different_idempotency_keys_start_different_runs(cleat, retry_workflow):
     perfectly.
     """
     payload = {"service": "flaky", "key": f"nodedup-{uuid.uuid4().hex[:8]}",
-               "attempts": 1, "intervalMs": 50, "failTimes": 0}
+               "attempts": 1, "intervalMs": 50, "failTimes": 0, "failStatus": 0}
 
     status_a, first = cleat.start(retry_workflow, payload,
                                   idempotency_key=f"idem-{uuid.uuid4().hex[:8]}")
@@ -111,7 +113,7 @@ def test_a_start_without_an_idempotency_key_is_never_deduplicated(cleat, retry_w
     would be invisible in a suite where every test passes a key.
     """
     payload = {"service": "flaky", "key": f"nokey-{uuid.uuid4().hex[:8]}",
-               "attempts": 1, "intervalMs": 50, "failTimes": 0}
+               "attempts": 1, "intervalMs": 50, "failTimes": 0, "failStatus": 0}
 
     status_a, first = cleat.start(retry_workflow, payload)
     status_b, second = cleat.start(retry_workflow, payload)
@@ -145,7 +147,7 @@ def test_priority_is_accepted_and_recorded(cleat, retry_workflow):
     written.
     """
     payload = {"service": "flaky", "key": f"prio-{uuid.uuid4().hex[:8]}",
-               "attempts": 1, "intervalMs": 50, "failTimes": 0}
+               "attempts": 1, "intervalMs": 50, "failTimes": 0, "failStatus": 0}
 
     status, started = cleat.start(retry_workflow, payload, priority=7)
     assert status == 201, f"start with a priority rejected: {status} {started}"

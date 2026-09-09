@@ -79,7 +79,7 @@ def test_a_permanently_failing_call_is_not_retried(cleat, retry_workflow):
     started_at = time.monotonic()
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": "", "attempts": ATTEMPTS,
-        "intervalMs": PERMANENT_PROBE_INTERVAL_MS, "failTimes": 0,
+        "intervalMs": PERMANENT_PROBE_INTERVAL_MS, "failTimes": 0, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -127,7 +127,7 @@ def test_a_failure_that_never_stops_is_retried_to_the_budget(cleat, retry_workfl
     key = str(uuid.uuid4())
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": ATTEMPTS,
-        "intervalMs": 200, "failTimes": 999,
+        "intervalMs": 200, "failTimes": 999, "failStatus": 0,
     })
     assert status == 201
     final = cleat.await_terminal(started["id"], timeout=90.0)
@@ -158,7 +158,7 @@ def test_a_retryable_failure_is_retried_with_backoff(cleat, retry_workflow, fixt
     started_at = time.monotonic()
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 5,
-        "intervalMs": interval, "failTimes": failures,
+        "intervalMs": interval, "failTimes": failures, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -203,7 +203,7 @@ def test_the_retry_budget_is_finite(cleat, retry_workflow, fixture_calls):
 
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": attempts,
-        "intervalMs": 200, "failTimes": 99,
+        "intervalMs": 200, "failTimes": 99, "failStatus": 0,
     })
     assert status == 201
     final = cleat.await_terminal(started["id"], timeout=120.0)
@@ -260,7 +260,7 @@ def test_a_call_that_succeeds_on_its_last_permitted_attempt_succeeds(
     key = str(uuid.uuid4())
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": BUDGET,
-        "intervalMs": 200, "failTimes": BUDGET - 1,
+        "intervalMs": 200, "failTimes": BUDGET - 1, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -298,7 +298,7 @@ def test_a_call_that_fails_on_its_last_permitted_attempt_fails(
     key = str(uuid.uuid4())
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": BUDGET,
-        "intervalMs": 200, "failTimes": BUDGET,
+        "intervalMs": 200, "failTimes": BUDGET, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 

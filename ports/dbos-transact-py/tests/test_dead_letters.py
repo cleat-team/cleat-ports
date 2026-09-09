@@ -150,7 +150,7 @@ def test_retrying_a_run_that_is_not_dead_lettered_is_refused(cleat, retry_workfl
     key = f"dlq-live-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 1,
-        "intervalMs": 50, "failTimes": 0,
+        "intervalMs": 50, "failTimes": 0, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
     cleat.await_terminal(started["id"], timeout=60.0)
