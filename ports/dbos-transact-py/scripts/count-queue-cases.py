@@ -45,6 +45,31 @@ BLOCK = re.compile(r'(?<![_\w])["\']?(?:' + _CONTROLS + r')["\']?\s*[:=]'
 # Controls cleat does have.
 HAVE  = re.compile(r'priority|deduplication_id|dedup|app_version')
 
+# Queue SEMANTICS, as distinct from queue CONTROLS.
+#
+# BLOCK catches a case that needs a knob cleat lacks -- a concurrency cap, a
+# limiter, a partition. It does not catch a case that needs the QUEUE ITSELF to
+# behave a particular way: a workflow sitting in ENQUEUED until a queue is
+# registered, a DELAYED state, `delay_seconds`, the queue CRUD APIs. Those need
+# no control at all and cleat still cannot express them, because it has no
+# queues (ISSUES.md 20).
+#
+# Measured 2026-09-09 on test_queue.py: 11 of the 30 cases BLOCK calls portable
+# are in this class, so the work-list overstated by 37% in the flattering
+# direction. Two of them were picked off that list and abandoned on reading --
+# test_enqueue_on_nonexistent_queue needs registration TIMING, and
+# test_enqueue_with_options_unknown_workflow needs `delay_seconds` and a DELAYED
+# state.
+#
+# Reported as its own line rather than folded into BLOCK, because the reason
+# differs and so does what would close it: BLOCK cases need a feature, these
+# need queues to exist. An incidental `enqueue_workflow` is NOT in this class --
+# it becomes a plain start and ports fine, which is why the pattern matches
+# assertions and queue-only APIs rather than any mention of a queue.
+SEMANTICS = re.compile(r'WorkflowStatusString\.(ENQUEUED|DELAYED)'
+                       r'|enqueue_workflow_with_options|retrieve_queue|list_queues'
+                       r'|register_queue\w*\(.*polling|delay_seconds')
+
 
 def _module_constants(tree):
     """Top-level literal assignments, so a parametrize can name its list."""
@@ -122,10 +147,15 @@ def main(up, ports):
     for q, n in fns:
         s = ast.unparse(n)
         (blocked if BLOCK.search(s) else have if HAVE.search(s) else plain).append(q)
+    portable = have + plain
+    src = {q: ast.unparse(n) for q, n in fns}
+    semantic = [q for q in portable if SEMANTICS.search(src[q])]
     print(f"  needs a control cleat lacks : {len(blocked)}")
     print(f"  needs only priority/dedup   : {len(have)}")
     print(f"  needs no queue control      : {len(plain)}")
-    print(f"  => plausibly portable       : {len(have) + len(plain)}")
+    print(f"  ...of those, needs queue SEMANTICS cleat lacks : {len(semantic)}")
+    print(f"  => plausibly portable       : {len(portable) - len(semantic)}"
+          f"  ({len(portable)} before removing the semantics cases)")
     total = 0
     for pf in ports:
         fs = collected(pf)
@@ -135,8 +165,12 @@ def main(up, ports):
     if ports:
         print(f"  ported total: {total}")
     print("\nPORTABLE (work-list):")
-    for q in sorted(have + plain):
+    for q in sorted(set(portable) - set(semantic)):
         print("  ", q)
+    if semantic:
+        print("\nNEEDS QUEUE SEMANTICS (not portable, distinct from the controls above):")
+        for q in sorted(semantic):
+            print("  ", q)
 
 
 # ---------------------------------------------------------------------------
