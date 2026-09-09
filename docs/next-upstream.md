@@ -20,7 +20,7 @@ does not show:
 
 | upstream file | cases | portable, unported |
 |---|---:|---:|
-| `test_dbos.py` | 61 | 17 → **9**, see below |
+| `test_dbos.py` | 61 | 17 → 9 → **2**, see below |
 | `test_failures.py` | 37 | 5 |
 | `test_scheduler.py` | 35 | 5 |
 | `test_client.py` | 57 | 3 |
@@ -28,9 +28,32 @@ does not show:
 | `test_concurrency.py` | 11 | 1 |
 | `test_workflow_management.py` | 46 | 1 |
 | `test_queue.py` | 91 | 0 |
-| **total** | **371** | **33 → 25** |
+| **total** | **371** | **33 → 25 → 18** |
 
-**Correction, hours after this document was published.** The `test_dbos.py`
+**Second correction, and the two are not the same mistake.** cleat-agent1-31
+audited their own 9 against cleat's surface case by case and it is **2**, which
+makes the total **18**. Four of the nine need something cleat does not have — an
+arbitrary-workflow status read from inside a workflow (poll/await_child are
+children-only), a `parent_workflow_id` field on `WorkflowInstance` (the column
+is written on every child row and surfaced to nobody), an idempotency key on
+`cleat_signal_workflow`, and `list_workflows` filters that do not exist. Three
+more are already covered here under different local names.
+
+**The 9 was enumerated AND machine-verified, and still wrong, which is the part
+worth keeping.** The check that ran proved *these 61 names are the file's cases,
+partitioned, none invented* — a claim about the **upstream**. "Portable" is a
+claim about **cleat**, and it was screened by scanning the host-call export
+list, which answers *does cleat have something in this area* rather than *can a
+port assert this end to end*. A verified enumeration made an unverified
+classification look verified; they shipped in one sentence and only one had been
+checked.
+
+So the three clauses below are necessary and not sufficient. A fourth belongs
+with them: **name which proposition each check establishes.** Enumeration
+against the pin and portability against cleat are different claims needing
+different evidence, and satisfying the first says nothing about the second.
+
+**First correction, hours after this document was published.** The `test_dbos.py`
 figure of 17 does not reproduce. cleat-agent1-31 re-derived it by enumerating
 the cases *by name* and got **9**, which makes the total **25**, not 33. Six of
 the eight lost have a subject the original survey did not screen for
