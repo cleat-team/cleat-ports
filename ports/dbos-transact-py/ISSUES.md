@@ -42,15 +42,22 @@ answer, so it needs the most support.>
 
 # Findings
 
-A total written here rots the moment an entry is added: this line said
-"Nineteen to date. Fourteen are fixed and merged, five are open" against
-twenty-six entries, of which nine carry a `**Status:**` line at all — the
-field arrived with the template and most entries predate it, so a count of
-statuses is not a count of entries and never was. Read each entry's own
-status; where there is none, the **Assessment** says where it stands.
+A total written here rots the moment an entry is added, so read each entry's
+own **Status** line rather than a number in this header. Every entry carries
+one. Re-derive both figures with a single pass:
 
-    grep -c '^## [0-9]\+\. ' ports/dbos-transact-py/ISSUES.md   # entries
-    grep    '^\*\*Status:\*\*'    ports/dbos-transact-py/ISSUES.md   # those that declare one
+    awk '/^## [0-9]+\. /{n++} /\*\*Status:\*\*/{if(n)s++} \
+      END{print n" entries, "s" carry a status"}' ports/dbos-transact-py/ISSUES.md
+
+**Do not anchor that grep at `^`, and this paragraph is the reason.** It used
+to say nine of twenty-six entries carried a status, "the field arrived with
+the template and most entries predate it". Both halves were wrong. **Nineteen
+entries write it INLINE** — `**Class:** Bug · **Status:** Promoted (…)` — where
+a `^`-anchored pattern cannot see it, and the ninth match was the template's
+own example line, which is not an entry at all. So the published census
+under-reported by nineteen and over-reported by one, and a session was sent to
+reconcile eighteen entries that were already reconciled.
+The `if(n)` above is what skips the template.
 
 Class is `Bug` unless stated. "Promoted" here means a regression test that gates
 merges in `cleat-team/cleat`, in the package it guards — see step 4 of
