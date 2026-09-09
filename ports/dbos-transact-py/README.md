@@ -35,7 +35,7 @@ application or a web framework.
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
 | `tests/test_dbos.py` | 61 | 2 — broad core surface, mixed with SDK ergonomics | 22 |
-| `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
+| `tests/test_async.py` | 33 | 3 — a third of it asserts nothing about an engine; read case by case, 1 is portable. See the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 11 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
 | **Total in scope** | **371** | | **105** |
@@ -111,28 +111,51 @@ and it started passing when cleat#979 was fixed. Counting it as a skip would
 understate coverage and go stale silently, which is the failure this whole
 section exists to stop.
 
-### `tests/test_async.py` is priority 3, and the reason is not that it is blocked
+### `tests/test_async.py` is priority 3, and the reason is not the one given here until now
 
-Recorded because three sessions have now assessed this file and reached three
-different answers. Of its 32 cases:
+Read case by case at `833794f7` — the full partition, with every case named, is
+in `WORKLIST.md`. **The priority-3 conclusion holds. The reason recorded here for
+three sessions did not survive the reading.**
+
+This section used to say the file was *"mostly the async mirror of assertions
+this port already makes in sync form"*, at `~23` of 33. The mirror bucket is
+**11**. What the section had at `~6` — "Python event-loop specifics" — is **11**,
+and it is a stronger reason to skip the file than redundancy: those cases assert
+properties of the Python SDK's own async machinery (its notification maps, its
+poll loop, which event loop a coroutine runs on, whether `destroy()` deadlocks).
+Every one would still be a valid test of `dbos` if its storage layer were
+replaced, so there is no engine claim in them to port.
 
 | | |
 |---:|---|
-| 3 | genuinely blocked — two use `asyncio.gather` inside a workflow (ISSUES.md #22), one wants a workflow-level timeout cleat does not have |
-| ~6 | Python event-loop specifics with no cleat counterpart — `asyncio.wait` semantics over handles (`FIRST_COMPLETED`, `ALL_COMPLETED`, `FIRST_EXCEPTION`, timeout), which are properties of the event loop rather than of an engine |
-| ~23 | the **async mirror** of assertions this port already makes in sync form — send/recv, events, child workflows, recovery, sleep, steps |
+| 11 | **not an engine assertion at all** — the SDK's own async machinery |
+| 11 | the **async mirror** of assertions this port already makes, each mapped to the local test that makes it |
+| 9 | need something cleat does not have — all of it already recorded: ISSUES 22 (5), 28 (1), 25 (1), bulk send (1), the `RunDetached` handle gap (1) |
+| 1 | answered differently on purpose — this port cannot make it false |
+| 1 | **portable** — `test_max_parallel_workflows` |
 
-For most of the file nothing blocks porting and there is still no reason to do
-it: **the `async` that makes these cases distinct upstream has no counterpart
-on our side to be distinct about**, because this port drives cleat over HTTP
-and its workflows are Go compiled to WASM. Porting them would restate existing
-assertions in a language feature the port does not use.
+**The one portable case is not an async assertion.** It asserts 50 workflows
+complete in wall-clock time that serial execution could not achieve, and
+**nothing in this port asserts that workflows run in parallel at all.** The
+closest, `test_concurrency.py::test_distinct_keys_do_not_block_each_other`,
+asserts both starts are admitted and both complete — which a worker running them
+one after another satisfies. So the file's single useful case is one the *sync*
+suite does not make either.
 
-(An earlier assessment attributed 29 of these to **PY012**, `python-sdk`'s
-refusal of `async def` entry points. That refusal is real and a future
-Python-SDK port would meet it here — but it cannot apply to this port, which
-has 34 Go workflow files, 0 Python ones, and no import of `cleat_sdk` anywhere
-in the repo. Retracted before it reached this table.)
+The reasoning that survives is the part about this port's shape: **the `async`
+that makes these cases distinct upstream has no counterpart on our side to be
+distinct about**, because this port drives cleat over HTTP and its workflows are
+Go compiled to WASM.
+
+(Two corrections. This section said "of its 32 cases" while the generated table
+above said 33 — `test_async_wait_does_not_recheck_past_its_deadline` is
+parametrized over `["get_event", "recv"]`, so 32 functions collect as 33 cases.
+That is the definitions-versus-cases distinction documented two sections above
+the place that got it wrong. And an earlier assessment attributed 29 of these to
+**PY012**, `python-sdk`'s refusal of `async def` entry points — real, and a
+future Python-SDK port would meet it, but it cannot apply to a port with 34 Go
+workflow files, 0 Python ones, and no import of `cleat_sdk` anywhere. Retracted
+before it reached the table.)
 
 ## What this suite structurally cannot catch
 

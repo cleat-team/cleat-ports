@@ -214,8 +214,8 @@ UPSTREAM = [
     ("test_workflow_management.py", 46, "**1** \u2014 cancel, resume, fork, list, delete", 44),
     ("test_concurrency.py", 11, "**1** \u2014 concurrent execution and isolation", 21),
     ("test_dbos.py", 61, "2 \u2014 broad core surface, mixed with SDK ergonomics", 138),
-    ("test_async.py", 33, "3 \u2014 mostly the async mirror of assertions this port "
-     "already makes in sync form; see the note below", 57),
+    ("test_async.py", 33, "3 \u2014 a third of it asserts nothing about an engine; "
+     "read case by case, 1 is portable. See the note below", 57),
     ("test_scheduler.py", 35, "2 \u2014 cron and scheduled workflows", 35),
     ("test_client.py", 57, "3 \u2014 client API surface, largely DBOS-specific", 54),
 ]

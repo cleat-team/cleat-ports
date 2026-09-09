@@ -602,9 +602,11 @@ collected and characterised by AST from the pinned commit — names and construc
 **not bodies** — so the 2-portable / 9-unportable split is directional rather
 than exact.
 
-This almost certainly covers much of `tests/test_async.py` (57 by the old count,
-uncounted by collection, 0 ported), which nobody has assessed. Same question,
-larger file.
+`tests/test_async.py` has since been read case by case (WORKLIST.md) and this
+covers **5 of its 33** cases, not "much of" it: the four `asyncio_wait` cases and
+`test_concurrent_patch_async`, all of which drive several step coroutines of one
+workflow concurrently. The estimate written here was 57 by an old grep-based
+count and was made without reading the file; the collected figure is 33.
 
 ## 23. Nothing can ask cleat to remove a workflow record
 
