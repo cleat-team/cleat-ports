@@ -299,15 +299,38 @@ Every one of these prints `401 invalid or revoked API key`:
 | you are talking to a stranger's worker on your port | it answers `/healthz`, but `pgrep -fl cleat-worker` shows its `-db` pointing at another database |
 
 The discriminating question is the same in all four: **does the process serving
-my API port have my DSN?** One command answers it, and it is worth running
-before believing any 401:
+my API port have my DSN?**
+
+`pgrep -fl cleat-worker` enumerates the candidates and shows each one's
+`-api-addr` and `-db`. It does **not** answer the question, and this section
+said it did until someone was caught by the gap: a worker started before the
+per-run pidfiles existed keeps its pidfile at the old path, so `worker.sh stop`
+cannot see it and it survives. Two processes then carry the *same*
+`-api-addr 127.0.0.1:8099` -- one live, one leftover that is still claiming from
+the database -- and no process listing distinguishes them, because only one
+holds the socket. A count is worse still: `pgrep ... | wc -l` reporting 2 is
+equally consistent with "teardown failed" and "there is an orphan from two hours
+ago".
+
+Ask which process is **listening**, then ask that process for its DSN:
 
 ```sh
-pgrep -fl cleat-worker
+PORT=8099
+pid=$(lsof -nP -iTCP:$PORT -sTCP:LISTEN -Fp | sed -n 's/^p//p' | head -1)
+ps -ww -p "$pid" -o command=          # -ww: see "Giving the worker different flags"
 ```
 
-Ports are still chosen by hand, so `pgrep` is also how to tell your worker from
-someone else's before starting anything.
+`-ww` matters here for the same reason it matters in `worker.sh`: `ps` truncates
+to 80 columns when stdout is not a tty, and `-db` is long enough to push
+`-api-addr` past the cut.
+
+To ask only whether anything is alive on a port, without caring which process:
+
+```sh
+curl -sf -m2 "http://127.0.0.1:$PORT/healthz" && echo "$PORT serving"
+```
+
+Ports are still chosen by hand, so run one of these before starting anything.
 
 `make clean` removes only this run's subdirectory. A bare `rm -rf
 .port-results` would delete every concurrent session's state at once, which is
