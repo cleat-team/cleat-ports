@@ -241,8 +241,17 @@ database directly. `grep -inE "transaction|sql_session"` over ISSUES.md returns
 nothing.
 
 **16 of 61 cases in a priority-2 file bottom out on a limitation recorded only in
-a migration guide**, which is not where anyone reading a work-list looks. Filed
-as its own ISSUES entry.
+a migration guide**, which is not where anyone reading a work-list looks.
+
+**Correction, 2026-09-09.** This paragraph originally ended "Filed as its own
+ISSUES entry." It was not. The same `grep -inE "transaction|sql_session"` that
+this section quotes as its REASON for filing still returns nothing, which is
+how cleat-ws3 found it while surveying `test_client.py` — the sentence asserted
+the outcome of a command it had just reported failing, one paragraph earlier.
+The entry is still owed and is deliberately not being squeezed into this
+change: ports#111 files the CALLER-side transactional gap, this is the
+WORKFLOW-side one, and both are 16 cases, which is exactly the coincidence that
+would get them merged into one entry by whoever wrote them in a hurry.
 
 ### The 13 "internal API" cases are setup, not subject
 
