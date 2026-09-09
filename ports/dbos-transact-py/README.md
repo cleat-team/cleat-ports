@@ -332,7 +332,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_schedule_timezones.py` | 3 | `test_scheduler.py` — cron zones and the default zone |
 | `test_scheduling.py` | 13 | `test_scheduler.py` — cron and delayed invocation |
 | `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
-| `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
+| `test_signals.py` | 4 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
