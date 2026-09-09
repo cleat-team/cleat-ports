@@ -30,7 +30,7 @@ application or a web framework.
 
 | Upstream file | Cases | Priority | Ported |
 |---|---:|---|---:|
-| `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 12 |
+| `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 15 |
 | `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 27 |
 | `tests/test_workflow_management.py` | 46 | **1** — cancel, resume, fork, list, delete | 12 |
 | `tests/test_concurrency.py` | 11 | **1** — concurrent execution and isolation | 5 |
@@ -38,7 +38,7 @@ application or a web framework.
 | `tests/test_async.py` | 33 | 3 — mostly the async mirror of assertions this port already makes in sync form; see the note below | 0 |
 | `tests/test_scheduler.py` | 35 | 2 — cron and scheduled workflows | 11 |
 | `tests/test_client.py` | 57 | 3 — client API surface, largely DBOS-specific | 8 |
-| **Total in scope** | **371** | | **97** |
+| **Total in scope** | **371** | | **100** |
 
 **Both tables are generated, and CI checks the file still matches the tree.**
 
@@ -283,6 +283,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_api_surface.py` | 8 | `test_client.py` — the HTTP surface a client drives; two of its cases are arguably workflow-management |
 | `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
+| `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
 | `test_concurrency.py` | 4 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
 | `test_cross_worker.py` | 2 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
@@ -307,7 +308,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **105** (3 skipped outright) | **97** credited upstream, **8** cleat-specific |
+| **Total** | **108** (3 skipped outright) | **100** credited upstream, **8** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
