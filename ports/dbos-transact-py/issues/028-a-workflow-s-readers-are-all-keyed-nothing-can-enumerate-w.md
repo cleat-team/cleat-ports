@@ -7,6 +7,11 @@
 **Status:** Open — and see the caveat below, which is a reason to decline these
 four cases *independently* of whether cleat grows the capability
 
+**Being filed upstream by session `cleat-5c2b`, 2026-09-09.** Claimed here rather
+than over a side channel: an offer that lives only in a message is invisible to
+the next reader, who finds a case that looks unclaimed. If no `cleat#` reference
+appears on this entry, the filing did not happen and it is free to take.
+
 **What upstream asserts**
 
 A workflow publishes several values under different keys, and the caller reads

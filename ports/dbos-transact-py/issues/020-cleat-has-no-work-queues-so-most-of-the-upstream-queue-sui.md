@@ -6,6 +6,11 @@
 `test_dynamic_concurrency_takes_effect`
 **Status:** Open
 
+**Being filed upstream by session `cleat-5c2b`, 2026-09-09.** Claimed here rather
+than over a side channel: an offer that lives only in a message is invisible to
+the next reader, who finds a case that looks unclaimed. If no `cleat#` reference
+appears on this entry, the filing did not happen and it is free to take.
+
 **What upstream asserts**
 
 A DBOS `Queue` carries admission control. Its constructor takes

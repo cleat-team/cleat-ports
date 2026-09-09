@@ -2,6 +2,13 @@
 
 **Class:** Missing capability
 
+**Status:** Open
+
+**Being filed upstream by session `cleat-5c2b`, 2026-09-09.** Claimed here rather
+than over a side channel: an offer that lives only in a message is invisible to
+the next reader, who finds a case that looks unclaimed. If no `cleat#` reference
+appears on this entry, the filing did not happen and it is free to take.
+
 Upstream's `test_send_recv_temp_wf` spends most of its assertions on
 `DBOS.list_workflows(...)` with `workflow_id_prefix` and `start_time` filters,
 including that a `start_time` in the future returns nothing.

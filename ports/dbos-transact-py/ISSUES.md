@@ -47,7 +47,17 @@ own **Status** line rather than a number in this header. Every entry carries
 one. Re-derive both figures with a single pass:
 
     awk '/^## [0-9]+\. /{n++} /\*\*Status:\*\*/{if(n)s++} \
-      END{print n" entries, "s" carry a status"}' ports/dbos-transact-py/ISSUES.md
+      END{print n" entries, "s" carry a status"}' ports/dbos-transact-py/issues/*.md
+
+**That path is `issues/*.md` and it used to be this file.** The 2026-09-09 split
+moved every entry out; run against `ISSUES.md` the command now prints
+
+    " entries,  carry a status"
+
+-- two blank fields, because `n` and `s` are never set. Not an error, not a zero:
+a published command that silently answers nothing. It was the header's own
+re-derivation, which is the one command in this file a reader is most likely to
+trust without checking.
 
 **Do not anchor that grep at `^`, and this paragraph is the reason.** It used
 to say nine of twenty-six entries carried a status, "the field arrived with
