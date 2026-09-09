@@ -30,50 +30,158 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ports: ${{ steps.list.outputs.ports }}
+      dialects: ${{ steps.list.outputs.dialects }}
     steps:
       - uses: actions/checkout@v5
       - id: list
-        run: echo "ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+        # Both dimensions come from here so the matrix and the `complete` gate
+        # below cannot drift. If they were listed separately, the gate would
+        # verify the matrix against a copy of its own definition.
+        run: |
+          echo "ports=$(ls ports | grep -vE '^(TEMPLATE|README\.md)$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo 'dialects=["postgres","mysql","mssql"]' >> "$GITHUB_OUTPUT"
 
   port:
-    name: ${{ matrix.port }} vs cleat@${{ inputs.cleat_ref || 'develop' }}
+    name: ${{ matrix.port }} on ${{ matrix.dialect }} vs cleat@${{ inputs.cleat_ref || 'develop' }}
     needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         port: ${{ fromJSON(needs.discover.outputs.ports) }}
-    services:
-      postgres:
-        image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cleat_ports
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 12
+        dialect: ${{ fromJSON(needs.discover.outputs.dialects) }}
+    # No `services:` block. The databases come up through `make deps`, which is
+    # the path the harness is built around and the one a developer runs. SQL
+    # Server in particular needs a step no service container performs: its image
+    # creates no user database, so `deps` runs
+    # `sqlcmd -Q "IF DB_ID('cleat_ports') IS NULL CREATE DATABASE cleat_ports"`.
+    # Hand-rolling the containers reproduces a failure that is not real.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with: { go-version: "1.25" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
+      # ONE LEG PER RUNNER, AND THAT IS LOAD-BEARING. Each matrix combination
+      # is its own job on a fresh VM, so no leg inherits another's containers,
+      # .port-results/ or stray worker process.
+      #
+      # It matters because `make port`'s cleanup is dialect-blind: in
+      #
+      #   @trap './scripts/worker.sh stop' EXIT ...; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh
+      #
+      # the assignment is a command prefix on run-port.sh, so the trap's shell
+      # never sees it and cleanup runs at the DEFAULT dialect. That is not
+      # cosmetic: scripts/worker.sh's stop_worker calls `owned || refuse_foreign`
+      # (:224), and owned() matches the running process's command line against
+      # $CLEAT_PORTS_DSN (:188) -- which, computed at the wrong dialect, will not
+      # match a mysql or mssql worker. Cleanup then declares its own worker
+      # foreign and exits, leaving it alive.
+      #
+      # So a sequential sweep that switched dialects inside ONE shell would
+      # leave a worker behind at every non-postgres leg, and the next leg at a
+      # different dialect would be refused -- with a message naming two wrong
+      # causes before the real one. Nobody has hit it because a single manual
+      # run never switches dialects.
+      #
+      # cleat-ports#94 fixes that trap at `port`, `all-ports` and
+      # `worker-down`. It is still worth knowing here, because the sequential
+      # local sweep is exactly what someone reproducing a red nightly by hand
+      # will run.
+      #
+      # Do not consolidate these legs into a single job to save runner minutes.
+      # Fresh-VM-per-combination is what keeps the trap dormant, and -- since
+      # #94 -- it is also what keeps the legs out of contention with each
+      # other. Contention on one runner is the condition that produced the one
+      # red dbos/mssql run.
+      - name: Start ${{ matrix.dialect }}
+        run: make deps DIALECT=${{ matrix.dialect }}
       - name: Install cleat @ ${{ inputs.cleat_ref || 'develop' }}
         run: make install-cleat CLEAT_REF=${{ inputs.cleat_ref || 'develop' }}
       - name: Record cleat commit under test
         id: build
-        run: cat bin/.cleat-build >> "$GITHUB_OUTPUT"
+        # Per leg, not once for the run: ports CI builds cleat from a moving
+        # CLEAT_PINNED_REF, so a nightly can go red because CLEAT changed with no
+        # ports commit involved. Without the SHA in each leg's log that costs an
+        # investigation (cleat-ports#87) for information the run already had.
+        run: |
+          cat bin/.cleat-build >> "$GITHUB_OUTPUT"
+          echo "--- ${{ matrix.port }} on ${{ matrix.dialect }}: $(tr '\n' ' ' < bin/.cleat-build)"
+      # TIMING-SENSITIVE LEG, stated here rather than discovered later.
+      # dbos-transact-py on mssql went red once under load with four failures,
+      # then fully green on re-run at UNDER HALF the wall time (34m19s ->
+      # 15m05s). Three of the four were TimeoutError on the HTTP socket -- the
+      # client giving up on the API, not an assertion -- alongside
+      # `context deadline exceeded`, `WATCHDOG: loop did not exit within 5s of
+      # cancellation`, and `Invalid TDS stream: did not get cancellation
+      # confirmation`. That is contention, and it will recur on a loaded runner.
+      #
+      # RE-RUN THAT LEG ONCE BEFORE BELIEVING A RED. Not silencing it: a leg
+      # that reddens under contention is saying something true about the
+      # engine, and confirming costs 15 minutes. An `exclude:` naming those
+      # four tests was drafted and withdrawn -- it would have encoded a
+      # machine's bad half-hour as a permanent property of SQL Server, which is
+      # a known-failures list by another name: an expectation nobody rechecks.
       - name: Run port
-        run: make port PORT=${{ matrix.port }}
+        run: make port PORT=${{ matrix.port }} DIALECT=${{ matrix.dialect }}
+      - name: Prove this leg used ${{ matrix.dialect }}
+        # The matrix key is a string we wrote; asserting on it proves only that
+        # someone can type. This asks the database two independent questions --
+        # what it says it is, and whether the run's rows are in it and NOT in
+        # postgres, which is up for every dialect and is where a silent fallback
+        # would land.
+        run: scripts/assert-dialect.sh ${{ matrix.dialect }}
+      - name: Record that this leg reported
+        if: always()
+        run: |
+          # NOT a dotted directory. actions/upload-artifact@v4 excludes hidden
+          # files by default, so `.leg/` uploaded nothing while the step still
+          # reported success -- if-no-files-found defaults to `warn`.
+          mkdir -p leg-markers
+          echo "${{ matrix.port }} ${{ matrix.dialect }} $(tr '\n' ' ' < bin/.cleat-build 2>/dev/null)" \
+            > "leg-markers/${{ matrix.port }}--${{ matrix.dialect }}"
+      - name: Upload leg marker
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leg-${{ matrix.port }}--${{ matrix.dialect }}
+          path: leg-markers/
+          if-no-files-found: error
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: log-${{ matrix.port }}
+          name: log-${{ matrix.port }}--${{ matrix.dialect }}
           path: .port-results/
+          # .port-results is a DOTTED directory and upload-artifact@v4 skips
+          # hidden files unless told otherwise, so this step has been uploading
+          # nothing while reporting success. Pre-existing; the nightly has had no
+          # logs attached for as long as it has been on v4.
+          include-hidden-files: true
           if-no-files-found: ignore
+
+  complete:
+    name: Every port ran on every dialect
+    needs: [discover, port]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: { pattern: "leg-*", path: legs, merge-multiple: true }
+      - name: Every expected leg reported
+        # `needs:` is NOT the gate. A job that depends on a matrix succeeds when
+        # the matrix is EMPTY, so an aggregate gating only on `needs: port`
+        # passes when zero legs were generated -- a green run that tested
+        # nothing, which is the cleat#1068 shape.
+        #
+        # So this recomputes ports x dialects from the same `discover` outputs
+        # the matrix used and requires every element BY NAME. Comparing sets,
+        # not counts: a count is satisfied by the wrong legs reporting.
+        env:
+          PORTS: ${{ needs.discover.outputs.ports }}
+          DIALECTS: ${{ needs.discover.outputs.dialects }}
+        run: scripts/assert-legs-complete.sh legs
 
   report:
     name: Report to core
