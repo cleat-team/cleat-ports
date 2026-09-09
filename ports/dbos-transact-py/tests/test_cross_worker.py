@@ -130,6 +130,19 @@ def test_a_signal_delivered_through_the_other_worker_wakes_the_receiver(
         f"the cross-process path at all."
     )
 
+    # THAT ASSERTION IS NECESSARY AND NOT SUFFICIENT, and the gap is worth
+    # knowing before trusting any test in this file. It proves the two CLIENTS
+    # have different base URLs. It does not prove a second WORKER exists: a
+    # fixture that failed to start one, or started one that died immediately,
+    # yields a URL that still differs and this assertion still passes.
+    #
+    # What proves it is counting `cleat-worker` processes against the database
+    # DURING the run -- verified by hand for this test, 2 while it ran and 1
+    # after the module tore down. There is no in-process way to ask, since the
+    # API reports no worker identity (see cleat#1027 for the family that
+    # belongs to), so it stays a manual check recorded here rather than an
+    # assertion that cannot be written.
+
     receiver_name, _ = signal_pair
     key = f"xw-sig-{uuid.uuid4().hex[:8]}"
 
