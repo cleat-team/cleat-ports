@@ -134,21 +134,30 @@ jobs:
       - name: Record that this leg reported
         if: always()
         run: |
-          mkdir -p .leg
+          # NOT a dotted directory. actions/upload-artifact@v4 excludes hidden
+          # files by default, so `.leg/` uploaded nothing while the step still
+          # reported success -- if-no-files-found defaults to `warn`.
+          mkdir -p leg-markers
           echo "${{ matrix.port }} ${{ matrix.dialect }} $(tr '\n' ' ' < bin/.cleat-build 2>/dev/null)" \
-            > ".leg/${{ matrix.port }}--${{ matrix.dialect }}"
+            > "leg-markers/${{ matrix.port }}--${{ matrix.dialect }}"
       - name: Upload leg marker
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: leg-${{ matrix.port }}--${{ matrix.dialect }}
-          path: .leg/
+          path: leg-markers/
+          if-no-files-found: error
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: log-${{ matrix.port }}--${{ matrix.dialect }}
           path: .port-results/
+          # .port-results is a DOTTED directory and upload-artifact@v4 skips
+          # hidden files unless told otherwise, so this step has been uploading
+          # nothing while reporting success. Pre-existing; the nightly has had no
+          # logs attached for as long as it has been on v4.
+          include-hidden-files: true
           if-no-files-found: ignore
 
   complete:
