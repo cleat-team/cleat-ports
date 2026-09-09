@@ -337,7 +337,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
 | `test_concurrency.py` | 5 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
-| `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
+| `test_continue_as_new.py` | 3 | `test_dbos.py` — bounded history via self-restart |
 | `test_cross_worker.py` | 3 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
 | `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
 | `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
