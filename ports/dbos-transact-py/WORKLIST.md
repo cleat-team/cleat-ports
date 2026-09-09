@@ -8,6 +8,14 @@ from the answer rather than redo the reading.
 **A section that is mostly "already covered" is a result, not a null result.** It
 says the next effort should go elsewhere, which is otherwise unknown either way.
 
+**Four verdicts, not three.** *Portable*, *already covered*, and *needs something
+cleat lacks* are the three a work-list obviously needs. The fourth is
+**answered differently on purpose** — cleat does not do this, deliberately, and
+the decision is recorded. It is separated out because it is the one most likely
+to be misread as an absence by someone skimming for gaps, and *"we decided
+against this, here is why"* is a stronger statement than *"lacks it"*.
+Suggested by the rcownie-ef session while reading `test_dbos.py`.
+
 Upstream: `dbos-inc/dbos-transact-py`, MIT. Not vendored — this port re-expresses
 assertions rather than copying source.
 
@@ -15,7 +23,7 @@ assertions rather than copying source.
 
 ## `tests/test_failures.py` — 37 cases, read at `833794f7`
 
-**5 portable · 9 already covered · 23 need something cleat does not have.**
+**5 portable · 7 already covered · 2 answered differently on purpose · 23 need something cleat does not have.**
 
 Read case by case rather than classified by pattern. A regex over each body for
 the API it drives is the obvious method and it fails in the direction that
@@ -45,7 +53,7 @@ names announce their own answer are a free control.** All five agree —
 | `test_notification_errors` | send/recv still delivers after the **notification connection is dropped** | cleat wakes on `pgNotify` with polling behind it; nothing drops the LISTEN connection and asserts a signal still arrives within a bound |
 | `test_recovery_during_retries` | a worker lost **mid-retry-backoff** recovers and completes | `test_recovery.py` kills a worker during a call, not during a retry wait — a different moment in the same path |
 
-### Already covered — 9
+### Already covered — 7
 
 `test_step_retries`, `test_step_should_retry`, `test_run_step_should_retry`,
 `test_run_step_async_should_retry`, `test_step_should_retry_async_validator`,
@@ -59,13 +67,21 @@ form and by sync/async, which are Python-SDK shapes; cleat has one call form.
 cleat's analogue of `should_retry` is `RetryPolicy.NonRetryableErrors`, a
 substring list rather than a callback — differently shaped, same property.
 
-`test_dead_letter_queue` and `test_recovery_attempts` — cleat dead-letters on the
-**call-retry** axis, not the workflow-recovery axis, and deliberately does not
-bound reclaim. Settled in cleat#1008 and recorded as ISSUES 27; `test_dead_letters.py`
-covers cleat's version.
-
 `test_nonserializable_return` — `test_results.py::test_a_result_the_store_cannot_hold_is_replaced_and_the_run_reports_success`,
 and cleat's difference (substitute rather than fail) is already written down.
+
+### Answered differently on purpose — 2
+
+`test_dead_letter_queue` and `test_recovery_attempts`. cleat dead-letters on the
+**call-retry** axis — a durable call ran out of its budget — not on the
+workflow-recovery axis, and it deliberately does not bound reclaim at all. That
+was the open question in cleat#1008; it was decided (record the count, decline
+the bound), shipped as cleat#1055, and written up as ISSUES 27.
+`test_dead_letters.py` covers cleat's version of the behaviour.
+
+These are not gaps and should not be counted as ones. Anybody reading this file
+for work to do should skip them; anybody reading it to understand why cleat
+differs should start here.
 
 ### Needs something cleat does not have — 23
 
@@ -109,3 +125,70 @@ The retry surface is thoroughly covered and the four remaining portable cases ar
 narrow. **The largest concentration of unportable value is one feature — a
 per-call timeout — and it accounts for nine of the thirty-seven.** If anything in
 this file is worth building toward, it is that.
+
+---
+
+## `tests/test_scheduler.py` — 35 cases, read at `833794f7`
+
+**5 portable · 6 already covered · 24 need something cleat does not have.**
+
+Count reconciled against the inventory before classifying: 35 by `grep -cE "^(async )?def test_"`, 35 unique names, and 35 by the collection method `scripts/count-queue-cases.py` uses. No parametrize expansion in this file. (I first reported 34 — from counting a printed listing by eye rather than running `-c`. The grep never disagreed with the table; I did.)
+
+### cleat's actual schedule surface
+
+Established from the **store methods**, not the HTTP routes — routes are what happens to be exposed, store methods are what exists:
+
+    ClaimDueSchedule  CreateSchedule  DeleteSchedule
+    GetDueSchedules   GetDueSchedulesAcrossTenants
+    ListSchedules     SetScheduleEnabled
+
+`Schedule` carries `Name`, `DefName`, `EntryPoint`, `CronExpression`, `Input`, `Enabled`, `NextRunAt`, `LastRunAt`, `Timezone`, `MisfirePolicy`, `CatchUpLimit`, `OverlapPolicy`, `LastRunID`, `TenantID`.
+
+**There is no get-by-name, no update, no trigger and no backfill.** Those four absences account for sixteen of the twenty-four blocked cases.
+
+### Portable — 5
+
+| upstream case | property |
+|---|---|
+| `test_dynamic_scheduler_replace_schedule` | replacing a schedule's definition takes effect and the old one stops firing — cleat has no update, but delete+create is the same property |
+| `test_long_schedule_shutdown` | a long-running scheduled workflow does not block worker shutdown |
+| `test_backfill_with_timezone` | a cron in a named zone fires at the right wall-clock instant — cleat models `Timezone`, so this is portable without the backfill *call* |
+| `test_backfill_naive_datetime` | the naive/aware distinction, against cleat's `DefaultScheduleTimezone` |
+| `test_scheduled_workflow_datetime_with_portable_serializer` | a scheduled run's input survives the store unchanged |
+
+### Already covered — 6
+
+`test_dynamic_scheduler_fires` → `test_a_cron_schedule_actually_starts_its_workflow`.
+`test_dynamic_scheduler_delete_stops_firing` → `test_deleting_a_schedule_removes_it`.
+`test_dynamic_scheduler_add_after_launch` → `test_a_workflow_can_register_a_cron_schedule`.
+`test_pause_resume_schedule` → `test_disabling_a_schedule_stops_it_firing` + `test_re_enabling_a_schedule_resumes_it` — cleat spells pause/resume as `enable`/`disable`.
+`test_automatic_backfill_on_restart` → `test_misfire.py::test_a_schedule_set_to_catch_up_delivers_what_it_missed`; upstream calls it backfill, cleat calls it `misfire_policy: catch_up`.
+`test_schedule_crud` → `test_the_schedule_policies_round_trip_through_the_api` plus the create/delete cases.
+
+### Needs something cleat does not have — 24
+
+**`apply_schedules` — 8.** Declarative reconciliation of a schedule *set*: `test_apply_schedules`, `_optional_context`, `_concurrent`, `_live_update`, `_preserves_runtime_state`, `test_list_schedules_undeserializable_context`, `test_client_apply_schedules`, `test_client_apply_schedules_optional_context`. cleat creates and deletes schedules one at a time and has no notion of converging a declared set.
+
+**`trigger_schedule` — 6.** Firing a schedule on demand: `test_trigger_schedule`, `test_client_trigger_schedule`, `test_list_workflows_by_schedule_name`, `test_schedule_name_survives_export_import`, `test_static_class_method_schedule`, `test_classmethod_schedule`. The last two also need Python class-method decorator ergonomics. `test_list_workflows_by_schedule_name` additionally needs runs to be queryable by the schedule that started them — cleat records only `LastRunID`.
+
+**Explicit `backfill_schedule` — 2.** `test_backfill_schedule`, `test_client_backfill_schedule`. Distinct from `misfire_policy: catch_up`, which is automatic and already covered: these ask for a *range* to be replayed on demand.
+
+**A separate client API surface — 3.** `test_client_schedule_crud`, `test_client_pause_resume_schedule`, `test_client_schedule_crud_async`. `DBOSClient` is a second entry point; cleat has one HTTP API.
+
+**Python SDK shapes — 5.** `test_schedule_crud_async` (async mirror), `test_instance_method_schedule_rejected`, `test_schedule_thread_signature` (scheduler-thread introspection), `test_schedule_crud_from_workflow` (schedule CRUD as host calls from *inside* a guest — not among cleat's exports), `test_scheduled_workflow_datetime_with_portable_serializer`'s class-registration half.
+
+**Queues — 1.** `test_schedule_with_queue_name`, which cleat has no analogue for.
+
+### Validation
+
+Cases whose names announce their own answer, as a free control — all agree:
+
+| case | the name announces | classified |
+|---|---|---|
+| `test_schedule_with_queue_name` | a queue | lacks it |
+| `test_client_trigger_schedule` | a trigger verb, via the client | lacks both |
+| `test_instance_method_schedule_rejected` | Python instance-method binding | SDK shape |
+| `test_automatic_backfill_on_restart` | backfill after an outage | covered by `misfire_policy: catch_up` |
+| `test_pause_resume_schedule` | pause/resume | covered by enable/disable |
+
+Checked as a **partition**: every one of the 35 appears in exactly one bucket, none twice, none missing. `5 + 6 + 24 = 35` holds just as well with one case dropped and another double-counted.
