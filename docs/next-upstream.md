@@ -104,12 +104,17 @@ ports#108 — all open at the time of writing. The other three come from
 checkable; if you are reading it before, four rows cite work you cannot see,
 and that is the reason to say so rather than let the total read as settled.
 
-The right-hand column is also **not** `cases − cases here`. "Cases here" counts
-this port's tests mapped to an upstream file; the surveys count upstream cases
-read one at a time. The two disagree — ws3 found `test_client.py` has 13 cases
-covered where the inventory credits 8 — so combining them into a percentage
-would produce a number with no meaning. 33 is a sum of like with like: cases a
-survey read, judged portable, and found unported.
+The right-hand column is also **not** `cases − cases here`. The README used to
+carry a `Cases here` column counting this port's tests mapped to an upstream
+file, while the surveys count upstream cases read one at a time. The two
+disagree — ws3 found `test_client.py` has 13 cases covered where that column
+credited 8 — so combining them into a percentage would have produced a number
+with no meaning.
+
+**ports#134 removed the column**, so the arithmetic is no longer available to
+do by accident. The warning stays because the two kinds of count still exist
+and are still easy to mix: 33 is a sum of like with like — cases a survey read,
+judged portable, and found unported.
 
 **The `cases` column is a nominal denominator and always was.** What each
 survey found is a *ceiling*, not a backlog:

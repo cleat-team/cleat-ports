@@ -102,8 +102,16 @@ have, 8 were already answered elsewhere in this port, 6 are not engine
 assertions at all, and 3 are async mirrors. One case was genuinely missing and
 is now ported; one produced an ISSUES entry.
 
-**The coverage table's `Cases here` column should be read as "what this port
-can say about that file", not as progress toward the case count.** For
-`test_queue.py` the reachable maximum is around 20 of 91, and it is now 20.
+**The reachable maximum for `test_queue.py` is around 20 of 91, and it is now
+20.** That is the number to hold onto; 91 is a nominal denominator.
+
+This paragraph used to say the coverage table's `Cases here` column should be
+read as "what this port can say about that file" rather than as progress toward
+the case count. **The column was removed in ports#134** -- partly because a
+cell needing a paragraph of instructions to be read correctly is a defect in
+the cell, and partly because it aggregated across every module mapping to an
+upstream file, so it collided on every concurrent branch. The instruction is
+kept here rather than deleted because the misreading it warns about does not
+need the column to happen: `20 of 91` invites it too.
 
 ---
