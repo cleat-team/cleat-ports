@@ -207,3 +207,37 @@ def test_a_signal_reaches_a_worker_that_never_gets_notified(
         "out at 6x the 500ms poll interval, so a correct fallback lands around "
         "3s; this suggests the wake-up is waiting on something else."
     )
+
+
+def test_a_workflow_starts_and_finishes_with_no_notification_channel(
+        cleat, retry_workflow, polling_only_worker):
+    """Not just signals: ordinary dispatch must not depend on the hint either.
+
+    The case above disables NOTIFY and asserts a SIGNAL still lands. That is the
+    upstream assertion, and on its own it leaves the larger half untested: the
+    same `pgNotify` fires when a run becomes dispatchable at all, and
+    `store_lifecycle.go` calls it from four places that have nothing to do with
+    signals. A regression that made plain dispatch depend on the channel would
+    not touch the signal path and would pass the test above.
+
+    So this one starts an ordinary workflow with the channel gone and requires
+    it to reach a terminal state. `-poll` is 500ms with a 6x idle-backoff
+    ceiling, so a poll-only worker starts work within ~3s; the generous bound
+    here is about CI load, not about the mechanism.
+
+    The second case comes from a duplicate port of this same upstream test
+    opened independently as ports#141 -- it had the wider reading and this
+    keeps it.
+    """
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": f"notify-off-{uuid.uuid4().hex[:8]}",
+        "attempts": 1, "intervalMs": 50, "failTimes": 0, "failStatus": 0,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+
+    final = cleat.await_terminal(started["id"], timeout=90.0)
+    assert final["status"] == "done", (
+        f"an ordinary run did not finish with NOTIFY disabled: {final}. The "
+        "signal case above would still pass in this state, which is why this "
+        "case exists separately."
+    )
