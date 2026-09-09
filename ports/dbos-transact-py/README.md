@@ -28,7 +28,7 @@ defines workflows and steps *inside* test bodies with names like `test_step` and
 Priority reflects how much each file says about an *engine* as opposed to an
 application or a web framework.
 
-| Upstream file | Cases | Priority | Ported |
+| Upstream file | Cases | Priority | Cases here |
 |---|---:|---|---:|
 | `tests/test_queue.py` | 91 | **1** — concurrency limits, rate limits, dedup, priority | 19 |
 | `tests/test_failures.py` | 37 | **1** — retries, error classification, recovery | 28 |
@@ -310,7 +310,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **115** (5 skipped outright) | **105** credited upstream, **10** cleat-specific |
+| **Total** | **115** (5 skipped outright) | **105** mapped to an upstream file, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
