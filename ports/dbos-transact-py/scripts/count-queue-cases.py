@@ -440,6 +440,38 @@ if __name__ == '__main__':
                     "    python3 ports/dbos-transact-py/scripts/count-queue-cases.py --inventory\n"
                     "and paste both tables in. Rows that differ:\n  "
                     + "\n  ".join(missing))
+            # --check was one-directional: it confirmed every GENERATED line
+            # was present, and said nothing about lines present but not
+            # generated. A stale row therefore survived silently, and that is
+            # not hypothetical -- during a rebase `--ours` is upstream and
+            # `--theirs` is the commit being replayed, inverted from what the
+            # words suggest, so a resolution that looks right can regenerate on
+            # top of the wrong side and keep a row for a module no longer in
+            # the tree.
+            #
+            # Scoped to the generated blocks by their header lines: this README
+            # has OTHER tables whose rows also begin "| `test_", written by
+            # hand -- upstream file statistics, and the named cases we have
+            # judged unportable. Checking the whole file flags all of those.
+            for tbl in table.split("\n\n"):
+                rows = [ln for ln in tbl.split("\n") if ln.startswith("|")]
+                if len(rows) < 2:
+                    continue
+                hdr = rows[0]
+                m = re.search(re.escape(hdr) + r"\n\|[-: |]+\n((?:\|[^\n]*\n)*)",
+                              readme)
+                if not m:
+                    continue  # the missing-line check above already reports this
+                present = [ln for ln in m.group(1).split("\n") if ln.startswith("|")]
+                stale = [ln for ln in present if ln not in rows]
+                if stale:
+                    raise SystemExit(
+                        "README.md's inventory has rows the generator did not "
+                        "produce, so they describe modules that are not in the "
+                        "tree -- usually a conflict resolved by merging a "
+                        "generated file instead of regenerating it. "
+                        "Regenerate with --inventory. Stale rows:\n  "
+                        + "\n  ".join(stale))
             stored = [ln for ln in readme.split("\n")
                       if ln.startswith("| **Total")]
             if stored:
