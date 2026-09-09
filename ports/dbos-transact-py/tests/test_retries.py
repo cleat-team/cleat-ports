@@ -505,3 +505,79 @@ def test_no_backoff_is_slept_after_the_final_attempt(cleat, retry_workflow, fixt
         f"that never waited at all -- the quickest way to not sleep after the "
         f"last attempt is to not sleep after any of them."
     )
+def test_a_permanent_failure_is_not_reported_as_an_exhausted_budget(
+    cleat, retry_workflow, fixture_calls
+):
+    """The two ways a call can end badly must not read the same to a caller.
+
+    Upstream `test_failures.py::test_step_should_retry_on_last_attempt`. cleat
+    classifies a durable call's failure, and `engine/errors.go` carries both a
+    permanent class and a retries-exhausted one -- but nothing here asserted
+    that a client can tell them apart, only that the attempt COUNTS differ
+    (`test_a_permanent_status_is_attempted_once`,
+    `test_a_transient_status_is_retried_to_the_budget`).
+
+    Counts are the engine's business. The classification is the caller's: it is
+    the difference between "this request will never succeed, change it" and
+    "the dependency is unwell, try later". An engine that collapsed the two
+    would keep both counts correct and leave every caller unable to choose.
+
+    MEASURED BEFORE IT WAS ASSERTED, because the shape of the answer was not
+    obvious from reading. The distinction is not in the run's `error_code`
+    field, which is None either way -- this workflow returns a description and
+    completes, so the run is `done` in both cases. It is in the returned error
+    string:
+
+        permanent    durable call flaky.op: [0] bench-svc: ...
+        exhausted    durable call flaky.op: [2] retries exhausted: bench-svc: ...
+
+    BOTH HALVES ARE THE ASSERTION. Either one alone passes against an engine
+    that reports the same thing for everything, which is precisely the failure
+    being guarded against, so neither is a control for the other -- they are
+    two halves of one claim and the test fails if they stop differing.
+    """
+    permanent = f"cls-perm-{uuid.uuid4().hex[:8]}"
+    _, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": permanent, "attempts": 3,
+        "intervalMs": 50, "failTimes": 9, "failStatus": 400,
+    })
+    perm_body = _body(cleat.await_terminal(started["id"], timeout=60.0))
+
+    exhausted = f"cls-exh-{uuid.uuid4().hex[:8]}"
+    _, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": exhausted, "attempts": 3,
+        "intervalMs": 50, "failTimes": 9, "failStatus": 503,
+    })
+    exh_body = _body(cleat.await_terminal(started["id"], timeout=60.0))
+
+    perm_err = perm_body.get("error", "")
+    exh_err = exh_body.get("error", "")
+
+    assert fixture_calls(permanent) == 1, (
+        f"the permanent case made {fixture_calls(permanent)} calls, so it was "
+        f"retried and is not the case this test names"
+    )
+    assert fixture_calls(exhausted) == 3, (
+        f"the exhausted case made {fixture_calls(exhausted)} calls of a budget "
+        f"of 3, so the budget was not spent and nothing was exhausted"
+    )
+
+    assert "retries exhausted" not in perm_err, (
+        f"a permanently-failed call was reported as an exhausted budget: "
+        f"{perm_err!r}. It was attempted once, so there was no budget to "
+        f"exhaust -- a caller reading this would wait and retry a request that "
+        f"can never succeed."
+    )
+    assert "retries exhausted" in exh_err, (
+        f"a call that spent its whole budget did not say so: {exh_err!r}. A "
+        f"caller reading this as a permanent rejection would give up on a "
+        f"dependency that was merely unwell."
+    )
+    assert perm_err != exh_err and "[0]" in perm_err and "[2]" in exh_err, (
+        f"the two failure classes are not distinguishable by a caller.\n"
+        f"  permanent: {perm_err!r}\n"
+        f"  exhausted: {exh_err!r}\n"
+        f"cleat carries both classes internally; if they render the same, the "
+        f"distinction exists in the engine and not for anyone who has to act "
+        f"on it."
+    )
