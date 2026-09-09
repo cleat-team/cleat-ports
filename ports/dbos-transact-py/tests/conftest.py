@@ -563,6 +563,12 @@ def retry_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def own_identity_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that reports the run id the engine gave it."""
+    return _build_and_deploy("ownidentity", "own_identity")
+
+
+@pytest.fixture(scope="session")
 def bad_result_workflow(cleat: Cleat) -> str:
     """Deploy the workflow that returns results the store may not accept."""
     return _build_and_deploy("badresult", "badresult")
