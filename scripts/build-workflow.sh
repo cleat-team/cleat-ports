@@ -62,7 +62,18 @@ mkdir -p "$OUT"
 # precedence over the staged package's own go.mod -- go then reports the main
 # module as github.com/cleat-team/cleat and refuses to load the package at all,
 # because a directory not listed in go.work is not a module of the workspace.
-( cd "$STAGE" && GOWORK=off "$ROOT/bin/cleat" build -o "$OUT" . ) >&2
+# CLEAT_PORTS_BUILD_EXTRA_FLAGS appends flags to `cleat build`, mirroring
+# CLEAT_PORTS_WORKER_EXTRA_FLAGS (ports#70) for the worker. Added for
+# `-version N`, which sets the version embedded in the WASM metadata --
+# cmd/deploy-workflow's chooseDeployVersion prefers the embedded value over
+# auto-increment, so it is the only way a port can deploy two known versions of
+# one definition and say which is which.
+#
+# Unquoted on purpose: the value is a flag list, and quoting it would pass the
+# whole string as a single argument. Unset means no extra flags, so every
+# existing caller behaves exactly as before.
+# shellcheck disable=SC2086
+( cd "$STAGE" && GOWORK=off "$ROOT/bin/cleat" build ${CLEAT_PORTS_BUILD_EXTRA_FLAGS:-} -o "$OUT" . ) >&2
 
 # Remove the staging copy. It lives INSIDE the cleat checkout -- it has to, for
 # `cleat build` to find the SDK -- so leaving it behind puts untracked Go files

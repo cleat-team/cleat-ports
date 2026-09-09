@@ -308,9 +308,9 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_send.py` | 3 | `test_dbos.py` — `send` delivery semantics |
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_timeouts.py` | 1 (1 skipped) | `test_queue.py` — upstream test_unsetting_timeout -- a per-run deadline and whether a child inherits it; skipped, ISSUES.md 25 |
-| `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
+| `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **114** (5 skipped outright) | **105** credited upstream, **9** cleat-specific |
+| **Total** | **115** (5 skipped outright) | **105** credited upstream, **10** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
