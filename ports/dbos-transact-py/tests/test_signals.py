@@ -163,3 +163,63 @@ def test_polling_finds_nothing_before_a_signal_and_finds_it_after(
     assert body["payload"] == payload, (
         f"the polled payload did not round-trip: {body!r}"
     )
+
+
+def test_a_signal_goes_to_the_await_that_named_it_and_same_name_signals_queue_in_order(
+    cleat, signal_order_workflow, fixture_calls
+):
+    """Signals are queued PER NAME, and within one name oldest-first.
+
+    Ported from upstream's `test_send_recv`, whose assertion reads as an
+    ordering claim and is not one. It sends `test1` on the default topic,
+    `test2` on a named topic, then `test3` on the default, and expects
+    `test2-test1-test3` back -- because the receiver reads the *named topic*
+    first and the default queue afterwards. The result is not arrival order; it
+    is per-name queues, each FIFO.
+
+    Nothing here asserted that. `test_a_workflow_can_signal_another_and_the
+    _payload_arrives` sends exactly one signal, so it cannot distinguish "the
+    engine routes by name" from "the engine hands over whatever it has".
+
+    The send order is what does the work: the `queued` signal is sent FIRST and
+    the `topic` signal SECOND, so an engine that delivers earliest-arrived
+    rather than what was asked for gives the first await `first-payload`, and
+    this fails on the payload rather than on a count.
+    """
+    key = f"order-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(signal_order_workflow, {"key": key, "timeoutMs": 60_000})
+    assert status == 201, f"start rejected: {status} {started}"
+    target = started["id"]
+
+    wait_until(
+        lambda: fixture_calls(f"{key}-waiting") == 1,
+        timeout=60.0,
+        what="the receiver to reach its first await",
+    )
+
+    # Order matters and is the point. `queued` first, so it is already waiting
+    # when the `topic` await is the one in progress.
+    for name, payload in (("queued", "first"), ("topic", "only"), ("queued", "second")):
+        code, body = cleat.signal(target, name, payload)
+        assert code in (200, 202, 204), f"signal {name}={payload} rejected: {code} {body!r}"
+
+    final = cleat.await_terminal(target, timeout=90.0)
+    assert final["status"] == "done", f"the receiver did not complete: {final!r}"
+    body = _body(final)
+    assert body["outcome"] == "read", f"the receiver reported {body!r}"
+
+    assert body["names"] == ["topic", "queued", "queued"], (
+        f"the awaits were satisfied by {body['names']!r}. Each await named one "
+        "signal; a name it did not ask for means delivery ignores the name."
+    )
+    assert body["payloads"][0] == "only", (
+        f"the `topic` await received {body['payloads'][0]!r}, want 'only'. "
+        "'first' here is the interesting failure: it means the engine handed "
+        "over the earliest signal rather than the one the await named, which is "
+        "exactly what upstream's test2-test1-test3 exists to rule out."
+    )
+    assert body["payloads"][1:] == ["first", "second"], (
+        f"the two `queued` signals arrived as {body['payloads'][1:]!r}, want "
+        "['first', 'second']. Within one name the oldest must come first; "
+        "reversed means the queue is a stack."
+    )

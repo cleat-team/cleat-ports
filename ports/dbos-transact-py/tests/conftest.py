@@ -631,6 +631,12 @@ def signal_pair(cleat: Cleat) -> tuple[str, str]:
 
 
 @pytest.fixture(scope="session")
+def signal_order_workflow(cleat: Cleat) -> str:
+    """Deploy the receiver that reads three signals and reports the order."""
+    return _build_and_deploy("signalorder", "signal_order")
+
+
+@pytest.fixture(scope="session")
 def lock_workflows(cleat: Cleat) -> tuple[str, str]:
     """Deploy the lock holder and the lock attempt, returning both names."""
     holder = _build_and_deploy("lockholder", "lock_holder")
