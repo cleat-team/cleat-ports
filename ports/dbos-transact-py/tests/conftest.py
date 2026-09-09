@@ -640,6 +640,83 @@ def worker():
     w.restart()
 
 
+@pytest.fixture(scope="module")
+def second_worker(api_key: str):
+    """A SECOND cleat-worker against the same database, for cross-worker cases.
+
+    `cleat-worker` serves the HTTP API and runs workflows in one process, and
+    this harness started exactly one -- so a class of assertions could not be
+    written here at all, only described in the README's "what this suite
+    structurally cannot catch". This fixture is the half of that entry that was
+    fixable.
+
+    WHAT IT MAKES EXPRESSIBLE. A concurrency key contended across PROCESSES
+    rather than serialised inside one. A signal delivered to a workflow another
+    worker owns. A stale-but-living run writing its outcome after a takeover --
+    the shape of upstream's `test_workflow_outcome_is_owned_by_the_pending_row`,
+    which cleat answers with a generation fence.
+
+    WHAT IS SHARED, AND THAT IS THE POINT. The database, the API key and the
+    fixture service. Two workers against one database IS the configuration
+    under test; a second worker with its own database would prove nothing. Only
+    the pid file, the log and the API port differ.
+
+    It yields the second worker's base URL. Address it with a `Cleat` client of
+    your own -- the session-scoped `cleat` fixture points at the first worker,
+    and a test that wants to contend across processes needs both.
+
+    MODULE-SCOPED, AND THAT IS NOT A STYLE CHOICE. A second worker CLAIMS
+    WORK. Every workflow it picks up is one the first worker did not, so while
+    it runs it changes the outcome of any test that reasons about which worker
+    got what -- or how many claimed at once, or in what order.
+
+    Session scope was the first version of this fixture and CI caught it. Once
+    any test requested it the second worker ran for the remainder of the
+    session, and two tests ordered after `test_cross_worker.py` failed:
+
+        test_priority_order.py::test_priority_orders_the_second_batch
+            margin 3.5, want >= 12 -- priority ordering diluted because two
+            workers were claiming concurrently
+        test_misfire.py::test_a_schedule_set_to_catch_up_delivers_what_it_missed
+            timed out -- two schedule loops against one set of schedules
+
+    Neither test mentions workers, neither asked for this fixture, and both
+    would have been debugged as flakes. A fixture that starts a competing
+    process must not outlive the module that asked for it.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    script = str(root / "scripts" / "worker.sh")
+    env = {**os.environ, "CLEAT_PORTS_WORKER_INSTANCE": "2"}
+
+    done = subprocess.run([script, "ensure"], capture_output=True, text=True, env=env)
+    if done.returncode != 0:
+        pytest.fail(f"second worker failed to start:\n{done.stderr[-2000:]}")
+
+    base = os.environ["CLEAT_PORTS_API"]
+    host, _, port = base.rpartition(":")
+    second = f"{host}:{int(port) + 1}"
+
+    # Assert it is actually serving before any test believes it exists. A
+    # fixture that yields a URL nothing listens on turns every assertion in the
+    # test into a connection error attributed to the code under test.
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"{second}/healthz", timeout=2) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        pytest.fail(f"second worker did not become healthy at {second}")
+
+    yield second
+
+    # stop-worker, NOT stop: the fixture service is shared across the whole
+    # session, and `stop` takes it down with the worker.
+    subprocess.run([script, "stop-worker"], capture_output=True, text=True, env=env)
+
+
 @pytest.fixture(scope="session")
 def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")

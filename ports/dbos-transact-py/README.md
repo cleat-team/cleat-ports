@@ -156,9 +156,13 @@ better than it sounds — `idempotency_keys` was the **only** table with a
 `tenant_id` and no row-level security behind it, so the class has one member —
 but the blind spot is permanent until the harness grows a second tenant.
 
-**One worker, and it is also the API server.** `cleat-worker` serves the HTTP
-API and runs workflows in one process, and the harness starts exactly one. So no
-test here can express a scenario needing two live workers:
+**One worker, and it is also the API server — no longer, but read on.** A
+`second_worker` fixture now starts a second `cleat-worker` against the same
+database, sharing its API key and fixture service, so the cross-process cases
+below are reachable; `tests/test_cross_worker.py` uses it. What remains true is
+the shape: one process serves the API *and* runs workflows, so stopping a worker
+to simulate an outage still stops an API, and nothing can be observed through
+the worker you just stopped. The cases this used to make unreachable were:
 
 - a stale-but-living run writing its outcome after another worker took over
   (upstream `test_workflow_outcome_is_owned_by_the_pending_row`; cleat answers it
@@ -281,6 +285,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_concurrency.py` | 4 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 2 | `test_dbos.py` — bounded history via self-restart |
+| `test_cross_worker.py` | 2 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
 | `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
 | `test_defer.py` | 3 | `test_dbos.py` — cleanup that runs once though the body runs twice |
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
@@ -302,7 +307,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_signals.py` | 3 | `test_dbos.py` — `recv` with a timeout, and `send` between workflows |
 | `test_versions.py` | 2 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
-| **Total** | **103** (3 skipped outright) | **97** credited upstream, **6** cleat-specific |
+| **Total** | **105** (3 skipped outright) | **97** credited upstream, **8** cleat-specific |
 
 The five skips are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the

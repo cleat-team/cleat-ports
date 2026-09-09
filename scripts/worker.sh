@@ -41,6 +41,49 @@ LOGFILE="$CLEAT_PORTS_RESULTS_DIR/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
 API_URL="$CLEAT_PORTS_API"
 
+# A SECOND WORKER, so cross-worker cases are expressible at all.
+#
+# cleat-worker serves the HTTP API and runs workflows in one process, and this
+# harness started exactly one -- so a whole class of assertions could not be
+# written here, only described. A concurrency key contended across PROCESSES
+# rather than serialised within one; a signal delivered to a workflow another
+# worker owns; a stale-but-living run writing its outcome after a takeover.
+# ports/dbos-transact-py/README.md's "what this suite structurally cannot
+# catch" says so, and this is the half of that entry that was fixable.
+#
+# CLEAT_PORTS_WORKER_INSTANCE selects one. Unset or "1" is the primary and
+# every path below is byte-identical to what it was -- deliberately, because
+# every session and all of CI depend on this script and a second worker must
+# not perturb the first.
+#
+# The second shares the DATABASE, the API KEY and the FIXTURE with the first,
+# and that sharing is the point: two workers against one database is the
+# configuration under test. It needs its own pid file, log and API port, and
+# nothing else.
+#
+# The key is shared rather than minted twice on purpose. mint_key short-
+# circuits on a non-empty file, so a second mint would either no-op (leaving
+# the second worker using the first's key, which is correct) or, if the file
+# were also suffixed, mint a second key against the same tenant and leave two
+# valid keys where the suite expects one. Sharing states the intent.
+WORKER_INSTANCE="${CLEAT_PORTS_WORKER_INSTANCE:-1}"
+case "$WORKER_INSTANCE" in
+  1) ;;
+  ''|*[!0-9]*)
+    echo "CLEAT_PORTS_WORKER_INSTANCE must be a positive integer, got '$WORKER_INSTANCE'" >&2
+    exit 1
+    ;;
+  *)
+    # Port derived, not configured: a second env var to set is a second thing
+    # to get wrong, and the offset keeps instance N inside the block this
+    # session already owns.
+    API_PORT=$(( CLEAT_PORTS_API_PORT + WORKER_INSTANCE - 1 ))
+    API_URL="http://127.0.0.1:$API_PORT"
+    PIDFILE="$CLEAT_PORTS_RESULTS_DIR/worker.$WORKER_INSTANCE.pid"
+    LOGFILE="$CLEAT_PORTS_RESULTS_DIR/worker.$WORKER_INSTANCE.log"
+    ;;
+esac
+
 healthy() { curl -sf -m 2 "$API_URL/healthz" >/dev/null 2>&1; }
 
 running() {
@@ -344,6 +387,18 @@ MSG
     stop_worker
     stop_fixture
     ;;
+  stop-worker)
+    # Stops the WORKER and leaves the fixture service running.
+    #
+    # `stop` takes the fixture down too, which is right when a run is ending
+    # and wrong for anything that stops one worker while the suite continues.
+    # The fixture service is SHARED -- one per session, not one per instance --
+    # so a second worker's teardown calling `stop` silently removes the service
+    # every remaining test depends on. Observed: tearing down instance 2 after
+    # tests/test_cross_worker.py left tests/test_priority_order.py failing on
+    # URLError, which reads as a product defect and is a harness one.
+    stop_worker
+    ;;
   url) echo "$API_URL" ;;
-  *) echo "usage: worker.sh <ensure|crash|stop|url>" >&2; exit 2 ;;
+  *) echo "usage: worker.sh <ensure|crash|stop|stop-worker|url>" >&2; exit 2 ;;
 esac
