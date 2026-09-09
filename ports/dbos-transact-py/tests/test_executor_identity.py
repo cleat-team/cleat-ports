@@ -17,7 +17,7 @@ import pytest
            "assigned_to is a lease -- finalize_workflow_status clears it on "
            "every terminal branch while fencing the write on it, so the field "
            "that would name the worker is the fence for the write that erases "
-           "it. Blank on 185 of 185 terminal runs. ISSUES.md 26."
+           "it, and sticky_worker_id answers a different question (which worker a run must use, not which ran it). Blank on 185 of 185 terminal runs. ISSUES.md 26."
 )
 def test_a_completed_run_still_names_the_worker_that_ran_it():
     """Upstream test_queue_executor_id.

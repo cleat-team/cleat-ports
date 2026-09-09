@@ -928,16 +928,25 @@ per terminal branch — in the authoritative procedure for each of
 `migrations/postgres/050`, `migrations/mysql/049` and `migrations/mssql/053`.
 This is not a PostgreSQL-only behaviour.
 
-**One thing deliberately not claimed**
+**The second column, and why it does not close this**
 
-There is a second column, `sticky_worker_id`, and it is blank on all 185 rows
-too. That is **not** evidence it is cleared: sticky routing is opt-in and this
-suite never exercises it, so the sample cannot distinguish "cleared at
-finalize" from "never set". `assigned_to` is different — it was observed
-holding a real worker id on a running row in the same database and blank once
-terminal, which is direct evidence of clearing. If sticky routing does write a
-durable worker id, this gap is narrower than stated and the entry should be
-amended rather than closed.
+`sticky_worker_id` is blank on all 185 rows too, and that is **not** evidence
+it is cleared at finalize: sticky routing is opt-in and this suite never
+exercises it, so the sample alone cannot distinguish "cleared" from "never
+set". Resolved by reading the writes rather than the rows — it is durably
+written (`UPDATE workflow_instances SET sticky_worker_id = $2`) and explicitly
+cleared by `ClearStickyWorker`, so blank here means never set.
+
+That narrows this entry's wording without closing it. `sticky_worker_id` says
+which worker a workflow **must run on**, not which one **ran** it, and it
+exists only for workflows that opted into sticky routing. A routing constraint
+that names a worker is not an execution record: it is set before the run by
+whoever pinned it, survives independently of what actually executed, and can be
+removed while the history it would explain remains.
+
+So the accurate claim is the narrower one: **no field records which worker
+executed a completed run.** `assigned_to` could and is erased;
+`sticky_worker_id` answers a different question and is usually absent.
 
 **Why it matters beyond conformance**
 
