@@ -104,6 +104,23 @@ jobs:
         # different answers. Correcting cells by hand only restarts that
         # clock; this is what stops it.
         run: python3 ports/dbos-transact-py/scripts/count-queue-cases.py --check
+      - name: ISSUES entry numbers are unique and contiguous
+        # Entry numbers are assigned by hand from a `tail -1` of the file, and
+        # four sessions hold unpushed branches that each took "the next number"
+        # from the same base. Neither sees the other until merge, and git
+        # reports no conflict -- the entries are appended at different offsets
+        # with different text. It happened twice on 2026-09-09, once as a
+        # straight collision on 29 and once as advice to avoid it that
+        # miscounted the file's two TEMPLATE headings and named a number one
+        # too high.
+        #
+        # The cost is the cross-references: tests say "ISSUES.md 26", so a
+        # collision silently redirects every reference to whichever entry
+        # sorted first. --self-test runs first because on a clean tree "no
+        # duplicates" and "the check is broken" are the same output.
+        run: |
+          scripts/check-issue-numbers.sh --self-test
+          scripts/check-issue-numbers.sh
 
   port:
     name: ${{ matrix.port }}
