@@ -26,19 +26,38 @@ set -euo pipefail
 dialect="${1:?usage: assert-dialect.sh <postgres|mysql|mssql>}"
 : "${MSSQL_SA_PASSWORD:=Cleat!Passw0rd}"
 
+# Prints a number, or the literal "absent" when the table does not exist.
+#
+# THE DISTINCTION IS THE WHOLE POINT ON A NON-POSTGRES LEG. Only the chosen
+# dialect is migrated, so on a mysql or mssql leg postgres is running but has no
+# workflow_instances table -- and "the table is not there" is the STRONGEST
+# evidence the run did not go to postgres, not a broken probe. The first version
+# of this script treated the empty answer as a broken probe and failed every
+# non-postgres leg in CI while the port itself passed.
 count_in() {
   case "$1" in
     postgres)
+      if ! docker compose exec -T postgres psql -U postgres -d cleat_ports -tAc \
+           "SELECT to_regclass('public.workflow_instances') IS NOT NULL" 2>/dev/null \
+           | tr -d '[:space:]' | grep -q '^t$'; then echo absent; return 0; fi
       docker compose exec -T postgres \
         psql -U postgres -d cleat_ports -tAc \
         "SELECT count(*) FROM workflow_instances" 2>/dev/null | tr -d '[:space:]'
       ;;
     mysql)
+      if ! docker compose exec -T mysql mysql -uroot -pcleat -N -B -e \
+           "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='cleat_ports' AND TABLE_NAME='workflow_instances'" \
+           2>/dev/null | tr -d '[:space:]' | grep -q '^1$'; then echo absent; return 0; fi
       docker compose exec -T mysql \
         mysql -uroot -pcleat -N -B cleat_ports \
         -e "SELECT count(*) FROM workflow_instances" 2>/dev/null | tr -d '[:space:]'
       ;;
     mssql)
+      if ! docker compose exec -T mssql \
+           /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+           -C -d cleat_ports -h -1 -W -Q \
+           "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.tables WHERE name='workflow_instances'" \
+           2>/dev/null | tr -d '[:space:]' | grep -q '^1$'; then echo absent; return 0; fi
       docker compose exec -T mssql \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
         -C -d cleat_ports -h -1 -W -Q \
@@ -96,6 +115,11 @@ esac
 
 claimed="$(count_in "$dialect")"
 claimed="${claimed:-}"
+if [ "$claimed" = "absent" ]; then
+  echo "FAIL: ${dialect} has no workflow_instances table after the port ran." >&2
+  echo "      The run did not migrate the database it claims to have used." >&2
+  exit 1
+fi
 
 # A non-numeric or empty answer is a broken probe, not a passing one. Without
 # this, a container that is not running returns "" and every comparison below
@@ -121,6 +145,13 @@ echo "ok: ${dialect} holds ${claimed} workflow_instances row(s)"
 if [ "$dialect" != "postgres" ]; then
   pg="$(count_in postgres)"
   pg="${pg:-}"
+  if [ "$pg" = "absent" ]; then
+    # Expected and ideal: postgres is up for every dialect but only the chosen
+    # one is migrated, so on a healthy non-postgres leg the table is simply not
+    # there. Nothing could have written to it.
+    echo "ok: postgres has no workflow_instances table, so this leg did not fall back"
+    exit 0
+  fi
   case "$pg" in
     ''|*[!0-9]*)
       echo "FAIL: could not count workflow_instances in postgres (got: '${pg}')." >&2
