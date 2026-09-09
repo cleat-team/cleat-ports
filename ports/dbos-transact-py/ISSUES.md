@@ -801,3 +801,161 @@ upstream's behaviour, and the large-integer test asserts per-dialect values --
 skipping, with its reason, on any dialect nobody has measured. SQL Server is
 unmeasured: `result` there is a `CHECK (ISJSON(...))` column, a third
 implementation, and guessing would assert nothing.
+
+## 25. A workflow's timeout is a worker-wide flag, not a per-run value
+
+**Class:** Missing API
+**Upstream test:** `tests/test_queue.py` — `test_unsetting_timeout`,
+`test_timeout_queue_recovery`, `test_set_workflow_delay`
+**Status:** Open
+
+**What upstream asserts**
+
+A timeout is a property of a *run*, set at the call site and inherited by
+children:
+
+```python
+with SetWorkflowTimeout(2.0):
+    DBOS.enqueue_workflow('test_queue', parent, child_one, child_two)
+```
+
+`parent` enqueues two children. One is wrapped in `SetWorkflowTimeout(None)`,
+which **unsets** the inherited deadline; the other inherits the parent's. The
+assertion is that the inheriting child is cancelled when the parent's 2s
+deadline passes and the unset one survives to return its own workflow id.
+
+So upstream is asserting three separable things: a timeout can be set per run,
+it propagates to children, and propagation can be declined.
+
+**What cleat does**
+
+cleat has exactly one workflow timeout and it is a worker flag:
+
+```
+--max-workflow-duration  Maximum wall-clock duration per workflow execution
+                         (0 = no limit). Workflows exceeding this are
+                         cancelled and fail with a timeout error.
+```
+
+reaching the engine as `engine.WithDefaultWorkflowTimeout` at
+`cmd/cleat-worker/setup.go:1710`. It applies to every workflow the worker runs.
+
+The start API accepts no timeout. `handleStartWorkflow`'s request body is, in
+full:
+
+```go
+Input          json.RawMessage `json:"input"`
+EntryPoint     string          `json:"entry_point"`
+ConcurrencyKey string          `json:"concurrency_key"`
+TenantID       string          `json:"tenant_id"`
+Namespace      string          `json:"namespace"` // deprecated
+Priority       int             `json:"priority"`
+```
+
+There is a `timeout_ms` column, which is easy to mistake for the missing
+feature and is not it: it is on `event_history`, recording the timeout of an
+individual signal-await event, not a deadline for the run.
+
+So none of upstream's three properties has a counterpart. There is no per-run
+value to set, nothing to inherit, and nothing to decline — and because the
+worker-wide flag applies uniformly, a parent and child always share a deadline
+whether or not that is wanted.
+
+**Why this is recorded as one gap rather than three**
+
+`SetWorkflowTimeout(None)` is only meaningful once timeouts propagate, and
+propagation is only meaningful once they can be set per run. A port of the
+unsetting case cannot be written to fail for its own reason until the first
+capability exists, so splitting it would create two entries that can only ever
+be closed together.
+
+**Tests**
+
+`tests/test_timeouts.py` holds the assertion, skipped, rather than omitting it:
+an absent test is indistinguishable from an untried one, and this is the first
+thing a reader comparing the two systems will look for. The suite has no way to
+drive `--max-workflow-duration` per test either — `CLEAT_PORTS_WORKER_EXTRA_FLAGS`
+(ports#70) could start a worker with one, but a worker-wide deadline would then
+apply to every other case sharing that worker.
+
+## 26. Nothing records which worker ran a completed workflow
+
+**Class:** Missing API
+**Upstream test:** `tests/test_queue.py` — `test_queue_executor_id`
+**Status:** Open
+
+**What upstream asserts**
+
+`executor_id` is a durable property of a run. Upstream sets one, runs a
+workflow, then changes the executor id and starts the same workflow id again:
+
+```python
+assert handle.get_status().executor_id == original_executor_id
+GlobalParams.executor_id = new_executor_id
+with SetWorkflowID(wfid):
+    handle = DBOS.enqueue_workflow('test-queue', example_workflow)
+assert handle.get_status().executor_id == original_executor_id
+```
+
+The second read is the assertion: a completed run still names the executor that
+*originally* ran it, and a later start under the same id does not overwrite it.
+
+**What cleat does**
+
+`workflow_instances.assigned_to` is exposed on the API's run record, and it is
+a **lease**, not an audit field. `finalize_workflow_status` clears it on every
+terminal branch while fencing the write on it:
+
+```sql
+UPDATE workflow_instances
+SET status = 'done',
+    ...
+    assigned_to = NULL
+WHERE id = p_workflow_id
+  AND assigned_to = p_worker_id      -- the fence
+  AND generation = p_generation;
+```
+
+The worker identity authorises the terminal write and is erased by the same
+statement. So the field that would say which worker ran the workflow is the
+fence for the write that removes it.
+
+Measured on a ports database of 185 terminal runs: `assigned_to` is blank on
+**185 of 185** across `done`, `failed`, `terminated` and `dead_lettered`.
+
+**Scope: all three dialects.** `assigned_to = NULL` appears three times — once
+per terminal branch — in the authoritative procedure for each of
+`migrations/postgres/050`, `migrations/mysql/049` and `migrations/mssql/053`.
+This is not a PostgreSQL-only behaviour.
+
+**The second column, and why it does not close this**
+
+`sticky_worker_id` is blank on all 185 rows too, and that is **not** evidence
+it is cleared at finalize: sticky routing is opt-in and this suite never
+exercises it, so the sample alone cannot distinguish "cleared" from "never
+set". Resolved by reading the writes rather than the rows — it is durably
+written (`UPDATE workflow_instances SET sticky_worker_id = $2`) and explicitly
+cleared by `ClearStickyWorker`, so blank here means never set.
+
+That narrows this entry's wording without closing it. `sticky_worker_id` says
+which worker a workflow **must run on**, not which one **ran** it, and it
+exists only for workflows that opted into sticky routing. A routing constraint
+that names a worker is not an execution record: it is set before the run by
+whoever pinned it, survives independently of what actually executed, and can be
+removed while the history it would explain remains.
+
+So the accurate claim is the narrower one: **no field records which worker
+executed a completed run.** `assigned_to` could and is erased;
+`sticky_worker_id` answers a different question and is usually absent.
+
+**Why it matters beyond conformance**
+
+"Which worker ran this?" is a routine operational question for a failed or slow
+run, and cleat cannot answer it after the fact for any run that reached a
+terminal state. Every run that is interesting to ask about is one that has
+finished.
+
+**Tests**
+
+`tests/test_executor_identity.py`, skipped: the assertion needs a durable
+executor field to read, and there is none to read.
