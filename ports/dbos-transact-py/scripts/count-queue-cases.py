@@ -190,6 +190,9 @@ MAPPING = {
     "test_workflow_management.py": ("test_workflow_management.py",
                                     "force-complete, force-fail, and their refusals"),
     "test_children.py": ("test_concurrency.py", "concurrent execution and isolation"),
+    "test_complex_args.py": ("test_queue.py",
+                             "upstream test_complex_type -- a nested struct argument "
+                             "survives the store, including across a suspension"),
     "test_replay.py": ("test_dbos.py", ""),
     "test_send.py": ("test_dbos.py", "`send` delivery semantics"),
     "test_promises.py": ("test_dbos.py", "`set_event`/`get_event`"),

@@ -518,6 +518,11 @@ def signal_timeout_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def complex_arg_workflow(cleat: Cleat) -> str:
+    return _build_and_deploy("complexarg", "complex_arg")
+
+
+@pytest.fixture(scope="session")
 def promise_workflow(cleat: Cleat) -> str:
     """Deploy the settler first: the parent spawns it by name, so a parent that
     started before the child was deployed would fail on a missing workflow
