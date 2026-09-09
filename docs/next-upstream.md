@@ -20,7 +20,7 @@ does not show:
 
 | upstream file | cases | portable, unported |
 |---|---:|---:|
-| `test_dbos.py` | 61 | 17 |
+| `test_dbos.py` | 61 | 17 → **9**, see below |
 | `test_failures.py` | 37 | 5 |
 | `test_scheduler.py` | 35 | 5 |
 | `test_client.py` | 57 | 3 |
@@ -28,7 +28,50 @@ does not show:
 | `test_concurrency.py` | 11 | 1 |
 | `test_workflow_management.py` | 46 | 1 |
 | `test_queue.py` | 91 | 0 |
-| **total** | **371** | **33** |
+| **total** | **371** | **33 → 25** |
+
+**Correction, hours after this document was published.** The `test_dbos.py`
+figure of 17 does not reproduce. cleat-agent1-31 re-derived it by enumerating
+the cases *by name* and got **9**, which makes the total **25**, not 33. Six of
+the eight lost have a subject the original survey did not screen for
+(`wait_first`, and `DBOS.step_status`/`step_id` introspection), and a further
+**10 cases are not engine assertions at all** where that section recorded none
+— assertions that a Postgres trigger named `dbos_notifications_trigger` exists,
+that `recv` survives LISTEN/NOTIFY falling back to polling, that
+`len(dbos._timeout_tasks) == 0`.
+
+**The structural reason the 17 survived is worth more than the number.** It was
+never enumerated. The `test_dbos.py` section states its four bucket totals and
+then documents only the 42 blocked and the 2 deliberate, so nothing in the tree
+listed which cases made up the 17 — and **an unenumerated count has nothing to
+reconcile against.** Every other survey here was caught or confirmed by
+reconciling two independent derivations; that one offered no second view of
+itself, and three separate defects in it surfaced the same day (this count, an
+`ISSUES` entry it claimed to have filed and had not, and the missing
+enumeration itself).
+
+The rule that follows has three clauses, and the first one alone is not the
+fix. cleat-agent1-31's `test_workflow_management.py` survey **was** enumerated
+by name and still mis-bucketed two cases — its classifier tested fork before
+GC and took the first match, and the name list stayed internally consistent
+throughout. What caught it was ISSUES 23's independently-derived 18 against
+that survey's 16.
+
+1. **State the buckets by name.** Otherwise there is nothing for a second
+   reader to disagree with, which is how the 17 survived.
+2. **Reconcile the list against a total derived a different way.** An
+   enumeration makes reconciliation possible; it does not perform it. This is
+   the clause that does the catching.
+3. **State the denominator and how it was derived.** `^\s*def test_` gives 138
+   cases for `test_dbos.py` where `^def test_` gives 61; the 77 difference are
+   `@DBOS.workflow()` fixtures declared inside test bodies. A wrong denominator
+   is wrong in every bucket at once.
+
+`test_dbos.py` is the largest single contributor to the remaining work, so this
+correction moves the headline. It does not move the conclusion — 25 is the same
+answer as 33 to the question "is this upstream close to mined out", and it is
+the direction that makes the case for a second upstream stronger rather than
+weaker.
 
 **Four of those eight figures are not on `develop` yet.** `test_client.py` (3)
 is ports#111, `test_async.py` (1) is ports#110, `test_workflow_management.py`
