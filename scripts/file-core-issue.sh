@@ -53,35 +53,11 @@ TITLE="cleat-ports nightly failing against develop"
 # `non-200 OK status code: 401 Unauthorized` (measured 2026-09-09, both in run
 # 34340316935 and reproduced locally with a deliberately invalid token) and
 # `gh api`'s bare `HTTP 401`.
-classify_and_die() {
-  err="$1"; what="$2"
-  code="$(printf '%s' "$err" | sed -nE 's/.*status code: ([0-9]{3}).*/\1/p; s/.*HTTP ([0-9]{3}).*/\1/p' | head -n1)"
-  printf '%s\n' "$err" >&2
-  case "$code" in
-    401)
-      # TWO CAUSES, ONE STATUS CODE, DIFFERENT FIXES -- so the annotation carries
-      # the discriminator rather than a guess. A 401 means either the stored
-      # secret is not a valid token (most often a trailing newline, from
-      # `gh secret set` fed by a file or heredoc) or a real token has expired or
-      # been revoked. GitHub's PAT page tells them apart for free: "Never used"
-      # means the value in the secret never reached GitHub as this token, so
-      # rotating will not help until it is stored with `printf %s`.
-      #
-      # Recorded because it happened: on 2026-09-09 the annotation would have
-      # said "invalid or expired -- rotate it", and the PAT read "Never used".
-      # A documented failure mode that cannot be told from its neighbour sends
-      # the reader confidently down the wrong branch.
-      echo "::error title=HARNESS: CLEAT_CORE_ISSUE_TOKEN was rejected (401)::GitHub rejected the cross-repo token, so the nightly could not file its report on ${CORE_REPO}. This is a HARNESS failure and says NOTHING about cleat's behaviour -- the port results are in this job's summary above. Two causes, and the PAT's own page separates them: if it shows a last-used date the token EXPIRED or was REVOKED, so rotate it; if it shows 'Never used' the stored secret is not the token -- usually a trailing newline -- so re-store it with 'printf %s <token> | gh secret set CLEAT_CORE_ISSUE_TOKEN'. Confirm either way with 'GH_TOKEN=<token> gh api user'."
-      ;;
-    403)
-      echo "::error title=HARNESS: CLEAT_CORE_ISSUE_TOKEN lacks permission (403)::The token authenticated but may not write issues on ${CORE_REPO} (missing issues:write, or SSO not authorised for the org). This is a HARNESS failure and says NOTHING about cleat's behaviour -- the port results are in this job's summary above."
-      ;;
-    *)
-      echo "::error title=Could not file the nightly report on ${CORE_REPO}::${what} failed${code:+ with HTTP ${code}}. The port results are in this job's summary above."
-      ;;
-  esac
-  exit 1
-}
+# One classifier, shared with check-core-credential.sh so a probe and the real
+# call cannot describe the same failure differently.
+CLASSIFY_CONTEXT="The nightly could not file its report; the port results are in this job's summary above."
+# shellcheck source=scripts/lib-gh-classify.sh
+. "$(dirname "$0")/lib-gh-classify.sh"
 
 # One tracking issue, reused. A fresh issue per nightly would bury the core repo
 # in duplicates within a week of any sustained failure.

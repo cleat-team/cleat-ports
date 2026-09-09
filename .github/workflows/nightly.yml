@@ -21,12 +21,53 @@ on:
         description: "cleat ref to test against (branch, tag, or SHA)"
         required: false
         default: "develop"
+      credential_only:
+        description: "Only check the report credential (~15s), skip the ports"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  # RUNS ON EVERY NIGHTLY, GREEN OR RED, AND THAT IS THE WHOLE POINT.
+  #
+  # `report` below runs only when the matrix failed, so the credential it needs
+  # is exercised only on the nights it is needed. A green night never touches
+  # it. Its failure is therefore perfectly correlated with the event it exists
+  # to report -- nothing can discover it early, because the only thing that
+  # would is the thing it breaks. On 2026-09-09 it was rejected with 401, a real
+  # mysql failure was found, and nobody was told (cleat-ports#105).
+  #
+  # Demonstrated again the next morning at a cost of 25 minutes: a nightly was
+  # dispatched specifically to find out whether the rotated secret worked, all
+  # six legs passed, `report` was skipped, and the run answered nothing. A
+  # healthy run cannot test the failure path. Hence `credential_only`, which
+  # runs this job alone.
+  #
+  # It files nothing and changes nothing.
+  credential:
+    name: The report credential still works
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - env:
+          GH_TOKEN: ${{ secrets.CLEAT_CORE_ISSUE_TOKEN }}
+        run: scripts/check-core-credential.sh
+
   discover:
+    # Skipped for a credential-only dispatch; `port` follows through `needs`,
+    # and `complete` and `report` carry the same condition because `always()`
+    # would otherwise run them against a matrix that never generated.
+    # NOT `!inputs.credential_only` alone. On a `schedule` event there is no
+    # `inputs` context, and this condition decides whether the ports run at all
+    # -- get it wrong and every nightly skips its entire matrix AND the
+    # `complete` gate that exists to catch exactly that, producing a fully green
+    # run that tested nothing. Naming the event removes the dependency on how a
+    # missing `inputs` renders: for anything that is not a dispatch, the first
+    # clause short-circuits true and the ports always run.
+    if: ${{ (github.event_name != 'workflow_dispatch' || !inputs.credential_only) }}
     runs-on: ubuntu-latest
     outputs:
       ports: ${{ steps.list.outputs.ports }}
@@ -169,7 +210,7 @@ jobs:
   complete:
     name: Every port ran on every dialect
     needs: [discover, port]
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || !inputs.credential_only)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -192,7 +233,7 @@ jobs:
   report:
     name: Report to core
     needs: [discover, port]
-    if: always() && needs.port.result == 'failure'
+    if: always() && (github.event_name != 'workflow_dispatch' || !inputs.credential_only) && needs.port.result == 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
