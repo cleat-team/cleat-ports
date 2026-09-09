@@ -131,27 +131,50 @@ if [ "${1:-}" = "--self-test" ]; then
   exit "$fails"
 fi
 
+# THE UNIVERSE IS PORT DIRECTORIES, NOT ISSUES.md FILES.
+#
+# This loop used to iterate `git ls-files 'ports/*/ISSUES.md'`, and a port whose
+# ISSUES.md stopped existing simply left the universe. Measured 2026-09-09 by
+# deleting ports/dbos-transact-py/ISSUES.md: the guard found samples-go's file,
+# checked it, found nothing wrong, and reported
+#
+#     OK: no port's ISSUES.md has a duplicate or missing entry number.
+#
+# with rc=0, while 32 entries had become invisible to it.
+#
+# The `found -eq 0` check below did not fire and could not: `found` is zero only
+# when NO port anywhere has an ISSUES.md, so a single surviving file masks every
+# other port's disappearance.
+#
+# That is not a resolution problem. No stricter regex and no more careful parse
+# reaches a file the loop was never given, so the repair is to change what the
+# check RANGES OVER: every directory under ports/ except TEMPLATE must have an
+# ISSUES.md, and a port without one is an error rather than an absence.
 rc=0
 found=0
-while IFS= read -r f; do
-  # ports/TEMPLATE is the skeleton a new port is copied from. Its ISSUES.md
-  # has no entries BY DEFINITION, so the empty-file error above would fire on
-  # it every run -- and a guard that always fails is a guard people learn to
-  # ignore. The exemption is by exact path rather than by "files with no
-  # entries", which would re-admit the case the empty-file check exists for:
-  # a real port whose headings stopped matching.
-  case "$f" in
-    ports/TEMPLATE/ISSUES.md) continue ;;
-  esac
+while IFS= read -r d; do
+  case "$d" in ports/TEMPLATE) continue ;; esac
+  f="$d/ISSUES.md"
+  if [ ! -f "$REPO_ROOT/$f" ]; then
+    echo "ERROR: $d has no ISSUES.md." >&2
+    echo "       Every port keeps one. If this port's findings moved to a" >&2
+    echo "       different layout, this guard has to move with them: it cannot" >&2
+    echo "       see a file it does not know to look for, and it reports OK." >&2
+    rc=1
+    continue
+  fi
   found=1
-  report_file "$f" "$f" || rc=1
-done < <(cd "$REPO_ROOT" && git ls-files 'ports/*/ISSUES.md')
+  report_file "$REPO_ROOT/$f" "$f" || rc=1
+# NF>2 keeps only paths with something INSIDE a port directory, which is what
+# makes this a list of directories rather than of entries under ports/.
+# `ports/README.md` is a tracked file directly under ports/ and was reported as
+# a port with no ISSUES.md on the first run of this loop.
+done < <(cd "$REPO_ROOT" && git ls-files ports | awk -F/ 'NF>2 {print $1"/"$2}' | sort -u)
 
 if [ "$found" -eq 0 ]; then
-  echo "ERROR: no ports/*/ISSUES.md tracked by git outside the TEMPLATE." >&2
-  echo "       This guard is checking nothing." >&2
+  echo "ERROR: no port outside TEMPLATE has an ISSUES.md; this guard is checking nothing." >&2
   exit 1
 fi
 
-[ "$rc" -eq 0 ] && echo "OK: no port's ISSUES.md has a duplicate or missing entry number."
+[ "$rc" -eq 0 ] && echo "OK: every port has an ISSUES.md with unique, contiguous entry numbers."
 exit "$rc"
