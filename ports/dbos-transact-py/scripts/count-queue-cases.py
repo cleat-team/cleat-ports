@@ -212,6 +212,9 @@ MAPPING = {
     "test_timeouts.py": ("test_queue.py",
                          "upstream test_unsetting_timeout -- a per-run deadline "
                          "and whether a child inherits it; skipped, ISSUES.md 25"),
+    "test_executor_identity.py": ("test_queue.py",
+                                  "upstream test_queue_executor_id -- which worker ran a "
+                                  "completed run; skipped, ISSUES.md 26"),
     "test_replay.py": ("test_dbos.py", ""),
     "test_send.py": ("test_dbos.py", "`send` delivery semantics"),
     "test_promises.py": ("test_dbos.py", "`set_event`/`get_event`"),
