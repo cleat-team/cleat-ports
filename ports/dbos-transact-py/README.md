@@ -217,10 +217,44 @@ recorded so nobody re-derives them as oversights.
   new input is used with no policy or timing state carried across. Probing this
   is what found cleat#995 and cleat#996, which are the results that came out of
   it.
+- `test_failures.py::test_step_timeout_rejects_invalid_config` — **the premise
+  does not exist here.** Upstream asserts three rejections and cleat can express
+  none of them. *"only supported for async steps"*: a cleat workflow has no
+  sync/async split. *"positive and finite"*, tested with `NaN` and `inf`:
+  cleat's `Timeout` is a `time.Duration`, an int64, so **there is no input to
+  reject**. `0`: a documented sentinel — `Timeout time.Duration // 0 = no
+  timeout` (`cleat/runtime.go`) — so asserting it is rejected would contradict
+  the contract rather than test it.
+
+  The one expressible residue is a *negative* timeout, which cleat neither
+  rejects nor honours. It is not writable yet either: while cleat#1006 leaves
+  every timeout inert, a test cannot distinguish "negative is ignored" from
+  "everything is ignored", so it would pass without separating the two and
+  would go green the day #1006 is fixed while still proving nothing.
+- `test_failures.py::test_step_timeout_inert_outside_workflow` — **no vantage
+  point.** It calls a step outside a workflow. Cleat has a behaviour there —
+  `DurableCall can only be called from within a workflow function` — but it is
+  an error rather than inertness, and a port test drives the HTTP API, which
+  can only start workflows. See *What the front door costs* below.
 - `test_scheduler.py::test_long_schedule_shutdown` — parked. It wants the
   `worker.stop()` correction (that helper stops the API server and the fixture
   service too), and `test_misfire.py` already exercises the stop/restart path
   it would cover.
+
+### What the front door costs
+
+Every test here drives the HTTP API. That is what makes a port test hard to aim
+at dead code: you reach production by construction, where an engine test that
+calls a store method directly can pass against a path the worker never runs.
+
+The same property is a limit. The API can only start workflows, so anything
+upstream asserts about calling a step *outside* one has no vantage point from
+here — not because cleat lacks the behaviour, but because nothing in the port's
+reach can provoke it.
+
+Worth stating in both directions, because the advantage is the reason to keep
+using the front door and the limit is the reason some upstream cases will never
+port. They are one property, not two.
 
 ## Status
 
