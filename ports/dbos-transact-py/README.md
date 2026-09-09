@@ -176,7 +176,32 @@ survived because the engine's own regression test was hardcoded to one dialect,
 and this suite could not have caught it at any level of coverage. The bound is
 better than it sounds — `idempotency_keys` was the **only** table with a
 `tenant_id` and no row-level security behind it, so the class has one member —
-but the blind spot is permanent until the harness grows a second tenant.
+but the blind spot lasts until the harness grows a second tenant.
+
+**And that is one missing flag, not a property of the harness — corrected
+2026-09-09, having previously been written here as permanent.** The suite could
+mint a second key today: `cleat-worker -generate-api-key <uuid>` is exactly how
+the first one is made (`scripts/worker.sh`'s `mint_key`), and one worker serves
+every tenant, so no second process is needed either.
+
+What stops it is that the tenant must exist first, and **nothing outside the Go
+API can create one**:
+
+```
+$ cleat-worker -db ... -generate-api-key 11111111-1111-1111-1111-111111111111
+ERROR failed to create API key
+  error: violates foreign key constraint "tenant_api_keys_tenant_id_fkey"
+```
+
+`auth.TenantStore.CreateTenant` has **no caller** — no binary among the nine in
+`cmd/`, no flag, no HTTP route. The only tenant a deployment has is the one
+`migrations/{postgres,mssql}/002_defaults.sql` seeds. Filed as **cleat#1114**;
+a `-create-tenant` flag mirroring `-generate-api-key` is enough.
+
+So this section should be read as *blocked on one upstream change*, not as a
+bound on what a port suite can express. The distinction matters because a
+permanent bound invites people to stop looking for a way round it, and there
+was one.
 
 **One worker, and it is also the API server — no longer, but read on.** A
 `second_worker` fixture now starts a second `cleat-worker` against the same
