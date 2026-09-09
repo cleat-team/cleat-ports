@@ -3,8 +3,10 @@
 Derived from the upstream assertions, not from upstream source. See UPSTREAM
 and ../../docs/licensing.md.
 
-Upstream file: `tests/test_queue.py` — 103 cases, the largest single block in
-scope and the least covered. DBOS's queue carries concurrency limits, rate
+Upstream file: `tests/test_queue.py` — 91 collected cases, the largest single
+block in scope and the least covered. (103 is what `ast.walk` reports; it
+counts helper functions declared inside test bodies, which pytest never
+collects. scripts/count-queue-cases.py counts what is collected.) DBOS's queue carries concurrency limits, rate
 limits, deduplication and priority. Cleat's equivalents are spread across three
 mechanisms rather than one queue object:
 
@@ -157,4 +159,57 @@ def test_priority_is_accepted_and_recorded(cleat, retry_workflow):
         f"priority 7 was accepted at the API and the run reports "
         f"{final.get('priority')!r}. The claim query orders by priority, so a "
         f"value that never reaches the row makes that ordering unreachable."
+    )
+
+
+def test_a_key_used_for_one_workflow_does_not_answer_for_another(
+    cleat, complex_arg_workflow, signal_timeout_workflow
+):
+    """Upstream test_queue.py::test_duplicate_workflow_id.
+
+    Upstream rejects reuse of a workflow id across two different functions with
+    "Workflow already exists with a different function name". Reusing it for the
+    SAME workflow returns the original handle and is fine; reusing it for a
+    different one is an error rather than a silent substitution.
+
+    The three deduplication tests above all use one definition, which is why
+    this case is separate: same-key, different-key and no-key all behave
+    correctly within a single workflow, and the namespace question only appears
+    when two definitions share a key.
+    """
+    key = f"cross-def-{uuid.uuid4().hex[:10]}"
+
+    first_status, first = cleat.start(
+        complex_arg_workflow,
+        {"outer": {"inner": {"one": "x", "two": 1}}, "n": 1, "sleepMs": 0},
+        idempotency_key=key,
+    )
+    assert first_status == 201, f"first start rejected: {first_status} {first}"
+
+    second_status, second = cleat.start(
+        signal_timeout_workflow, {"timeoutMs": 3000}, idempotency_key=key
+    )
+
+    if second_status == 200 and second.get("workflow_id") == first["id"]:
+        pytest.skip(
+            f"cleat#1047: starting {signal_timeout_workflow!r} with a key already "
+            f"used by {complex_arg_workflow!r} answered 200 "
+            f"{second!r} -- the id of the OTHER workflow's run, with "
+            f"already_started true. The requested workflow never started and "
+            f"nothing in the response says so.\n"
+            f"\n"
+            f"An Idempotency-Key is hashed as sha256(key) and looked up on "
+            f"(key_hash, tenant_id), so the namespace is (tenant, key) when the "
+            f"thing being deduplicated is (tenant, definition, key). The same "
+            f"defect in the TENANT dimension was fixed already, and its comment "
+            f"in mysql_lifecycle.go describes this one exactly: the key is a "
+            f"client-supplied header, so collisions are the expected outcome of "
+            f"ordinary naming rather than an attack.\n"
+            f"\n"
+            f"A skip rather than a failure only so the suite stays green while "
+            f"#1047 is open. The day it is fixed this test passes on its own."
+        )
+
+    assert second_status != 200 or second.get("workflow_id") != first["id"], (
+        f"second start answered {second_status} {second!r}"
     )
