@@ -16,6 +16,8 @@ from that path as transient, so a policy applies to it.
 """
 
 import json
+import time
+import uuid
 
 import pytest
 
@@ -422,3 +424,84 @@ def test_a_transient_status_is_retried_to_the_budget(
         f"that is the carve-out in benchSvcStatusError having been lost."
     )
     assert _body(final)["outcome"] == "failed"
+def test_no_backoff_is_slept_after_the_final_attempt(cleat, retry_workflow, fixture_calls):
+    """A budget of one attempt costs no wait at all.
+
+    Upstream `test_failures.py::test_step_retries_no_final_sleep`, and upstream
+    shipped this defect (dbos-transact-py#667) before fixing it: the retry loop
+    slept its backoff after the LAST failed attempt too, so a caller waited out
+    an interval that could not precede anything. Nobody notices at 100ms. At a
+    production backoff it is the difference between failing in ten seconds and
+    failing in twenty.
+
+    WHY THE EXISTING RETRY TESTS CANNOT SEE IT. `test_the_retry_budget_is_finite`
+    asserts the number of attempts; `test_a_call_that_fails_on_its_last_
+    permitted_attempt_fails` asserts what the last one returns. A wasted final
+    sleep changes neither -- same attempts, same error, only the clock moves.
+
+    WHY `attempts=1` RATHER THAN THE ARITHMETIC. The obvious form sets a budget
+    of N and checks the total against (N-1) intervals. I wrote that first and it
+    FAILED -- 4036ms against a 3750ms bound at N=3, interval=1500 -- and the
+    failure was the instrument, not cleat. Measured directly, the engine is
+    correct: 1/2/3 attempts at a 2000ms interval take 254/2109/4300ms, which is
+    exactly 0/1/2 waits plus overhead. The arithmetic form compares 3000ms to
+    4500ms and asks a ~1.5x question, so a cold first run's ~1s of overhead
+    lands between the two answers and reads as the defect.
+
+    A budget of ONE removes the arithmetic. A correct engine sleeps nothing and
+    finishes in ~250ms; the defect sleeps a full interval and finishes in
+    ~2250ms. That is a 9x separation no plausible overhead can cross, and it
+    needs no model of what the overhead is.
+
+    THE SECOND CASE IS THE CONTROL. `attempts=1` alone would also pass against
+    an engine that never retried and never slept -- the fastest way to satisfy
+    a "was not slow" assertion is to do nothing. So a two-attempt run must
+    spend about one interval, which is the same policy demonstrating that its
+    waits exist at all.
+    """
+    interval_ms = 2000
+
+    # One attempt: nothing to space out, so nothing to wait for.
+    key_one = f"nofinalsleep-1-{uuid.uuid4().hex[:8]}"
+    began = time.monotonic()
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key_one, "attempts": 1,
+        "intervalMs": interval_ms, "failTimes": 6, "failStatus": 0,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    cleat.await_terminal(started["id"], timeout=90.0)
+    one_ms = (time.monotonic() - began) * 1000.0
+
+    assert fixture_calls(key_one) == 1, (
+        f"a budget of one attempt produced {fixture_calls(key_one)} calls, so "
+        f"the timing below is not measuring what this test claims"
+    )
+    assert one_ms < interval_ms * 0.5, (
+        f"a single-attempt run took {one_ms:.0f}ms against a {interval_ms}ms "
+        f"backoff. There is no second attempt for that wait to precede, so the "
+        f"retry loop slept after its final attempt -- the caller waited out an "
+        f"interval that bought nothing. Measured correct behaviour here is "
+        f"~250ms."
+    )
+
+    # Two attempts: one wait, and the control that waits happen at all.
+    key_two = f"nofinalsleep-2-{uuid.uuid4().hex[:8]}"
+    began = time.monotonic()
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": key_two, "attempts": 2,
+        "intervalMs": interval_ms, "failTimes": 6, "failStatus": 0,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    cleat.await_terminal(started["id"], timeout=90.0)
+    two_ms = (time.monotonic() - began) * 1000.0
+
+    assert fixture_calls(key_two) == 2, (
+        f"a budget of two attempts produced {fixture_calls(key_two)} calls"
+    )
+    assert two_ms > interval_ms * 0.7, (
+        f"two attempts at a {interval_ms}ms backoff completed in {two_ms:.0f}ms, "
+        f"which is too fast to contain the one wait that must separate them. "
+        f"Without this the assertion above would also pass against an engine "
+        f"that never waited at all -- the quickest way to not sleep after the "
+        f"last attempt is to not sleep after any of them."
+    )
