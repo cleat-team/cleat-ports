@@ -108,10 +108,15 @@ Coverage is by assertion, not by name; none of these names appears in the tree.
 | `test_client_retrieve_wf` · `_done` | `test_api_surface.py` + `cleat.get` / `await_terminal` |
 | `test_enqueue_with_priority` | `test_queues.py::test_priority_is_accepted_and_recorded`, `test_priority_order.py` |
 
-**13 here against the inventory's 8 is not a discrepancy.** The `Cases here`
-column counts *our* cases attributed to the file (ports#92); this counts
-*upstream* cases with a local equivalent. `test_api_surface.py` has exactly 8
-cases and the coverage above is spread over six files.
+**13 here against the inventory's 8 was not a discrepancy**, and the two
+numbers no longer sit side by side. The inventory's figure counted *our* cases
+attributed to the file (ports#92); this counts *upstream* cases with a local
+equivalent. `test_api_surface.py` has exactly 8 cases and the coverage above is
+spread over six files.
+
+Reading one as the other is what the `Cases here` column made easy, and
+**ports#134 removed it** for that reason among others. The 13 above is the
+figure this survey stands behind.
 
 ### Already a recorded gap — 6
 
