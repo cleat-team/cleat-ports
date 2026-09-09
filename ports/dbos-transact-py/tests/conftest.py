@@ -9,12 +9,84 @@ difference.
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import urllib.error
 import urllib.request
 
 import pytest
+
+
+# Entry-point parameters, per deployed workflow name, filled in by
+# _build_and_deploy. Cleat.start refuses a payload that omits one.
+#
+# WHY THIS EXISTS. An omitted parameter is not an error. A workflow started
+# without one runs anyway, with that parameter at its zero value, and every
+# assertion that does not depend on it still passes -- so the test goes green
+# while measuring something weaker than its name claims. Cleat.start's docstring
+# already records one round of this: every test in this port was briefly passing
+# {"input": 1500} and therefore running with ms=0. This is that warning made
+# enforceable.
+#
+# The hazard is permanent and the sixteen omissions it found were three years'
+# worth of nobody checking, but what surfaced them was a two-hour window in
+# which cleat#1046 made an absent INT a hard decode error rather than a zero.
+# Measured then, one machine, one worker, varying only the guest codegen:
+#
+#   absent parameter   normally     during that window
+#   string             binds ""     binds ""
+#   int                binds 0      unmarshal <name>: unexpected end of JSON input
+#   struct             error        error
+#
+# cleat#1057 restored the int column. The row that matters here is the first
+# one, which never changed: an absent STRING has always bound "" silently, and
+# always will.
+#
+# Eight of the sixteen went red in that window. THE OTHER EIGHT ARE THE REASON
+# FOR A GUARD RATHER THAN SIXTEEN CORRECTED PAYLOADS. They kept passing, because
+# a run that binds nothing still appears in a list, still has an empty event
+# collection, and still answers a force-complete. They asserted API shape around
+# a workflow body that never executed -- and four of them are named for what
+# happens to a RUNNING workflow, which that run had already stopped being.
+#
+# So the omission was survivable in exactly the cases where it hollowed the test
+# out. A green suite could not distinguish them from the eight that failed
+# loudly, and neither could a reader.
+#
+# The registry is derived from the Go signature at deploy time rather than
+# maintained by hand, so a parameter added to a workflow is enforced at every
+# call site from the moment it exists.
+_ENTRY_PARAMS: dict[str, list[str]] = {}
+
+_SIG = re.compile(r'^func\s+[A-Z]\w*\(h cleat\.HostCalls,?\s*([^)]*)\)', re.M)
+
+
+def _entry_params(pkg_dir: pathlib.Path) -> list[str] | None:
+    """Parameter names of a workflow package's entry point, in order.
+
+    Returns None when the payload does not bind by name at all: an entry point
+    whose ONLY parameter is a string receives the raw input JSON instead
+    (wasm/exports.go, `len(fields) == 1 && fields[0].GoType == "string"`), so
+    for those a "missing parameter" is not a meaningful thing to check.
+    """
+    src = (pkg_dir / "main.go").read_text()
+    m = _SIG.search(src)
+    if not m:
+        return None
+    fields = []
+    for part in m.group(1).split(","):
+        toks = part.split()
+        if len(toks) == 2:
+            fields.append((toks[0], toks[1]))
+        elif len(toks) == 1 and toks[0]:
+            # `a, b string` -- type belongs to the last name in the group.
+            fields.append((toks[0], None))
+    if not fields:
+        return None
+    if len(fields) == 1 and fields[0][1] == "string":
+        return None
+    return [name for name, _ in fields]
 
 
 @pytest.fixture(scope="session")
@@ -120,6 +192,14 @@ class Cleat:
         assert isinstance(payload, dict), (
             "workflow input must be a dict keyed by parameter name, e.g. "
             f"{{'ms': 1500}}; got {type(payload).__name__}"
+        )
+        omitted = [p for p in _ENTRY_PARAMS.get(name, []) if p not in payload]
+        assert not omitted, (
+            f"start({name!r}) omits {', '.join(omitted)}, which the entry point "
+            f"declares. Pass every parameter explicitly. An omitted parameter "
+            f"binds its zero value and the run completes, so the assertions "
+            f"below will most likely still pass -- against a workflow that did "
+            f"not receive what this test meant to give it. See _ENTRY_PARAMS."
         )
         headers = {}
         if concurrency_key:
@@ -383,6 +463,10 @@ def _build_and_deploy(pkg_name: str, workflow_name: str) -> str:
     )
     if deployed.returncode != 0:
         pytest.fail(f"deploying {workflow_name} failed:\n{deployed.stderr[-2000:]}")
+
+    declared = _entry_params(pkg)
+    if declared:
+        _ENTRY_PARAMS[workflow_name] = declared
     return workflow_name
 
 

@@ -60,7 +60,7 @@ def test_force_complete_moves_a_running_workflow_to_done(cleat, retry_workflow):
     key = f"fc-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 5,
-        "intervalMs": 3000, "failTimes": 999,
+        "intervalMs": 3000, "failTimes": 999, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -89,7 +89,7 @@ def test_force_complete_without_the_confirmation_header_is_refused(cleat, retry_
     key = f"fc-noconfirm-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 5,
-        "intervalMs": 3000, "failTimes": 999,
+        "intervalMs": 3000, "failTimes": 999, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -130,7 +130,7 @@ def test_a_stale_generation_is_refused_as_a_conflict(cleat, retry_workflow):
     key = f"fc-gen-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 5,
-        "intervalMs": 3000, "failTimes": 999,
+        "intervalMs": 3000, "failTimes": 999, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -154,7 +154,7 @@ def test_force_fail_moves_a_running_workflow_to_failed(cleat, retry_workflow):
     key = f"ff-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 5,
-        "intervalMs": 3000, "failTimes": 999,
+        "intervalMs": 3000, "failTimes": 999, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 

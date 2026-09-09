@@ -41,7 +41,7 @@ def test_the_workflow_list_contains_a_run_that_was_started(cleat, retry_workflow
     key = f"list-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 1,
-        "intervalMs": 50, "failTimes": 0,
+        "intervalMs": 50, "failTimes": 0, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
     cleat.await_terminal(started["id"], timeout=60.0)
@@ -267,7 +267,7 @@ def test_an_empty_collection_on_a_real_run_is_still_200(cleat, retry_workflow):
     key = f"empty-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 1,
-        "intervalMs": 50, "failTimes": 0,
+        "intervalMs": 50, "failTimes": 0, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
     run_id = started["id"]
@@ -300,7 +300,7 @@ def test_a_workflow_without_a_dag_reports_no_dag_rather_than_an_error(cleat, ret
     key = f"dag-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(retry_workflow, {
         "service": "flaky", "key": key, "attempts": 1,
-        "intervalMs": 50, "failTimes": 0,
+        "intervalMs": 50, "failTimes": 0, "failStatus": 0,
     })
     assert status == 201, f"start rejected: {status} {started}"
 

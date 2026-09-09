@@ -29,8 +29,18 @@ import (
 func HandleDetached(h cleat.HostCalls, key string, seq int) (string, error) {
 	_ = seq
 
+	// failStatus is passed explicitly even though 0 is what it defaults to.
+	// This payload omitted it, and for the two hours cleat#1046 made an absent
+	// int a decode error rather than a zero, the detached run died at its own
+	// front door. Invisible from here: RunDetached had already returned nil, so
+	// the parent still reported "requested" and only the fixture's call count
+	// disagreed -- exactly the cleat#796 signature this test exists to catch,
+	// produced by something else entirely. cleat#1057 restored the zero, so this
+	// line is no longer load-bearing for correctness; it stays because a payload
+	// that names every parameter cannot be quietly wrong about any of them.
 	input := fmt.Sprintf(
-		`{"service":"flaky","key":%q,"attempts":1,"intervalMs":100,"failTimes":0}`, key)
+		`{"service":"flaky","key":%q,"attempts":1,"intervalMs":100,"failTimes":0,`+
+			`"failStatus":0}`, key)
 
 	if err := h.RunDetached("retrycall", input); err != nil {
 		return "", fmt.Errorf("run detached: %w", err)

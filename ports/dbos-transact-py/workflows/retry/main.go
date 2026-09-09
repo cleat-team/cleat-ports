@@ -30,9 +30,23 @@ import (
 //
 // failStatus selects the HTTP status the fixture fails with, which is what
 // makes cleat's classification boundary observable from a port. Zero means the
-// fixture's default of 503, so a caller that omits it behaves exactly as before
-// this parameter existed -- the five tests written against the old signature
-// are unaffected rather than silently reclassified.
+// fixture's default of 503.
+//
+// It was added believing that made it optional: "a caller that omits it behaves
+// exactly as before this parameter existed -- the five tests written against
+// the old signature are unaffected rather than silently reclassified." That was
+// true when written, briefly false, and is true again: cleat#1046 moved int
+// parameters onto json.Unmarshal so an absent int stopped binding 0, and
+// cleat#1057 restored it. Sixteen call sites here were relying on the rule
+// without saying so, and all sixteen now pass failStatus explicitly.
+//
+// Note what "optional" rested on, because it is worth not repeating: absent
+// bound the zero value for strings AND ints, so the two looked like one rule.
+// They were two, and only one of them changed. A string parameter added the
+// same way would still be safe to omit today.
+//
+// conftest.Cleat.start now refuses a payload missing any declared parameter,
+// so a future parameter cannot be optional by accident in either direction.
 func HandleRetry(h cleat.HostCalls, service string, key string, attempts int, intervalMs int, failTimes int, failStatus int) (string, error) {
 	req := fmt.Sprintf(`{"key":%q,"fail_times":%d,"fail_status":%d}`, key, failTimes, failStatus)
 
