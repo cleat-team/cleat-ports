@@ -16,6 +16,23 @@ to be misread as an absence by someone skimming for gaps, and *"we decided
 against this, here is why"* is a stronger statement than *"lacks it"*.
 Suggested by the rcownie-ef session while reading `test_dbos.py`.
 
+**Blockers concentrate; they do not spread.** Three files have now been read by
+three sessions independently, and each bottoms out on two or three specific
+missing verbs rather than on a thin scatter across the surface:
+
+| file | cases | the blockers, and how much they account for |
+|---|---:|---|
+| `test_failures.py` | 37 | per-call timeout, transactions, SQLite backend |
+| `test_scheduler.py` | 35 | `apply_schedules` 8 · `trigger_schedule` 6 · `backfill_schedule` 2 — 24 of 35 |
+| `test_dbos.py` | 61 | `@DBOS.transaction` 16 · step listing 7 · bulk send 5 · fork 3 — 42 of 61 |
+
+That is more actionable than a per-file portable count: **adding one verb unblocks
+a double-digit number of cases in a single file.** A reader deciding what to build
+should start here rather than with the totals.
+
+Two of those blockers are recorded nowhere but a migration guide — see the
+`test_dbos.py` section on `@DBOS.transaction`.
+
 Upstream: `dbos-inc/dbos-transact-py`, MIT. Not vendored — this port re-expresses
 assertions rather than copying source.
 
@@ -192,3 +209,108 @@ Cases whose names announce their own answer, as a free control — all agree:
 | `test_pause_resume_schedule` | pause/resume | covered by enable/disable |
 
 Checked as a **partition**: every one of the 35 appears in exactly one bucket, none twice, none missing. `5 + 6 + 24 = 35` holds just as well with one case dropped and another double-counted.
+
+---
+
+## `tests/test_dbos.py` — 61 cases, read at `833794f7`
+
+**17 portable · 0 already covered · 2 answered differently on purpose · 42 need something cleat does not have.**
+
+Count reconciled before classifying: 61 by `def`, and **zero** parametrize
+expansion, so def-count equals collection count here and matches the inventory
+table's 61. Checked because the 44-vs-46 discrepancy on
+`test_workflow_management.py` was entirely one `@parametrize`d case.
+
+### What blocks the 42
+
+| blocker | n | evidence |
+|---|---:|---|
+| no `@DBOS.transaction` equivalent | 16 | `docs/migration/from-dbos.md:23` and `:386` |
+| internal API as setup — see below | 13 | `_sys_db` / `sql_session` |
+| no step listing | 7 | `list_workflow_steps`, `step_status` |
+| no bulk send | 5 | `send_bulk` |
+| no fork | 3 | `fork_workflow` |
+
+### The transaction gap is documented outside the ledger
+
+`docs/migration/from-dbos.md` states it twice — a mapping row at `:23`
+(`@DBOS.transaction` → `call("database", "query", ...)`) and a section at `:386`,
+*"No `@DBOS.transaction` Equivalent"*: workflows run in WASM and cannot reach a
+database directly. `grep -inE "transaction|sql_session"` over ISSUES.md returns
+nothing.
+
+**16 of 61 cases in a priority-2 file bottom out on a limitation recorded only in
+a migration guide**, which is not where anyone reading a work-list looks. Filed
+as its own ISSUES entry.
+
+### The 13 "internal API" cases are setup, not subject
+
+A first pass classified everything touching `_sys_db`/`sql_session` as
+declined-on-contract, following the reasoning used for
+`test_workflow_management.py`, and produced 23. But the assertion is never on the
+internal API — those cases *force a state* and then assert on behaviour:
+
+    test_recovery_thread            set_workflow_status(dbos._sys_db, wfuuid, "PENDING")
+    test_recovery_reenqueue_...     with dbos._sys_db.engine.begin() as c:
+
+Splitting subject from setup gives **zero** cases asserting on internals. So the
+decline-on-contract reasoning, correct for that other file, does not transfer
+here — and cleat can reach those states another way: kill the worker and let the
+reaper reclaim, which `test_recovery.py` already does.
+
+**Portable via that route — 6:** `test_recovery_thread`,
+`test_recovery_workflow_step`, `test_recovery_empty_id_dead_letters`,
+`test_recovery_reenqueue_is_ownership_conditional` (the property is the ownership
+fence, cleat's `WHERE assigned_to = ? AND generation = ?`),
+`test_simple_workflow_attempts_counter` (cleat gained `reclaim_count` in
+cleat#1055), `test_workflow_returns_none`.
+
+**The subject really is a DBOS implementation detail — 3:** these assert on
+PostgreSQL triggers *by name* and on `sys_db.notifications_map` —
+`test_recv_wakeup_trigger_is_kept` (*"dbos_notifications_trigger must be kept"*),
+`test_get_event_delivered_by_notifier_without_trigger` (*"should have been
+dropped"*), `test_notification_fallback_polling`. Read in full; these three are
+why the split had to be done case by case rather than by rule.
+
+**Already a recorded gap — 2:** `test_workflow_timeout` (ISSUES 25),
+`test_eid_reset` (no durable record of which worker ran a workflow).
+
+### Answered differently on purpose — 2
+
+`test_recovery_appversion` — DBOS pins a run to an application version because
+code ships with the process. cleat pins code in the database
+(`workflow_defs.wasm_bytes`), so there is no worker lacking the code and nothing
+to hold a run for. Investigated and closed as not-a-gap; `test_versions.py`
+covers cleat's version of the property, and ports#91 covers the guarantee
+underneath it.
+
+`test_workflow_wrapped_by_custom_decorator` — Python decorator composition. SDK
+ergonomics, not engine behaviour.
+
+### Validation, including where the check was wrong
+
+| case | the name announces | classified | |
+|---|---|---|---|
+| `test_send_bulk_send_to_forks` | fork | needs fork | ok |
+| `test_nested_steps` | step listing | needs step listing | ok |
+| `test_duplicate_recovery_does_not_rerun_running_workflow` | recovery | no explicit recovery API | ok |
+| `test_recovery_workflow` | recovery | internal API | **check wrong** |
+| `test_recovery_thread` | recovery | internal API | **check wrong** |
+
+**The last two are the useful rows.** The validator expected a recovery case to
+classify as needing a recovery API; first-match ordering put `_sys_db` ahead of
+it, so the check reported MISS while the classifier was right. Reordering the
+blockers would have produced a clean, plausible, still-wrong table.
+
+What stopped that was that **four** recovery cases missed together: one looks
+like a bad rule, four look like a bad question. Chasing it is what exposed the
+setup/subject conflation above, which moved 10 cases out of "declined".
+
+A validation table that only ever confirms is the same trap one level up.
+Recorded here rather than silently corrected.
+
+### Confidence
+
+The four ambiguous cases were classified by reading their assertions. The other
+nine internal-API cases were classified from setup lines and names, which is
+weaker — open the case before trusting its bucket.
