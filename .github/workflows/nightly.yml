@@ -62,6 +62,31 @@ jobs:
         with: { go-version: "1.25" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
+      # ONE LEG PER RUNNER, AND THAT IS LOAD-BEARING. Each matrix combination
+      # is its own job on a fresh VM, so no leg inherits another's containers,
+      # .port-results/ or stray worker process.
+      #
+      # It matters because `make port`'s cleanup is dialect-blind: in
+      #
+      #   @trap './scripts/worker.sh stop' EXIT ...; CLEAT_PORTS_DIALECT=$(DIALECT) ./scripts/run-port.sh
+      #
+      # the assignment is a command prefix on run-port.sh, so the trap's shell
+      # never sees it and cleanup runs at the DEFAULT dialect. That is not
+      # cosmetic: scripts/worker.sh's stop_worker calls `owned || refuse_foreign`
+      # (:224), and owned() matches the running process's command line against
+      # $CLEAT_PORTS_DSN (:188) -- which, computed at the wrong dialect, will not
+      # match a mysql or mssql worker. Cleanup then declares its own worker
+      # foreign and exits, leaving it alive.
+      #
+      # So a sequential sweep that switched dialects inside ONE shell would
+      # leave a worker behind at every non-postgres leg, and the next leg at a
+      # different dialect would be refused -- with a message naming two wrong
+      # causes before the real one. Nobody has hit it because a single manual
+      # run never switches dialects.
+      #
+      # Do not consolidate these legs into a single job to save runner minutes
+      # without re-reading that trap first. Fresh-VM-per-combination is what
+      # makes the bug dormant here, not anything this workflow does.
       - name: Start ${{ matrix.dialect }}
         run: make deps DIALECT=${{ matrix.dialect }}
       - name: Install cleat @ ${{ inputs.cleat_ref || 'develop' }}
