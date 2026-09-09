@@ -173,6 +173,15 @@ a judgement that `tests/test_retries.py`, `test_children.py`, `test_defer.py`,
 It has **not** been checked case by case against those files, and that check is
 the first thing to do before anyone treats the number below as a backlog.
 
+> **CLAIMED 2026-09-09 by session `01UbTiXNC2rGrEbBheCUkd57`** — I am doing that
+> check now. Recorded here rather than agreed over a socket, because an offer
+> that lives only in a message is invisible to whoever reads this file next:
+> that is precisely how ports#137 and ports#141 came to port the same upstream
+> case thirteen minutes apart tonight.
+>
+> Findings go in this section. If it is still unedited below this line in a day,
+> assume I dropped it and take it.
+
 ---
 
 ## What this adds up to, and what it does not
