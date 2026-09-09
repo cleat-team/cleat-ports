@@ -334,7 +334,22 @@ def inventory(tests_dir):
             ported[up] = ported.get(up, 0) + n
 
     L = []
-    L.append("| Upstream file | Cases | Priority | Ported |")
+    # "Cases here", not "Ported". This column sums the cases in THIS port's
+    # modules that map to that upstream file. It is NOT a count of upstream
+    # cases covered, and sitting beside a `Cases` column it reads as a coverage
+    # ratio that it is not.
+    #
+    # Concretely: seven of this port's modules map to test_queue.py. Three of
+    # them -- locks, priority order, executor identity -- assert cleat-specific
+    # behaviour with no upstream case at all, and one (timeouts) is a single
+    # skip. So "19 of 91" would be wrong in both directions at once: it counts
+    # cases that cover nothing upstream, and says nothing about how many of the
+    # 91 are covered.
+    #
+    # Noticed because the work-list said "19 plausibly portable" and this
+    # column said "19", and the two numbers measure different things. Equal by
+    # coincidence, and the coincidence read as confirmation.
+    L.append("| Upstream file | Cases | Priority | Cases here |")
     L.append("|---|---:|---|---:|")
     for f, n, prio, _ in UPSTREAM:
         L.append(f"| `tests/{f}` | {n} | {prio} | {ported.get(f, 0)} |")
@@ -353,7 +368,7 @@ def inventory(tests_dir):
     tot = sum(n for n, _ in counts.values())
     tsk = sum(sk for _, sk in counts.values())
     L.append(f"| **Total** | **{tot}** ({tsk} skipped outright) | "
-             f"**{sum(ported.values())}** credited upstream, "
+             f"**{sum(ported.values())}** mapped to an upstream file, "
              f"**{tot - sum(ported.values())}** cleat-specific |")
     return "\n".join(L)
 
