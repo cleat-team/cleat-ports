@@ -67,8 +67,54 @@ jobs:
       issues: read
     outputs:
       ports: ${{ steps.list.outputs.ports }}
+      needs_ports: ${{ steps.paths.outputs.needs_ports }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Full history: the diff below needs the merge base, and the default
+          # shallow clone does not have it. A missing base is indistinguishable
+          # from an empty diff, which would skip the ports on every PR.
+          fetch-depth: 0
+      - id: paths
+        name: Does this change need the port matrix
+        # DEFAULT TO RUNNING. Every branch that cannot positively establish
+        # "nothing here affects a port run" emits true, because the two errors
+        # are not symmetric: a docs change that runs the matrix wastes 18
+        # minutes and is obvious, while a port change that skips it reports
+        # green having tested nothing and is invisible.
+        #
+        # So: unknown event type, missing base, failed diff, empty file list --
+        # all true.
+        run: |
+          set -uo pipefail
+          decide() { echo "needs_ports=$1" >> "$GITHUB_OUTPUT"; echo "decision: $1 ($2)"; }
+
+          case "${{ github.event_name }}" in
+            pull_request) BASE="${{ github.event.pull_request.base.sha }}"; HEAD="${{ github.event.pull_request.head.sha }}" ;;
+            merge_group)  BASE="${{ github.event.merge_group.base_sha }}";  HEAD="${{ github.event.merge_group.head_sha }}" ;;
+            *)            decide true "event ${{ github.event_name }} carries no diff to inspect"; exit 0 ;;
+          esac
+
+          if [ -z "$BASE" ] || [ -z "$HEAD" ]; then
+            decide true "no base or head sha on this event"; exit 0
+          fi
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            decide true "base $BASE is not in this clone"; exit 0
+          fi
+
+          FILES="$(git diff --name-only "$BASE" "$HEAD")" || { decide true "git diff failed"; exit 0; }
+          if [ -z "$FILES" ]; then decide true "empty diff"; exit 0; fi
+
+          echo "changed files:"; echo "$FILES" | sed 's/^/  /'
+
+          # What a port RUN depends on. Anything not matched here cannot change
+          # what the matrix does, and the list is deliberately generous --
+          # go.mod and the workflow itself are in it because a change to either
+          # can alter the run without touching a test.
+          if echo "$FILES" | grep -qE '^(scripts/|Makefile$|go\.(mod|sum)$|\.github/workflows/ci\.yml$|ports/[^/]+/(tests/|workflows/|Makefile$|requirements.*$|go\.(mod|sum)$))'; then
+            decide true "a path the port run depends on changed"; exit 0
+          fi
+          decide false "only documentation, inventories and per-port scripts changed"
       - id: list
         # Ports are discovered rather than listed here, so adding a port never
         # requires also remembering to edit this workflow. TEMPLATE is not a port.
@@ -125,6 +171,7 @@ jobs:
   port:
     name: ${{ matrix.port }}
     needs: discover
+    if: needs.discover.outputs.needs_ports == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -213,11 +260,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check every port job succeeded
+        # THIS JOB MUST ALWAYS REPORT. It is a required status check, so a
+        # gate that fails to run is indistinguishable to the merge queue from
+        # one that has not finished, and nothing merges. `if: always()` above
+        # is what guarantees it; do not add a condition here.
+        #
+        # The skip case is the reason this is not a two-line check. When the
+        # matrix is skipped, `needs.port.result` is "skipped" -- and so it is
+        # when a dependency FAILED and the matrix never ran. Those two are the
+        # same string and must not be the same verdict, so the deliberate skip
+        # is recognised by discover's own output rather than by the result.
         run: |
-          echo "discover: ${{ needs.discover.result }}"
-          echo "port:     ${{ needs.port.result }}"
-          if [ "${{ needs.discover.result }}" != "success" ] || \
-             [ "${{ needs.port.result }}" != "success" ]; then
+          set -uo pipefail
+          echo "discover:   ${{ needs.discover.result }}"
+          echo "port:       ${{ needs.port.result }}"
+          echo "needs_ports: ${{ needs.discover.outputs.needs_ports }}"
+
+          if [ "${{ needs.discover.result }}" != "success" ]; then
+            echo "::error::discover did not succeed, so nothing here knows what should have run"
+            exit 1
+          fi
+
+          if [ "${{ needs.discover.outputs.needs_ports }}" = "false" ]; then
+            # Deliberate skip. Require the matrix to be exactly "skipped": a
+            # failure or cancellation here would mean it ran after all and did
+            # not pass, which must never be read as "we chose not to run it".
+            if [ "${{ needs.port.result }}" != "skipped" ]; then
+              echo "::error::the port matrix was not required but reported '${{ needs.port.result }}' rather than 'skipped'"
+              exit 1
+            fi
+            echo "no port ran: this change touches no path a port run depends on."
+            echo "See the 'Does this change need the port matrix' step for the file list and the decision."
+            exit 0
+          fi
+
+          if [ "${{ needs.port.result }}" != "success" ]; then
             echo "::error::one or more port jobs did not succeed"
             exit 1
           fi
