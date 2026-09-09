@@ -2,7 +2,7 @@
 
 **Class:** Open question — measured, not adjudicated
 **Upstream test:** `tests/test_failures.py` — `test_recovery_during_retries`
-**Status:** Open
+**Status:** Open — filed upstream as cleat#1111
 
 **What was measured**
 
