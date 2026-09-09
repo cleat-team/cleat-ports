@@ -148,11 +148,16 @@ middleware), not in workflow code"* — so this is a deliberate difference, but 
 ISSUES 26 (nothing records which worker ran a workflow) without being the same
 question.
 
-### Portable — 3
+### Portable — 3 · **ported 2026-09-09 · the reading below was WRONG**
 
 One case, parametrized ×3: **`test_client_enqueue_rejects_empty_workflow_id`**,
 upstream's #759 — an empty or whitespace id must be *rejected*, not inserted
 verbatim, and `_workflow_exists` then confirms nothing was written.
+
+Ported as `tests/test_idempotency_key_form.py` (ports#125), five tests: the three
+blank forms, a control, and the mechanism.
+
+#### The prediction, and why it is left here rather than deleted
 
 cleat generates the run id server-side, so the direct analogue does not exist.
 The nearest caller-supplied identifier is the `Idempotency-Key` header, and the
@@ -163,20 +168,37 @@ guard on it is a bare emptiness test with no trim, on every dialect:
     engine/mysql_lifecycle.go:571    if idempotencyKey != "" {      // mysql
     engine/mssql_lifecycle.go:1074   if idempotencyKey != "" {      // sqlserver
 
-`""` means "no key" and skips the block. `"   "` is not `""`, so it is hashed and
-stored as a real key. Within one tenant, any two unrelated requests that both
-send a blank-but-present key are then deduplicated onto the same run: the second
-gets the first's workflow id with `already_started: true`, and its own workflow
-never starts. `grep -rn "Idempotency-Key" --include='*.go' cmd/ engine/` shows no
-validation anywhere between the header and the hash, and no test covers it.
+From that, this section predicted: `""` means "no key" and skips the block; `"   "`
+is not `""`, so it is hashed and stored as a real key, and two unrelated requests
+that both send a blank-but-present key deduplicate onto the same run.
 
-**Stated as read, not run.** The chain above is three hops with no branch between
-them, but nothing here has executed it, and this port's own history is a series
-of cases where the live path differed from the readable one. **That is the
-portable case**: one test that sends `Idempotency-Key: "   "` twice with different
-payloads and asserts two runs — which either confirms the reading or refutes it,
-and is worth having either way. Deliberately *not* filed as a cleat defect until
-someone runs it.
+**Every citation above is accurate and the conclusion is false.** Measured
+2026-09-09 against a live worker: a whitespace-only key does **not** deduplicate.
+Both starts answer `201` with different run ids and no `already_started`.
+
+**The chain has a fourth hop the reading did not have.** Go's `net/textproto`
+trims leading and trailing whitespace from header values while parsing the
+request, so `"   "` reaches the handler as `""` and never meets the `!= ""` guard.
+That is not a check cleat wrote — it is the HTTP library — and the evidence is
+`test_whitespace_around_a_key_is_not_part_of_it`: a padded key and a bare key
+deduplicate **together**, which can only happen if the padding was removed before
+either was stored.
+
+So the property holds and is held up by a layer nobody in cleat chose. It would
+stop holding if the key ever moved somewhere that layer does not reach — a JSON
+body field, where `!= ""` would be the whole guard. `StartNewRun`'s only two
+callers passing a non-empty key are that handler and the scheduler, whose key is
+engine-generated, so there is no such path today.
+
+**Why this is written out rather than replaced with the right answer.** Three
+correct file:line citations, a chain with no branch in it, and a wrong
+conclusion, is the most expensive shape a work-list can carry: the next reader
+checks the citations, finds them accurate, and files a defect that does not
+exist. The original text said *"stated as read, not run"* and *"deliberately not
+filed as a cleat defect until someone runs it"*, and that caveat is the only
+reason no bogus issue was filed in the two days it stood. **The caveat did its
+job; the citations did not.** Reading a chain end to end cannot find a hop you
+did not know to look for.
 
 ### Validation
 
