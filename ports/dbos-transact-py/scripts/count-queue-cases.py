@@ -345,27 +345,45 @@ def inventory(tests_dir):
             ported[up] = ported.get(up, 0) + n
 
     L = []
-    # "Cases here", not "Ported". This column sums the cases in THIS port's
-    # modules that map to that upstream file. It is NOT a count of upstream
-    # cases covered, and sitting beside a `Cases` column it reads as a coverage
-    # ratio that it is not.
+    # This table is hand-authored constants only -- upstream file, its case
+    # count, and our priority. It deliberately has NO column derived from our
+    # own tree, and there used to be one ("Cases here"), removed for two
+    # independent reasons that happen to point the same way.
     #
-    # Concretely: seven of this port's modules map to test_queue.py. Three of
-    # them -- locks, priority order, executor identity -- assert cleat-specific
-    # behaviour with no upstream case at all, and one (timeouts) is a single
-    # skip. So "19 of 91" would be wrong in both directions at once: it counts
-    # cases that cover nothing upstream, and says nothing about how many of the
-    # 91 are covered.
+    # It collided. It aggregated across every module mapping to an upstream
+    # file, so ANY new test rewrote the row for that file -- measured on
+    # ports#127 vs #132, where `test_dbos.py` read 22 on one side and 23 on the
+    # other and git could not merge them. Unlike a per-module row, which its
+    # author owns, this cell had as many authors as the file had mappings.
     #
-    # Noticed because the work-list said "19 plausibly portable" and this
-    # column said "19", and the two numbers measure different things. Equal by
-    # coincidence, and the coincidence read as confirmation.
-    L.append("| Upstream file | Cases | Priority | Cases here |")
-    L.append("|---|---:|---|---:|")
+    # And it misled. Beside a `Cases` column it read as a coverage ratio, which
+    # it never was: seven of this port's modules map to test_queue.py, and
+    # three of them -- locks, priority order, executor identity -- assert
+    # cleat-specific behaviour with no upstream case at all. So "19 of 91" was
+    # wrong in both directions at once. It counted cases covering nothing
+    # upstream, and said nothing about how many of the 91 were covered.
+    #
+    # Noticed because a work-list said "19 plausibly portable" and this column
+    # said "19" -- two different measurements, equal by coincidence, and the
+    # coincidence read as confirmation.
+    L.append("| Upstream file | Cases | Priority |")
+    L.append("|---|---:|---|")
     for f, n, prio, _ in UPSTREAM:
-        L.append(f"| `tests/{f}` | {n} | {prio} | {ported.get(f, 0)} |")
-    L.append(f"| **Total in scope** | **{sum(n for _, n, _, _ in UPSTREAM)}** | | "
-             f"**{sum(ported.values())}** |")
+        L.append(f"| `tests/{f}` | {n} | {prio} |")
+    # NO TOTALS ROW, and that is the point rather than an omission.
+    #
+    # Every per-file row is owned by whoever last touched that upstream file,
+    # so two people working on different files rewrite different lines and git
+    # merges them. A totals row is rewritten by EVERY test anyone adds, so it
+    # is the one line that collides every time -- and it did, ~20% of the
+    # pull requests here touch this file. That is the same defect the per-entry
+    # split fixed for ISSUES.md and WORKLIST.md, surviving in the one aggregate
+    # that stayed generated-and-stored.
+    #
+    # The totals are derived, so they are derived on demand: --check computes
+    # and prints them, and CI shows them on every run. A reader who wants the
+    # sum runs the command; a reader who wants to know about one upstream file
+    # -- which is what anyone actually asks -- reads its row.
     L.append("")
     L.append("| This suite | Cases | Mapped to |")
     L.append("|---|---:|---|")
@@ -376,12 +394,29 @@ def inventory(tests_dir):
         n, sk = counts[mod]
         cell = f"{n}" + (f" ({sk} skipped)" if sk else "")  # decorator skips only
         L.append(f"| `{mod}` | {cell} | {where}{tail} |")
+    return "\n".join(L)
+
+
+def totals(tests_dir):
+    """The figures that used to be stored as two table rows.
+
+    Derived and printed rather than committed, for the reason in inventory():
+    a stored aggregate is rewritten by every contribution and so collides with
+    every other. Takes tests_dir rather than precomputed counts so that no
+    caller can pass it a stale pair.
+    """
+    counts = port_counts(tests_dir)
+    ported = {}
+    for mod, (n, _) in counts.items():
+        up = MAPPING[mod][0]
+        if up:
+            ported[up] = ported.get(up, 0) + n
     tot = sum(n for n, _ in counts.values())
     tsk = sum(sk for _, sk in counts.values())
-    L.append(f"| **Total** | **{tot}** ({tsk} skipped outright) | "
-             f"**{sum(ported.values())}** mapped to an upstream file, "
-             f"**{tot - sum(ported.values())}** cleat-specific |")
-    return "\n".join(L)
+    mapped = sum(ported.values())
+    return (f"in scope {sum(n for _, n, _, _ in UPSTREAM)} upstream cases; "
+            f"this suite has {tot} ({tsk} skipped outright), "
+            f"{mapped} mapped to an upstream file and {tot - mapped} cleat-specific")
 
 
 if __name__ == '__main__':
@@ -391,6 +426,9 @@ if __name__ == '__main__':
         table = inventory(os.path.join(here, "tests"))
         if sys.argv[1] == "--inventory":
             print(table)
+            print()
+            print("totals (derived, deliberately not stored):",
+                  totals(os.path.join(here, "tests")))
         else:
             readme = open(os.path.join(here, "README.md")).read()
             missing = [ln for ln in table.split("\n")
@@ -402,6 +440,19 @@ if __name__ == '__main__':
                     "    python3 ports/dbos-transact-py/scripts/count-queue-cases.py --inventory\n"
                     "and paste both tables in. Rows that differ:\n  "
                     + "\n  ".join(missing))
+            stored = [ln for ln in readme.split("\n")
+                      if ln.startswith("| **Total")]
+            if stored:
+                raise SystemExit(
+                    "README.md has a stored totals row again. Totals are "
+                    "derived, and a stored aggregate is rewritten by every "
+                    "contribution, so it is the one line every concurrent "
+                    "branch collides on -- which is why it was removed. Delete "
+                    "these rows; --check and --inventory both print the "
+                    "figures:\n  " + "\n  ".join(stored))
             print("README.md inventory tables match the tree")
+            # The totals live here rather than in the file, so CI reports them
+            # on every run and no contribution has to rewrite a shared line.
+            print("totals:", totals(os.path.join(here, "tests")))
     else:
         main(sys.argv[1], sys.argv[2:])
