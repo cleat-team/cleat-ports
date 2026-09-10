@@ -78,6 +78,31 @@ Stripped of the retry policy the case is `Test_SingleSubOrchestrator_Failed`,
 which is ported above, so porting it would add a second copy of one assertion
 under a name claiming another.
 
+**`Test_TerminateOrchestration_Recursive_TerminateCompletedSubOrchestration` —
+ported.**
+
+Claimed here rather than in `docs/durabletask-go-orchestrations-survey.md`,
+which is the agreed place, because two PRs (#140, #148) currently have that file
+open and a third writer guarantees a conflict for one of them. The purpose of
+claiming is that another session can see it before starting; this file is as
+visible and is the port's own.
+
+**Two mappings this case needs, both checked against cleat rather than assumed.**
+
+*Recursion is decided at a different time.* Upstream passes
+`WithRecursiveTerminate(recurse)` at **terminate** time and parametrises over
+both values. cleat decides per child at **spawn** time, via
+`ChildWorkflowOptions.ParentClosePolicy` — so upstream's `recurse=true` maps to
+a child spawned `TERMINATE`, and `recurse=false` to one spawned `ABANDON`, which
+is cleat's default. The parametrisation ports; the flag does not.
+
+*There is no terminate route.* The per-run verbs are `allowed-signals cancel dag
+disable enable history promises query retry routing signal start tags terminal
+update`. `enforceParentClosePolicy` fires when the parent **closes** — completes
+or fails — so the port drives it by letting the parent finish rather than by
+terminating it. Same predicate, reached the way this engine reaches it.
+
+
 ## Cases examined first-hand, and what each check established
 
 Named because a survey of upstream establishes what **upstream** asserts; it
@@ -156,6 +181,38 @@ the first and not the second.
 Whether cleat's event history exposes a seam equivalent to upstream's replay
 state machine is not established by reading upstream, and it has not been
 checked here. No portable figure is quoted for this file.
+
+## Changing a fixture is not enough to change what runs
+
+Two layers cache, and both produced a **wrong falsification** before being
+found — a mutation reported as having no effect, when it had never been
+applied.
+
+**A redeploy does not replace the workflow bytes.** `deploy-workflow` is
+idempotent by `(name, version)`. Editing a fixture and re-running leaves the
+previous WASM in `workflow_defs`, and the test exercises the old code while the
+source on disk shows the new. Verified rather than guessed: after editing a
+child's `ParentClosePolicy` from TERMINATE to ABANDON and re-running, the new
+run's rows still read
+
+```sql
+SELECT parent_close_policy FROM workflow_instances WHERE def_name = 'dtg_terminate_leaf';
+-- TERMINATE
+```
+
+and `workflow_defs` still held one row, version 1, created by the first run.
+
+**`worker.sh ensure` reuses a running worker.** Rebuilding `bin/cleat-worker`
+changes nothing until the process is restarted, and `ensure` on a live worker is
+a no-op that prints a port-in-use hint rather than an error. Compare the binary's
+mtime against `ps -p "$(cat .port-results/<project>/worker.pid)" -o lstart=`,
+and check the pid actually changes across a `stop`/`ensure`.
+
+**So a falsification here has three layers to get wrong**, and each fails
+silently in the reassuring direction: the source changed, the artifact did not;
+the artifact changed, the process did not; the process changed, the assertion
+was never sensitive to it. Assert the mutation applied *at the layer the test
+reads*, not at the one you edited.
 
 ## Two things learned building this, recorded because they cost time
 
