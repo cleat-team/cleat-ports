@@ -223,3 +223,76 @@ def test_a_signal_goes_to_the_await_that_named_it_and_same_name_signals_queue_in
         "['first', 'second']. Within one name the oldest must come first; "
         "reversed means the queue is a stack."
     )
+
+
+def test_an_identical_resent_signal_is_a_second_signal(
+    cleat, signal_order_workflow, fixture_calls
+):
+    """Sending the same signal twice delivers it twice. cleat#1121.
+
+    Upstream `dbos-transact-py` has `test_send_idempotency_key`: a send carries
+    an explicit key and a duplicate is absorbed. cleat's signal path takes no
+    key -- `cleat_signal_workflow(target, signal, payload)` is three arguments
+    -- so there is nothing a retrying sender can use to make a resend safe.
+
+    THIS TEST PINS THE CURRENT BEHAVIOUR RATHER THAN THE DESIRED ONE. It is not
+    a bug report in test form: at-least-once delivery is a defensible position,
+    and cleat has not claimed otherwise. What it is not is *discoverable* --
+    nothing anywhere measured it, so the property held by accident of nobody
+    looking. When cleat grows a key for signals this test must be updated, and
+    that is the point: the change becomes visible instead of silent.
+
+    THE IDENTICAL PAYLOAD IS THE WHOLE POINT, and it is what separates this
+    from the ordering test above. That one also sends `queued` twice, but with
+    payloads `first` and `second` -- two sends that differ are two signals
+    under any semantics, deduplicating or not, so it cannot see this property.
+    A retrying sender produces byte-identical repeats, which is the only form
+    a deduplicating engine could absorb.
+
+    signalorder is the instrument because it awaits `queued` TWICE. That makes
+    the two outcomes different terminal states rather than different counts:
+
+      absorbed -> the second await is never satisfied -> outcome `timedout`
+      distinct -> both awaits are satisfied           -> outcome `read`
+
+    so a wrong answer cannot be read as a slow one. The 25s timeout is well
+    inside the 90s await_terminal below, so the absorbed case reports rather
+    than hanging.
+    """
+    key = f"dupsig-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(signal_order_workflow, {"key": key, "timeoutMs": 25_000})
+    assert status == 201, f"start rejected: {status} {started}"
+    target = started["id"]
+
+    wait_until(
+        lambda: fixture_calls(f"{key}-waiting") == 1,
+        timeout=60.0,
+        what="the receiver to reach its first await",
+    )
+
+    for name, payload in (("topic", "only"), ("queued", "same"), ("queued", "same")):
+        code, body = cleat.signal(target, name, payload)
+        assert code in (200, 202, 204), (
+            f"signal {name}={payload!r} rejected: {code} {body!r}. A duplicate "
+            f"being REFUSED would also be a way to answer this question, and a "
+            f"different one from absorbing it silently."
+        )
+
+    final = cleat.await_terminal(target, timeout=90.0)
+    assert final["status"] == "done", f"the receiver did not complete: {final!r}"
+    body = _body(final)
+
+    assert body["outcome"] == "read", (
+        f"the receiver reported {body!r}. `timedout` here would mean the second "
+        f"`queued` await was never satisfied -- that is cleat absorbing the "
+        f"identical resend, which is the upstream behaviour and would mean this "
+        f"test's name is now wrong and cleat#1121 is closed."
+    )
+    assert body["names"] == ["topic", "queued", "queued"], (
+        f"the awaits were satisfied by {body['names']!r}, not by two `queued`."
+    )
+    assert body["payloads"] == ["only", "same", "same"], (
+        f"payloads were {body['payloads']!r}. Both `queued` awaits read the "
+        f"identical payload, so the resend was delivered as its own signal "
+        f"rather than recognised as a repeat of the first."
+    )
