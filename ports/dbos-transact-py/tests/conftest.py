@@ -681,6 +681,12 @@ def replay_identity_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def continue_as_new_signal_workflow(cleat: Cleat) -> str:
+    """The workflow that leaves a signal unconsumed across a continue-as-new."""
+    return _build_and_deploy("cansignal", "can_signal")
+
+
+@pytest.fixture(scope="session")
 def continue_as_new_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("continueasnew", "continue_as_new")
 

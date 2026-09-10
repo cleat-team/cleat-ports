@@ -152,7 +152,7 @@ asserts the property:
 | `Test_RecreateCompletedOrchestration` | re-using a completed run's id **runs it again with new input**. cleat does the opposite: ports#108 pinned that a completed run still answers for its idempotency key for seven days. A direct, decided divergence — the port test asserts cleat's side |
 | `Test_SingleActivity_ReuseInstanceIDIgnore` | upstream's opt-in `IGNORE` is cleat's *default*. Also asserts the surviving run's `CreatedAt` is the **first** one's, which cleat can answer and nothing here checks |
 | `Test_ExternalEventTimeout` ×2 | event-or-timeout, both branches, in one fixture |
-| `Test_ContinueAsNew_Events` | events carried across a continue-as-new boundary |
+| `Test_ContinueAsNew_Events` | events carried across a continue-as-new boundary — **CLAIMED 2026-09-09 by session `01UbTiXNC2rGrEbBheCUkd57`**, and it lands as a divergence rather than a port: upstream's `WithKeepUnprocessedEvents()` is opt-in and cleat has no counterpart. `ContinueAsNew` never touches `workflow_signals` on any of the three dialects, and the table is keyed by `workflow_id`, so an unconsumed signal stays on the old run. Porting the assertion cleat *can* answer |
 | `Test_ExternalEventContention` | three events raised, ordering across a continue-as-new |
 
 **Declines — cleat has no counterpart:**

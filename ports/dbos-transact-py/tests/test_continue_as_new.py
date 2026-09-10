@@ -146,3 +146,100 @@ def test_the_chain_is_followable_to_the_run_carrying_the_result(
     assert result.get("outcome") == "finished", (
         f"the terminal run does not carry the finished result: {result!r}"
     )
+
+
+def test_a_delivered_but_unconsumed_signal_does_not_cross_a_continue_as_new(
+        cleat, continue_as_new_signal_workflow, fixture_calls):
+    """A signal left unconsumed at the boundary is not visible to the new run.
+
+    Upstream's `Test_ContinueAsNew_Events` carries such events across, behind an
+    explicit opt-in — `task.WithKeepUnprocessedEvents()`. cleat has no
+    counterpart, so the upstream case is not portable as written. What cleat can
+    answer is what happens by default, and nothing here asked.
+
+    **The storage explains the answer and is worth stating, because the test
+    would otherwise look like it is hunting a bug.** `workflow_signals` is keyed
+    `(workflow_id, signal_name)`, and `ContinueAsNew` mints a NEW run id without
+    touching that table — zero mentions of `workflow_signals` inside the
+    function, on all three dialects. So the row stays attached to the run that
+    has just finished.
+
+    **This asserts cleat's behaviour, not upstream's.** It is a divergence
+    nobody has adjudicated: matching upstream's *default* (which also drops
+    them) while lacking upstream's opt-in. If cleat ever grows one, this test
+    should fail, and that failure is the point.
+
+    **Ordering is the whole fixture.** `carried` is delivered FIRST, while
+    iteration one is still parked on `go`. That is what makes it
+    already-delivered-and-unconsumed at the boundary rather than a signal that
+    simply arrived too late — two situations with the same visible outcome and
+    entirely different meanings.
+
+    **The control is built in, and it needs saying, because the obvious way for
+    this test to pass for the wrong reason is that signals never arrive at
+    all.** A test asserting a timeout is satisfied by a broken delivery path.
+
+    It cannot happen here: reaching iteration two at all requires `go` to have
+    been delivered and consumed by iteration one. If the signal path were
+    broken, iteration one would time out, return `never-released`, and never
+    continue — so `/terminal` would still be the run we started, and the
+    `final.get("id") != run_id` assertion below fails first. The path this test
+    depends on is exercised by the test itself, one step before the assertion.
+    """
+    key = f"cansignal-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(continue_as_new_signal_workflow,
+                                  {"key": key, "timeoutMs": 8000, "second": 0})
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    wait_until(lambda: fixture_calls(f"{key}-first") >= 1, timeout=60.0,
+               what="iteration 1 to reach its await")
+
+    # Delivered while iteration 1 is parked on a DIFFERENT name, so it is
+    # pending and unconsumed when the boundary is crossed.
+    status, _ = cleat.signal(run_id, "carried", json.dumps({"from": "iteration-1"}))
+    assert status in (200, 202), f"delivering `carried` failed: {status}"
+
+    status, _ = cleat.signal(run_id, "go", "{}")
+    assert status in (200, 202), f"releasing iteration 1 failed: {status}"
+
+    # The second iteration must actually START, or "no signal seen" would be
+    # indistinguishable from "the chain stopped".
+    wait_until(lambda: fixture_calls(f"{key}-second") >= 1, timeout=60.0,
+               what="iteration 2 to start")
+
+    # NOT await_terminal on the id we started. The first run of a chain reaches
+    # a terminal status the INSTANT it continues, so that call returns almost
+    # immediately with an empty result and says nothing about the second
+    # iteration -- which is what this test is about. That trap is documented at
+    # length in test_the_chain_is_followable_to_the_run_carrying_the_result
+    # above, and I walked into it anyway: the first version of this test failed
+    # with KeyError: 'outcome' on the original run's empty body.
+    #
+    # /terminal walks `continued_from` forward, and returns the last link
+    # recorded SO FAR -- a POSITION, not an outcome -- so it has to be polled
+    # until that link is itself done and carrying a result.
+    final = None
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
+        code, final = cleat.api(f"/api/workflows/{run_id}/terminal")
+        assert code == 200, f"/terminal answered {code}: {final!r}"
+        if final.get("status") == "done" and final.get("result"):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(f"the chain never reached a run carrying a result: {final!r}")
+
+    assert final.get("id") != run_id, (
+        f"/terminal returned the run we asked for rather than the second "
+        f"iteration: {final!r}"
+    )
+
+    body = _body(final)
+    assert body["outcome"] == "timedout", (
+        f"iteration 2 reported {body['outcome']!r}: {body}. `carried` means the "
+        "signal crossed the boundary — which would be a change in behaviour, "
+        "since ContinueAsNew does not touch workflow_signals on any dialect and "
+        "the table is keyed by workflow_id."
+    )
+    assert body["iteration"] == 2, f"the wrong iteration answered: {body}"
