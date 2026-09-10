@@ -55,7 +55,7 @@ verification had established something about the **upstream**.
 | `Test_ScheduleTimerTasks` | engine | same, for timers |
 | `Test_AbandonOrchestrationWorkItem` | **engine, novel** | abandon then refetch immediately |
 | `Test_AbandonActivityWorkItem` | **engine, novel** | same for activities |
-| `Test_PurgeOrchestrationState` | engine | 163 lines, the largest; purge and retention |
+| `Test_PurgeOrchestrationState` | engine | 163 lines, the largest; purge and retention. **Not portable — scoped 2026-09-10, see below.** Purge has no cleat counterpart at all; retention has one and it cannot be observed from outside the engine |
 | `Test_UninitializedBackend` | **not an engine assertion** | `ErrNotInitialized` before init — Go object lifecycle |
 | `Test_GetNonExistingMetadata` | already covered | `test_api_surface.py::test_an_unknown_run_is_a_clean_404_on_every_read_path` |
 
@@ -69,6 +69,47 @@ sub-orchestration, send event, `StateIsValid`, `DuplicateEvents`.
 does not port; **the property does** — a duplicate event in history must be
 rejected. It also carries an upstream `TODO` admitting it covers one duplicate
 type and not task completion, external events or sub-orchestration.
+
+## `Test_PurgeOrchestrationState` — retention exists and is unobservable
+
+Worth writing down because this row reads as the largest available piece of work
+and is not available at all. Both halves fail, for different reasons.
+
+**Purge** has no counterpart: there is no purge-a-run API. `PurgeWorkflowDef`
+purges a *definition*. That matches the orchestrations survey's decline of
+`Test_PurgeCompletedOrchestration`, re-verified the same day.
+
+**Retention** has a counterpart and the harness cannot reach it. Measured on
+cleat `d33f9ef`:
+
+- `runRetentionSweep` guards on `if retentionDays > 0`, so `0` means *disabled*
+  rather than *sweep everything*.
+- the window is `sweptAt.Add(-time.Duration(days) * 24 * time.Hour)` — integer
+  days, so **the smallest non-disabled cutoff is 24 hours in the past**.
+- the predicate is `completed_at < cutoff` (`DeleteExpiredEvents`), so a run
+  that completed seconds ago is never in scope.
+- nothing on the HTTP surface triggers a sweep, and `retention-interval`
+  defaults to 24h. (Grepped `server.go` for a retention or sweep route: one
+  match, a comment. The same grep finds `/api/admin/drain`, so the emptiness is
+  a measurement rather than a query that could never match.)
+
+So producing a swept row from outside needs either a day of waiting or aging
+`completed_at` in the database — and this port does not import cleat or open a
+database, deliberately, which is what keeps it a port rather than a unit test of
+engine internals wearing a port's name.
+
+**What is left unasserted is worth naming**, because it is a genuine divergence
+rather than a gap. `retentionLoop`'s comment draws the distinction cleat
+implements: `--retention-days` deletes `event_history` while the outcome
+survives in `workflow_instances`; `--completed-workflow-retention-days` deletes
+the record itself and defaults to off. *History goes, outcome stays* is exactly
+the kind of difference from another engine's "purge" that a port exists to pin,
+and nothing outside cleat's own package tests asserts it. Checked by assertion
+across all three ports here — the only "retention" match is a prose comment in
+`test_dead_letters.py`.
+
+Filed as cleat#1130, which proposes an admin sweep trigger or a sub-day unit and
+argues for neither. Until one exists this row stays a decline.
 
 ## The two worth building first
 
