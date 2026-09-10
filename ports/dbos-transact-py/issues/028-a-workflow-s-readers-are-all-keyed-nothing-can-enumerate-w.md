@@ -7,10 +7,9 @@
 **Status:** Open — and see the caveat below, which is a reason to decline these
 four cases *independently* of whether cleat grows the capability
 
-**Being filed upstream by session `cleat-5c2b`, 2026-09-09.** Claimed here rather
-than over a side channel: an offer that lives only in a message is invisible to
-the next reader, who finds a case that looks unclaimed. If no `cleat#` reference
-appears on this entry, the filing did not happen and it is free to take.
+**Filed upstream as cleat#1119** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
 
 **What upstream asserts**
 

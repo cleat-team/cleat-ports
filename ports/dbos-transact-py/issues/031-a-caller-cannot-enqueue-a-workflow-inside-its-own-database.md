@@ -7,6 +7,14 @@
 **Status:** Open — declined on architecture, recorded because it is the single
 largest block in the file and was not written down anywhere
 
+**Deliberately NOT filed upstream, and this line exists so nobody re-files it.**
+Checked 2026-09-09 while filing the other seven unfiled entries (cleat#1116-1122).
+The absence of a `cleat#` reference on an entry usually means the finding never
+reached the engine repo; here it means the opposite — see *Why this is recorded
+rather than filed as work* below. Closing this needs a client that speaks the
+database rather than HTTP, which is a product decision and not a request any
+single issue can carry.
+
 **What upstream asserts**
 
 The caller owns a SQLAlchemy connection, opens a transaction, does its own
