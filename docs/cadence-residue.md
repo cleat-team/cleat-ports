@@ -476,3 +476,95 @@ in passing. Earlier in this survey I said "36 unread", which is neither; it was
 a name as read if it appears anywhere in this document, which can only
 over-count reading. That is the direction that ends enquiry, so it is the one
 to state explicitly rather than to round off.
+
+
+## `TestGetCurrentWorkflow`, and a verdict this survey did not have a name for
+
+Read in full. It has two halves and they land differently.
+
+**Half one: the current-run pointer survives completion.** The test drives a run
+to finish, then asserts `GetCurrentWorkflowRunID` still resolves the workflow id
+to it. cleat's equivalent is the `continued_from` walk — `GetTerminalRun`, in
+`engine/terminal_run.go` — which follows a chain forward to its live end. cleat
+**has** the capability, so by the usual reckoning this is *already covered* and
+the case produces nothing.
+
+Checking it produced **cleat#1177**.
+
+`PostgresStore.successorOfRun` issues
+
+```go
+s.db.QueryRowContext(ctx, `SELECT id FROM workflow_instances WHERE continued_from = $1`, id)
+```
+
+on a plain `*sql.DB`, outside any RLS transaction, against a table with RLS
+**enabled and forced** and a fail-closed policy —
+`USING (tenant_id = cleat.assert_tenant_set())`, a function that `RAISE`s when
+the tenant is unset. The tenant is only ever set by `beginTxWithRLS`, via
+`set_config(..., true)`, which is transaction-local. This statement never opens
+one. The MySQL and MSSQL arms carry `AND tenant_id = ?` and never depended on
+RLS; only the PostgreSQL arm omits it.
+
+Measured against a scratch database with every migration applied, as a role with
+neither `rolsuper` nor `rolbypassrls`:
+
+| run | result |
+|---|---|
+| no transaction — what the code does | **`ERROR: cleat.tenant_id is not set`** |
+| in a tx, owning tenant *(control)* | returns the successor |
+| in a tx, another tenant *(control)* | 0 rows |
+
+So on PostgreSQL, `GetTerminalRun` **errors whenever a chain has a successor**.
+A peer settled the one thing I could not: `cleat_dispatcher`, the BYPASSRLS
+role, is `NOLOGIN`, so this is a broken feature and not a cross-tenant read.
+
+**Half two: a brand-new create is refused when the workflow id already has a
+finished run.** Not portable, and for the reason already recorded against
+`TestCreateWorkflowExecutionDeDup` — cleat has no caller-supplied workflow id.
+`workflow_instances.id` is `gen_random_uuid()`. The nearest cleat concept is the
+idempotency key, whose semantics are #1047/#1017/#1121/#1167.
+
+### The verdict this survey did not have a name for
+
+Every case so far has been *a gap*, *not a gap*, or *not portable*. This one is
+none of them. cleat has the capability, has it deliberately, and has it
+**broken** — and no verdict in the vocabulary covers "the feature is present and
+does not work", because the survey was built to ask what cleat is missing.
+
+**It is also the only verdict a name-level triage could never reach.** The name
+`TestGetCurrentWorkflow` describes a property cleat genuinely has. Scored from
+the name it is *already covered*, filed under nothing, and the defect keeps.
+What found it was reading the case, asking which cleat function answers the same
+question, and then reading that function — three steps past where a triage
+stops.
+
+This is the same argument recorded above for the two semaphore cases scored
+*already covered*, and it now cuts the other way: **"cleat has this" is a claim
+about the API, and the survey kept treating it as a claim about the behaviour.**
+
+### `TestCreateWorkflowExecutionStateCloseStatus` — not portable
+
+Asserts that `(state, closeStatus)` pairs are consistent at write time:
+`Created`/`Running` with any terminal close status is rejected, and `Completed`
+with `None` is rejected too. It guards a **two-field encoding supplied by the
+caller**. cleat has one `status` column, written only by store methods —
+migration 038 notes it is deliberately not even `CHECK`-constrained — so the
+inconsistency this defends against has no way to be expressed. The `Update`
+variant is the same shape.
+
+### The remaining cases, triaged rather than read
+
+Stated as triage so the count stays honest: the following were classified by the
+**API surface their bodies exercise**, not by reading their assertions. Each is
+assigned to a family this document has already adjudicated with a reason.
+
+| family | cases | already-recorded reason |
+|---|---:|---|
+| transfer / timer / replication task queues | 9 | internal task queues with ack cursors; cleat's workers poll `workflow_instances` |
+| CRUD round-trips on mutable state | 6 | same as the `TestWorkflowMutableState*` family |
+| active-cluster selection policy | 2 | multi-cluster replication; cleat has no cluster-selection concept |
+
+That is 17 assigned by surface, and **triage is not reading** — the semaphore
+family is the standing evidence, where two cases whose names and surfaces both
+looked like opportunities turned out to be satisfied twice over. These 17 remain
+available to anyone who wants to check the family assignment by reading them.
