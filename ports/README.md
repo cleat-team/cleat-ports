@@ -8,7 +8,7 @@ upstream test *cases* re-expressed, not files touched — see
 |---|---|---|---|---|
 | [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **79 cases, 76 passing, 3 skipped** (2026-09-08) — 23 findings, 18 fixed |
 | [`samples-go`](samples-go/) | [temporalio/samples-go](https://github.com/temporalio/samples-go) | **Apache-2.0** | a different engine's assumptions: signals, queries, timers, child workflows, saga compensation | **41 cases, 39 passing, 2 skipped** (2026-09-08) — 12 findings |
-| [`durabletask-go`](durabletask-go/) | [microsoft/durabletask-go](https://github.com/microsoft/durabletask-go) | **Apache-2.0** (verified by reading LICENSE, not by the API) | the backend contract and orchestration lifecycle — the layer no other port here touches | **2 cases, 2 passing** (2026-09-09) — harness only; scoping in its README |
+| [`durabletask-go`](durabletask-go/) | [microsoft/durabletask-go](https://github.com/microsoft/durabletask-go) | **Apache-2.0** (verified by reading LICENSE, not by the API) | the backend contract and orchestration lifecycle — the layer no other port here touches | **3 cases, 2 passing, 1 skipped** (2026-09-09) — 2 findings, 1 filed as cleat#1115 |
 
 ## Planned
 

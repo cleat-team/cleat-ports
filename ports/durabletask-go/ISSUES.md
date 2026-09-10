@@ -45,3 +45,41 @@ held and delivered on resume" has no expressible form when nothing can be
 suspended, and a test that signalled a *running* workflow instead would be
 asserting ordinary delivery — which `ports/dbos-transact-py/tests/test_signals.py`
 already covers, under a name claiming something it did not test.
+
+## 2. A failed child is reported to its awaiting parent as succeeded
+
+**Class:** Defect — filed as cleat#1115
+
+Upstream's `Test_SingleSubOrchestrator_Failed` asserts three things about the
+**parent** when its child fails: the parent's status is `FAILED`, its failure
+details are present, and their message **contains the child's**.
+
+cleat reports the opposite. Measured end-to-end against a live worker:
+
+| | |
+|---|---|
+| child status | `failed`, error carrying the marker the child was given |
+| child's `parent_workflow_id` | correctly the parent's id |
+| **parent status** | **`done`** |
+| parent result | `{"outcome":"child_succeeded","result":"{}"}` |
+
+`AwaitChild` returned **no error** and an **empty result** for a child that had
+failed, so the parent took its success branch.
+
+**Worse than losing the reason: the parent is told the opposite.** The natural
+shape — `result, err := h.AwaitChild(id); if err != nil { ... }` — silently
+takes the wrong branch, and `{}` is a plausible success value, so nothing
+downstream looks wrong either.
+
+**Why nothing here caught it.** `ports/dbos-transact-py/tests/test_children.py`
+has five cases and all five use children that **succeed**; its only
+error-shaped assertion is `assert not r.get("error")`, the *absence* of one,
+which passes against this. Found by ports#145's re-check of cases classed as
+already-covered — nothing in this repo had a child that fails.
+
+The test is `t.Skipf`'d rather than inverted: its assertions are upstream's and
+should go green when cleat#1115 is fixed.
+
+**Not established:** where the error is dropped, and whether
+`AwaitAllChildren` shares it — it returns `[]ChildResult`, which may carry
+per-child status where `AwaitChild`'s `(string, error)` cannot. Untested.
