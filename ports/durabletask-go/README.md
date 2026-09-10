@@ -9,6 +9,7 @@ assertions, re-expressed against cleat. Upstream source is not vendored; see
 | test module | cases | answering |
 |---|---:|---|
 | `orchestrations_test.go` | 2 | `tests/orchestrations_test.go` — an orchestration with no work completes; one whose only step is a durable timer resumes after it |
+| `reuse_id_test.go` | 2 | `tests/orchestrations_test.go` — `Test_SingleActivity_ReuseInstanceIDIgnore`: a deduplicated start keeps the first run's input and its `created_at` |
 
 **These two exist to establish the harness.** They are the simplest assertions
 upstream makes, chosen because a first port has to prove the whole path — build
