@@ -26,13 +26,49 @@
 # form everyone reaches for first. cmd/cleat-worker's -db flag documents all
 # three.
 : "${CLEAT_PORTS_DSN_POSTGRES:=postgres://postgres:postgres@localhost:${CLEAT_PORTS_PG_PORT}/cleat_ports?sslmode=disable}"
+
+# The RUNTIME PostgreSQL DSN, which is a different role from the one above.
+#
+# CLEAT_PORTS_DSN stays the owner: it applies migrations and generates API
+# keys, both of which need privileges the application role does not have. The
+# worker's own --db is this one, an unprivileged role that RLS actually
+# applies to. That split is what docker-compose.cluster.yml ships (--db as
+# cleat_app, --migrate-db as the owner), and cleat-ports#198 is what it costs
+# not to have it: PostgreSQL never applies a policy to a superuser, so the one
+# dialect where the policies ARE the tenant isolation was the one running
+# without them.
+# DERIVED FROM CLEAT_PORTS_DSN, not rebuilt from parts.
+#
+# The first version of this composed the runtime DSN out of
+# CLEAT_PORTS_PG_PORT, and that is a second derivation of the same fact.
+# CLEAT_PORTS_DSN can be overridden wholesale -- every agent sandbox does
+# exactly that -- and then the two disagree: the owner connection went to one
+# port and the worker to another, which surfaced as 113 connection-refused
+# failures with nothing pointing at the cause.
+#
+# Substituting the credentials into the DSN that is already in force cannot
+# drift, because there is only one source for host, port and database.
 : "${CLEAT_PORTS_DSN_MYSQL:=root:cleat@tcp(127.0.0.1:${CLEAT_PORTS_MYSQL_PORT})/cleat_ports?parseTime=true&multiStatements=true}"
 : "${CLEAT_PORTS_DSN_MSSQL:=sqlserver://sa:Cleat%21Passw0rd@localhost:${CLEAT_PORTS_MSSQL_PORT}?database=cleat_ports}"
 
+# CLEAT_PORTS_RUNTIME_DSN is what the worker connects as; CLEAT_PORTS_DSN
+# remains the privileged connection everything else uses. They differ only on
+# PostgreSQL -- MySQL and SQL Server have no RLS to be subject to, and their
+# tenant scoping is in the queries themselves.
 case "$CLEAT_PORTS_DIALECT" in
-  postgres) : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_POSTGRES}" ;;
-  mysql)    : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_MYSQL}" ;;
-  mssql)    : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_MSSQL}" ;;
+  postgres)
+    : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_POSTGRES}"
+    : "${CLEAT_PORTS_APP_PASSWORD:=cleat-app-ports-local}"
+    : "${CLEAT_PORTS_RUNTIME_DSN:=postgres://cleat_app:${CLEAT_PORTS_APP_PASSWORD}@${CLEAT_PORTS_DSN#*@}}"
+    ;;
+  mysql)
+    : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_MYSQL}"
+    : "${CLEAT_PORTS_RUNTIME_DSN:=$CLEAT_PORTS_DSN_MYSQL}"
+    ;;
+  mssql)
+    : "${CLEAT_PORTS_DSN:=$CLEAT_PORTS_DSN_MSSQL}"
+    : "${CLEAT_PORTS_RUNTIME_DSN:=$CLEAT_PORTS_DSN_MSSQL}"
+    ;;
   *) echo "CLEAT_PORTS_DIALECT must be postgres, mysql or mssql (got: $CLEAT_PORTS_DIALECT)" >&2; exit 2 ;;
 esac
 
