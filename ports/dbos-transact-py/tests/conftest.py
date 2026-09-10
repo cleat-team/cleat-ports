@@ -1080,6 +1080,18 @@ def parallel_unit_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def bulk_cancel_workflow(cleat: Cleat) -> str:
+    """Deploy the two-step workflow used for bulk cancellation.
+
+    Separate from `cancellable_workflow` because that one has no steps: it
+    reports whether it observed cancellation, which cannot answer upstream's
+    actual question -- did the work AFTER the cancel get skipped. See
+    workflows/bulkcancel/main.go.
+    """
+    return _build_and_deploy("bulkcancel", "bulk_cancel_steps")
+
+
+@pytest.fixture(scope="session")
 def plugincall_workflow(cleat: Cleat) -> str:
     """Deploy the workflow that calls the `llm` plugin through the worker."""
     return _build_and_deploy("plugincall", "plugin_call")
