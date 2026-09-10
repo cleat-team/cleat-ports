@@ -193,7 +193,16 @@ So the property holds and is held up by a layer nobody in cleat chose. It would
 stop holding if the key ever moved somewhere that layer does not reach — a JSON
 body field, where `!= ""` would be the whole guard. `StartNewRun`'s only two
 callers passing a non-empty key are that handler and the scheduler, whose key is
-engine-generated, so there is no such path today.
+not free of caller input: it is
+`fmt.Sprintf("cron:%s:%s:%d", tenantID, sch.Name, scheduled.UTC().Unix())` and
+`sch.Name` is operator-supplied. The property holds because of the **template** --
+the literal `cron:` prefix and the Unix timestamp make the result non-empty and
+non-blank whatever the name is -- not because the engine authored the whole key.
+
+An earlier version of this line said "engine-generated". Right conclusion, wrong
+mechanism, and it was written in the same commit that corrected another wrong
+mechanism two paragraphs above. Writing a retraction is a high-risk moment for
+authoring the next one.
 
 **Why this is written out rather than replaced with the right answer.** Three
 correct file:line citations, a chain with no branch in it, and a wrong

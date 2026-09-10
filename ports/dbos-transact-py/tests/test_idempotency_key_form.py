@@ -38,7 +38,16 @@ would go red if the key ever moved somewhere that layer does not reach -- a
 JSON body field, say, where `!= ""` is the whole guard and `"   "` passes it.
 Watching which layer holds a test up is the point rather than a footnote:
 `StartNewRun`'s only two callers that pass a non-empty key are this handler and
-the scheduler, whose key is engine-generated, so today there is no such path.
+the scheduler. The scheduler's key is not free of caller input -- it is
+`fmt.Sprintf("cron:%s:%s:%d", tenantID, sch.Name, scheduled.UTC().Unix())`, and
+`sch.Name` is whatever an operator named the schedule. What makes it safe is the
+TEMPLATE, not the absence of caller input: the literal `cron:` prefix and the
+Unix timestamp mean the result is non-empty and non-blank whatever the name is.
+
+That distinction is the thing to re-check if the template ever changes. An
+earlier version of this comment said the key was "engine-generated", which is
+the right conclusion by the wrong mechanism -- and a reader asking "can a caller
+influence this key?" would have been told no, which is false.
 """
 
 import uuid
