@@ -147,6 +147,51 @@ The convention still stands: sign off, because these commits are proposed
 upstream to a repo that does enforce it. But it stands on the convention, not
 on a gate.
 
+## Before you push
+
+Run the gate **as** the gate, not beside it:
+
+```sh
+scripts/preflight.sh --suite && git push …
+```
+
+`--suite` runs the Python tests and needs a worker; without it you get the
+static checks only, and the script says so rather than implying more.
+
+**Why this is a script and not a habit.** On 2026-09-10 three pushes went out
+behind checks that could not stop them:
+
+```sh
+python3 -m py_compile … | head -1        # the pipe reports head's status
+check.py --check ; git add … ; git commit …   # ';' is not '&&'
+compile && count && push                 # neither of them runs the suite
+```
+
+The third is the instructive one. It passed on a `test_defer.py` with one test
+defined **twice** and another module's test missing, because the case count was
+5 either way. **A gate assembled from proxies is silent about anything the
+proxies cannot see**, and the proxies are what is quick to type.
+
+`count-queue-cases.py --check` now also refuses a **shadowed test** — the same
+name defined twice, which Python resolves silently in favour of the later one,
+so pytest collects one case where the file shows two. That is a test somebody
+wrote, that looks present, and never runs.
+
+## Two open PRs must not edit the same test module
+
+If a module already has an open PR against it, land that one before writing the
+second. The merge queue rebases entries onto each other, so two PRs touching one
+file produce a conflict at exactly the moment nobody is watching — inside a
+merge-group run.
+
+Measured: `#183` and `#184` both edited `tests/test_defer.py` and the same
+README inventory row. Holding the second was correct and still cost two wrong
+resolutions — one producing invalid syntax, one producing a file with a test
+duplicated and the other PR's test dropped, which **passed** a
+compile-and-count gate.
+
+Serialising costs a merge-queue cycle. Not serialising cost an hour.
+
 ## Branches and merges
 
 Same discipline as `cleat-team/cleat` and `cleat-team/cleat-bench`:

@@ -21,7 +21,8 @@ Usage:
   curl -sSL https://raw.githubusercontent.com/dbos-inc/dbos-transact-py/$PIN/tests/test_queue.py -o /tmp/u.py
   python3 count-queue-cases.py /tmp/u.py [port_test_file ...]
 """
-import ast, re, sys
+import ast
+import os, re, sys
 
 # Controls cleat has no counterpart for. See ISSUES.md "no work queues".
 #
@@ -137,6 +138,52 @@ def collected(path):
             for m in n.body:
                 if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test_"):
                     add(f"{n.name}::{m.name}", m)
+
+    # A SHADOWED TEST NEVER RUNS, and this counter used to hide that.
+    #
+    # Python lets a module define the same function twice; the later definition
+    # silently wins and the earlier one is unreachable. pytest therefore
+    # collects ONE case where the file appears to define two -- so a count
+    # taken by walking the AST is one higher than reality, and a README row
+    # generated from it agrees with a file containing a test that cannot run.
+    #
+    # Not hypothetical. A botched merge resolution on 2026-09-10 produced
+    # test_defer.py with `test_a_force_completed_workflow_still_runs_its_defers`
+    # defined twice and another module's test dropped entirely. The file
+    # compiled, the count was unchanged at 5, and `--check` passed. The count
+    # could not disagree, because both the file and the README said 5.
+    #
+    # Reported rather than deduplicated. Counting distinct names would make the
+    # arithmetic right and leave the unreachable test in the tree, which is the
+    # actual defect -- a test somebody wrote, that looks present, and never
+    # runs.
+    # Counted over DEFINITIONS, not over collected cases. A parametrized test
+    # legitimately contributes several entries to `out` under one base name --
+    # the first version of this check stripped the "[i]" suffix and flagged
+    # every parametrized test in the suite as a duplicate. Found by running it:
+    # it reported test_a_blank_idempotency_key_does_not_deduplicate, which is
+    # parametrized over three blank forms and is perfectly correct.
+    defs, dupes = set(), []
+    for n in tree.body:
+        names = []
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_"):
+            names = [n.name]
+        elif isinstance(n, ast.ClassDef) and n.name.startswith("Test"):
+            names = [f"{n.name}::{m.name}" for m in n.body
+                     if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and m.name.startswith("test_")]
+        for nm in names:
+            if nm in defs and nm not in dupes:
+                dupes.append(nm)
+            defs.add(nm)
+    if dupes:
+        raise SystemExit(
+            f"{os.path.basename(path)} defines these test(s) more than once, so "
+            f"the earlier definition is shadowed and never runs:\n  "
+            + "\n  ".join(dupes)
+            + "\n\nPython takes the last definition silently. Delete or rename "
+              "the duplicate; do not renumber the README to match."
+        )
     return out
 
 
