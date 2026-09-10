@@ -139,7 +139,20 @@ different assumptions, not more cases.
 
 Both repositories are Apache-2.0 and public, and `docs/licensing.md` governs.
 Verified by API rather than by reputation, because the last time this was
-assumed it was wrong:
+assumed it was wrong.
+
+**Last re-verified: 2026-09-10.** All ten rows unchanged. The date is here
+because "verified by API" is a claim that decays: a licence can change, and a
+table that says how it was checked but not when cannot tell a reader whether it
+still holds. Re-derive in one pass:
+
+    for r in <the repos below>; do
+      printf '%-34s %s\n' "$r" "$(gh api "repos/$r/license" --jq '.license.spdx_id' 2>/dev/null || echo '404 — no licence')"
+    done
+
+Note the `|| echo` — `gh api` exits non-zero on the 404 that matters most, and
+without it the row for an unlicensed repository prints blank and reads like a
+lookup that simply returned nothing.
 
 | candidate | SPDX | verdict |
 |---|---|---|
