@@ -108,8 +108,65 @@ mint_key() {
 
 fixture_healthy() { curl -sf -m 2 "$CLEAT_PORTS_FIXTURE_URL/healthz" >/dev/null 2>&1; }
 
+# The fixture equivalent of owned(), and it exists for a sharper reason than the
+# worker one. A shared WORKER corrupts a run and says so loudly -- wrong
+# database, 401, a table of nulls. A shared FIXTURE corrupts the EVIDENCE, in
+# silence: this service holds the per-key call counters, and 40 of the 134 test
+# functions in dbos-transact-py -- 29% of the suite -- read them as their
+# assertion. `_counts` from another session's traffic is indistinguishable from
+# this session's. ports#172 turned entirely on a count being 3 rather than 4.
+#
+# Found live while writing this: the fixture serving this session's port was
+# started from a DIFFERENT checkout (a sibling worktree). Its code happened to
+# be byte-identical, so nothing was wrong -- which is the point. Nothing would
+# have said so if it had not been.
+#
+# -ww for the same reason owned() needs it: GNU ps truncates to 80 columns when
+# stdout is not a tty, and the fixture is invoked as
+#   <python> <ROOT>/scripts/fixture-service.py <PORT>
+# with the port LAST. Measured at 255 columns here, so the one token that
+# identifies the service sits ~170 columns past where the unwidened form stops.
+fixture_owned() {
+  local pid
+  pid="$(cat "$FIXPID" 2>/dev/null)" || return 1
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)" || return 1
+  case "$cmd" in
+    *"fixture-service.py $CLEAT_PORTS_FIXTURE_PORT"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+refuse_foreign_fixture() {
+  cat >&2 <<MSG
+something is already serving the fixture service on $CLEAT_PORTS_FIXTURE_URL
+and this invocation cannot show it is ours.
+
+  pidfile: $FIXPID (absent, empty, or naming a process that is not the fixture)
+  serving: $(lsof -nP -iTCP:"$CLEAT_PORTS_FIXTURE_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+Adopting it would run this session's assertions against another session's call
+counters, and the counters ARE the assertion in 29% of the Python suite. That
+does not fail -- it produces a number, and the number is wrong.
+
+Stop the process above, or set CLEAT_PORTS_FIXTURE_PORT to a free port.
+MSG
+  exit 3
+}
+
 start_fixture() {
-  fixture_healthy && return 0
+  # `fixture_healthy && return 0` adopted ANY healthy service on the port. This
+  # is the ownership check that was added to `ensure` for workers on
+  # 2026-09-08 and never applied here.
+  if fixture_healthy; then
+    fixture_owned || refuse_foreign_fixture
+    return 0
+  fi
+  # Healthy is false, so any pidfile is stale; drop it before writing a new one
+  # or `stop` would later signal an unrelated process.
+  rm -f "$FIXPID"
   mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   python3 "$ROOT/scripts/fixture-service.py" "$CLEAT_PORTS_FIXTURE_PORT" \
     >"$FIXLOG" 2>&1 &
@@ -124,10 +181,31 @@ start_fixture() {
 }
 
 stop_fixture() {
-  if [ -f "$FIXPID" ]; then
-    pid="$(cat "$FIXPID" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-    rm -f "$FIXPID"
+  # Three ways the old form succeeded at nothing: no $FIXPID skipped the whole
+  # body; a failed `kill` was swallowed by `|| true`; and nothing ever
+  # re-checked fixture_healthy, so a service that ignored the signal was
+  # reported stopped. The postcondition is `! fixture_healthy`, not "we sent a
+  # signal".
+  if fixture_owned; then
+    pid="$(cat "$FIXPID")"
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$FIXPID"
+
+  if fixture_healthy; then
+    cat >&2 <<MSG
+the fixture service on $CLEAT_PORTS_FIXTURE_URL is still serving after stop.
+
+  serving: $(lsof -nP -iTCP:"$CLEAT_PORTS_FIXTURE_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+Either it is not ours -- in which case this correctly did not kill it, and the
+caller's belief that the fixture is gone is false -- or it ignored the signal.
+Reporting a clean stop either way is what makes the next run's counters
+somebody else's.
+MSG
+    return 1
   fi
 }
 
