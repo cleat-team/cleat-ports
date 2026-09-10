@@ -225,10 +225,32 @@ survey's headline is **129**. Its own rows sum to 85.
 
 That is not an arithmetic error. `common/persistence/persistence-tests/` holds
 **17 files, 14 of them test suites**, and the table names six. Counting the
-other eight the same way gives 40, so 125 — and `metadataPersistenceV2Test.go`
-uses a receiver shape this count does not match, which covers the rest. **The
-129 is right for the directory; the table is a selection presented as an
-enumeration.**
+other eight the same way gives 40, so 125.
+
+**CORRECTION, and the 125 was mine.** I wrote that
+`metadataPersistenceV2Test.go` "uses a receiver shape this count does not
+match, which covers the rest" — a hedge where a re-measurement was owed. My
+pattern assumed the receiver variable is `s` and typed the receiver
+`[A-Za-z]+`, which excludes digits, so `*MetadataPersistenceSuiteV2` matched
+**nothing** and a populated file read as **0**. Widening it gives that file
+**7** and the directory **132**. Measured independently by another session
+first, and reproduced here before being adopted.
+
+So: **the six listed rows sum to 85, the published total is 129, the directory
+holds 132.** The published total is neither its own sum nor the truth.
+`132 − 129 = 3` is exactly `executionManagerTestForEventsV2.go`, the one file
+whose name does not end `PersistenceTest.go` — consistent with a glob that
+missed it, though the glob was not recorded, so that is the likeliest
+reconstruction rather than an established one.
+
+**The table is a selection presented as an enumeration.** That finding stands.
+
+**The instrument defect is the part worth carrying.** `[A-Za-z]+` excluding a
+digit is a mistake I had already made today — on `HistoryV2PersistenceSuite` —
+and written down, and then made again hours later in a fresh script. Both
+failures report a populated file as **empty**, which makes the corpus look
+smaller and the survey look more complete. It is the direction that ends
+enquiry.
 
 Anyone reading the table concludes those six files are the corpus. They are not.
 
@@ -291,6 +313,40 @@ string and a tenant list — static routing. Cadence's shard is an owner with a
 lease and a fencing `RangeID`, a coordination primitive for distributing work
 across hosts. Same word, different concept; the survey's "cleat does not shard"
 is right in substance and would read as wrong to anyone who greps first.
+
+## Three semaphore cases read: one gap, two already covered
+
+| case | verdict |
+|---|---|
+| `TestGrantSameOwnerDifferentTokenIsRejected` | **gap** — filed as cleat#1172 |
+| `TestStaleRangeIDIsFencedOut` | **already covered** |
+| `TestBucketsAreIndependent` | **already covered, twice** |
+
+**The gap.** Their refusal reports the token the owner already holds and asserts
+the refused grant did not consume the free slot. cleat's concurrency-key refusal
+answers `409 {"error":"workflow already running with key K"}` — naming the key
+the caller supplied, not the holder — and the holder cannot be looked up:
+`?concurrency_key=` is ignored (nonsense returns the same rows as the real key)
+and the listing is capped at 100 of 10,504 workflows.
+
+**Already covered, and worth stating because a name-based pass would have
+counted both as opportunities:**
+
+- `TestStaleRangeIDIsFencedOut` asserts a superseded owner's writes fail with
+  `ConditionFailedError`. cleat's analogue is generation fencing, already pinned
+  by `test_workflow_management.py::test_a_stale_generation_is_refused_as_a_conflict`.
+- `TestBucketsAreIndependent` asserts separate buckets keep separate counts.
+  cleat has it **twice** — `test_locks.py::test_distinct_keys_do_not_block_each_other`
+  and `test_cross_worker.py::test_distinct_keys_do_not_block_across_workers`.
+
+**So the semaphore family is not a seam of untapped work**, and I called it "the
+family most likely to port" an hour before reading any of it. One of three
+produced a real issue — a better rate than `executionManagerTest.go` managed —
+and two were already satisfied. That is the same distribution as everywhere else
+here, which is why the estimate has never been revised: **the ratio does not
+change, so a larger corpus does not imply a larger residue.**
+
+Eleven of the fourteen semaphore cases remain unread.
 
 ## The honest read on the estimate
 
