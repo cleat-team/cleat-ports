@@ -207,26 +207,91 @@ MSG
 }
 
 crash_worker() {
+  # A "crash" that killed nothing MUST NOT exit 0. This is the only operation
+  # in this script whose entire value is that it happened: a recovery test asks
+  # for a worker to die so it can watch the engine recover, and if nothing dies
+  # the test still runs, still passes, and is measuring the uncrashed control.
+  #
+  # That is not hypothetical. On 2026-09-10 this function printed "no worker
+  # running to kill" and returned 0 against a live, serving, untracked worker.
+  # The mid-backoff retry test then reported the control's call count and
+  # PASSED, agreeing with an engine that does the right thing and with one that
+  # does not. Five tests across two modules call crash(); all five were
+  # degraded and none of them could have said so.
   if running; then
     owned || refuse_foreign
     pid="$(cat "$PIDFILE")"
     kill -9 "$pid" 2>/dev/null || true
     for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "worker $pid survived SIGKILL after 10s; refusing to report a crash" >&2
+      exit 1
+    fi
     echo "worker killed (pid $pid)"
+    rm -f "$PIDFILE"
+  elif healthy; then
+    cat >&2 <<MSG
+refusing to "crash": $API_URL is serving but no pidfile identifies the worker.
+
+  pidfile: $PIDFILE (absent, empty, or naming a dead process)
+  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+The usual cause is that the worker was started under a different
+CLEAT_PORTS_RESULTS_DIR than this invocation resolves, so this script looks for
+the pidfile in the wrong directory and concludes there is nothing to kill.
+"ensure" tolerates that -- it sees a healthy URL and reports "(pid unknown)" --
+and for every operation except this one, tolerating it is correct.
+
+Kill the process above and let "worker.sh ensure" start a tracked one.
+MSG
+    rm -f "$PIDFILE"
+    exit 1
   else
-    echo "no worker running to kill" >&2
+    echo "nothing is serving $API_URL, so there is no worker to crash" >&2
+    rm -f "$PIDFILE"
+    exit 1
   fi
-  rm -f "$PIDFILE"
 }
 
 stop_worker() {
+  # Unlike `crash`, a stop with nothing running is legitimately idempotent --
+  # the Makefile's EXIT trap calls it whether or not a worker was ever started.
+  # So the postcondition is "nothing is serving afterwards", not "we killed
+  # something", and the case that must fail is the middle one: something IS
+  # serving and we cannot identify it.
+  #
+  # The old form skipped its whole body when `running` was false and exited 0
+  # with NO OUTPUT ON ANY STREAM -- worse than `crash`, which at least wrote to
+  # stderr. `Worker.stop()` exists so a test can build a backlog with the
+  # worker gone and no claims held; a silent no-op leaves it claiming, the
+  # queue's contents are then not the test's doing, and the premise fails as a
+  # confusing assertion about queue contents rather than as a harness fault.
   if running; then
     owned || refuse_foreign
     pid="$(cat "$PIDFILE")"
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "worker $pid survived SIGTERM then SIGKILL; not reporting a stop" >&2
+      rm -f "$PIDFILE"
+      exit 1
+    fi
     echo "worker stopped (pid $pid)"
+  elif healthy; then
+    cat >&2 <<MSG
+refusing to "stop": $API_URL is serving but no pidfile identifies the worker.
+
+  pidfile: $PIDFILE (absent, empty, or naming a dead process)
+  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+Reporting a clean stop here would leave that process holding claims while the
+caller believes the worker is gone.
+MSG
+    rm -f "$PIDFILE"
+    exit 1
+  else
+    echo "nothing is serving $API_URL; stop is a no-op" >&2
   fi
   rm -f "$PIDFILE"
 }
@@ -405,9 +470,25 @@ case "${1:?usage: worker.sh <ensure|crash|stop|url>}" in
       # `401 invalid or revoked API key`, which names authentication: the one
       # thing that is not wrong. Observed on the shared default 8099 before
       # per-session ports were used at all.
-      if [ -f "$PIDFILE" ] && ! owned; then
+      # `[ -f "$PIDFILE" ] && ! owned` was wrong, and wrong in the direction
+      # that fails OPEN. With no pidfile at all the && short-circuits false,
+      # the refusal is skipped, and ensure ADOPTS whatever is serving the port
+      # -- printing "(pid unknown)" and exiting 0. A mismatched
+      # CLEAT_PORTS_RESULTS_DIR produces exactly that state.
+      #
+      # `owned` already returns 1 for an absent pidfile, an empty one, one
+      # naming a dead process, and one naming a foreign worker, so testing it
+      # alone covers every case the old form meant to cover plus the one it
+      # let through.
+      #
+      # This is the GENERATOR of ports#172/#173: an adopted worker is live but
+      # untracked, so every later pid-based operation has nothing to act on.
+      # `crash` then killed nothing and returned 0, and five recovery tests
+      # silently measured the uncrashed control and passed. Fixing `crash`
+      # without fixing this leaves the thing that manufactures the state.
+      if ! owned; then
         cat >&2 <<MSG
-something is already serving $API_URL and it is not this project's worker.
+something is already serving $API_URL and this invocation cannot claim it.
 
   pidfile: $PIDFILE ($(cat "$PIDFILE" 2>/dev/null || echo "no pid"))
   serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
