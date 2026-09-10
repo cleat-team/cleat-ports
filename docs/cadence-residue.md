@@ -624,3 +624,70 @@ the tests reaching `/terminal`, because cleat#1178 enumerates the whole
 population and finds one live statement. If anything else breaks, the census is
 incomplete — which is the more valuable outcome and the reason to run it cheaply
 instead of reasoning about it further.
+
+
+## The `ConflictResolve` family — 8 cases, 1623 lines, not portable
+
+The largest unadjudicated block left in `executionManagerTest.go`. Triaged by
+the concepts each body exercises, not by name:
+
+| case | lines |
+|---|---:|
+| `TestConflictResolveWorkflowExecutionCurrentIsSelf` | 507 |
+| `TestConflictResolveWorkflowExecutionWithCASMismatch` | 165 |
+| `…WithTransactionCurrentIsNotSelf` | 170 |
+| `…WithTransactionCurrentIsNotSelfWithContinueAsNew` | 201 |
+| `…WithTransactionCurrentIsSelf` | 119 |
+| `…WithTransactionCurrentIsSelfWithContinueAsNew` | 148 |
+| `…WithTransactionZombieIsSelf` | 142 |
+| `…WithTransactionZombieIsSelfWithContinueAsNew` | 171 |
+
+All eight turn on `VersionHistories` and `LastWriteVersion`; six also on
+`ResetWorkflowSnapshot` + `CurrentWorkflowMutation`. These are Cadence's
+**cross-cluster replication** primitives — the family resolves a conflict
+between two clusters' versions of the same workflow, deciding which run becomes
+current and what becomes of the loser.
+
+Counting non-test files in cleat that mention each concept:
+
+| concept | files in cleat |
+|---|---:|
+| `version_history` | **0** |
+| `last_write_version` | **0** |
+| `cluster_name` | **0** |
+| `active_cluster` | **0** |
+
+cleat is single-cluster: there is no second version of a workflow to conflict
+with, so the question the family asks cannot be posed. **Not portable**, for one
+reason covering all eight.
+
+### The homonym, which is the reusable part
+
+`zombie` returns **3** non-test files in cleat. Under a name-level triage that
+reads as a hit, and it is the signal that would promote the two `ZombieIsSelf`
+cases to portable.
+
+It is a different concept wearing the same word. Cadence's `WorkflowStateZombie`
+is a run that **exists but is not current** for its workflow id — a lifecycle
+state produced by replication and reset. cleat's zombie is a **process still
+running after it should have stopped**: `setup.go`'s *"background zombie reaper
+goroutine"*, `store_intent.go`'s *"a zombie that keeps running after this
+returns"*. A row's status versus an escaped goroutine. Nothing transfers.
+
+That is the **third** distinct way a name has misled this survey:
+
+| | |
+|---|---|
+| the two semaphore cases | names described properties cleat genuinely has → would have been scored **opportunities**, were already satisfied |
+| `TestGetCurrentWorkflow` | name described a property cleat has **and does not deliver** → scored covered, hid cleat#1177 |
+| `ZombieIsSelf` ×2 | name matches a cleat term meaning something else → a **false synonym** |
+
+A false negative, a false positive, and a false friend. The rule is unchanged and
+has now earned its third independent confirmation: read the body, then read
+cleat's implementation of whatever the body turns out to be about.
+
+`store_admin_rereplay.go` is the nearest thing cleat has to a reset, and makes
+the point a fourth time: it returns a stopped workflow to `ready` and replays its
+recorded history **in place**, preserving every step already taken. Cadence's
+reset builds a **new run** from a snapshot and re-points the current pointer at
+it. Same word, different operation.
