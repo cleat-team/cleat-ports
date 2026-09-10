@@ -627,3 +627,128 @@ the tests reaching `/terminal`, because cleat#1178 enumerates the whole
 population and finds one live statement. If anything else breaks, the census is
 incomplete — which is the more valuable outcome and the reason to run it cheaply
 instead of reasoning about it further.
+
+
+## The `ConflictResolve` family — 8 cases, 1623 lines, not portable
+
+The largest unadjudicated block left in `executionManagerTest.go`. Triaged by
+the concepts each body exercises, not by name:
+
+| case | lines |
+|---|---:|
+| `TestConflictResolveWorkflowExecutionCurrentIsSelf` | 507 |
+| `TestConflictResolveWorkflowExecutionWithCASMismatch` | 165 |
+| `…WithTransactionCurrentIsNotSelf` | 170 |
+| `…WithTransactionCurrentIsNotSelfWithContinueAsNew` | 201 |
+| `…WithTransactionCurrentIsSelf` | 119 |
+| `…WithTransactionCurrentIsSelfWithContinueAsNew` | 148 |
+| `…WithTransactionZombieIsSelf` | 142 |
+| `…WithTransactionZombieIsSelfWithContinueAsNew` | 171 |
+
+All eight turn on `VersionHistories` and `LastWriteVersion`; six also on
+`ResetWorkflowSnapshot` + `CurrentWorkflowMutation`. These are Cadence's
+**cross-cluster replication** primitives — the family resolves a conflict
+between two clusters' versions of the same workflow, deciding which run becomes
+current and what becomes of the loser.
+
+Counting non-test files in cleat that mention each concept:
+
+| concept | files in cleat |
+|---|---:|
+| `version_history` | **0** |
+| `last_write_version` | **0** |
+| `cluster_name` | **0** |
+| `active_cluster` | **0** |
+
+cleat is single-cluster: there is no second version of a workflow to conflict
+with, so the question the family asks cannot be posed. **Not portable**, for one
+reason covering all eight.
+
+### The homonym, which is the reusable part
+
+`zombie` returns **3** non-test files in cleat. Under a name-level triage that
+reads as a hit, and it is the signal that would promote the two `ZombieIsSelf`
+cases to portable.
+
+It is a different concept wearing the same word. Cadence's `WorkflowStateZombie`
+is a run that **exists but is not current** for its workflow id — a lifecycle
+state produced by replication and reset. cleat's zombie is a **process still
+running after it should have stopped**: `setup.go`'s *"background zombie reaper
+goroutine"*, `store_intent.go`'s *"a zombie that keeps running after this
+returns"*. A row's status versus an escaped goroutine. Nothing transfers.
+
+That is the **third** distinct way a name has misled this survey:
+
+| | |
+|---|---|
+| the two semaphore cases | names described properties cleat genuinely has → would have been scored **opportunities**, were already satisfied |
+| `TestGetCurrentWorkflow` | name described a property cleat has **and does not deliver** → scored covered, hid cleat#1177 |
+| `ZombieIsSelf` ×2 | name matches a cleat term meaning something else → a **false synonym** |
+
+A false negative, a false positive, and a false friend. The rule is unchanged and
+has now earned its third independent confirmation: read the body, then read
+cleat's implementation of whatever the body turns out to be about.
+
+`store_admin_rereplay.go` is the nearest thing cleat has to a reset, and makes
+the point a fourth time: it returns a stopped workflow to `ready` and replays its
+recorded history **in place**, preserving every step already taken. Cadence's
+reset builds a **new run** from a snapshot and re-points the current pointer at
+it. Same word, different operation.
+
+
+## The file, closed: every case named
+
+The triage above assigned cases to families by prose, which cannot be checked —
+*"9 task-queue cases"* is not auditable, and a reader cannot tell whether the
+ninth was ever looked at. So here are the remaining **25** by name.
+
+| case | assigned family |
+|---|---|
+| `TestDeleteActiveClusterSelectionPolicy` | active-cluster selection |
+| `TestGetActiveClusterSelectionPolicy` | active-cluster selection |
+| `TestDeleteWorkflow` | mutable-state CRUD |
+| `TestGetWorkflow` | mutable-state CRUD |
+| `TestUpdateDeleteWorkflow` | mutable-state CRUD |
+| `TestUpsertWorkflowActivity` | mutable-state CRUD |
+| `TestWorkflowMutableStateActivities` | mutable-state CRUD |
+| `TestWorkflowMutableStateChildExecutions` | mutable-state CRUD |
+| `TestWorkflowMutableStateInfo` | mutable-state CRUD |
+| `TestWorkflowMutableStateRequestCancel` | mutable-state CRUD |
+| `TestWorkflowMutableStateSignalInfo` | mutable-state CRUD |
+| `TestWorkflowMutableStateSignalRequested` | mutable-state CRUD |
+| `TestWorkflowMutableStateTimers` | mutable-state CRUD |
+| `TestCancelTransferTaskTasks` | task queues + ack cursors |
+| `TestReplicationTransferTaskRangeComplete` | task queues + ack cursors |
+| `TestReplicationTransferTaskTasks` | task queues + ack cursors |
+| `TestSignalTransferTaskTasks` | task queues + ack cursors |
+| `TestTimerTasksComplete` | task queues + ack cursors |
+| `TestTimerTasksRangeComplete` | task queues + ack cursors |
+| `TestTransferTasksRangeComplete` | task queues + ack cursors |
+| `TestTransferTasksThroughUpdate` | task queues + ack cursors |
+| `TestUpdateWorkflowExecutionTasks` | task queues + ack cursors |
+| `TestUpdateWorkflowExecutionStateCloseStatus` | two-field (state, closeStatus) |
+| `TestCreateWorkflowExecutionWithZombieState` | zombie lifecycle state |
+| `TestUpdateWorkflowExecutionWithZombieState` | zombie lifecycle state |
+
+
+| family | reason, already adjudicated above |
+|---|---|
+| task queues + ack cursors | internal task queues with ack cursors; cleat's workers poll `workflow_instances` directly |
+| mutable-state CRUD | round-trips on internal maps, as the `TestWorkflowMutableState*` family |
+| active-cluster selection | multi-cluster replication; cleat has no cluster-selection concept |
+| zombie lifecycle state | a run that exists but is not current — cleat's `zombie` is an unstopped process, a homonym (above) |
+| two-field (state, closeStatus) | guards a caller-supplied two-field encoding; cleat has one `status` column written only by store methods |
+
+**52 cases: 27 adjudicated individually, 25 assigned to a family by the API
+surface their bodies exercise.** No case in `executionManagerTest.go` is now
+unaccounted for.
+
+**Assignment is not reading, and the table is here so the difference is
+visible.** Any row above can be checked by opening the case; three times in this
+survey a plausible-looking assignment has been wrong, once in each direction.
+The rows are listed rather than counted precisely because I would rather someone
+find my error in a specific case than trust a total.
+
+The file's yield, for the record: **52 cases → 4 issues** — cleat#1151,
+cleat#1172, cleat#1175, and cleat#1177 by way of `TestGetCurrentWorkflow`. Two of
+the four came from cases a name-level triage would have discarded.
