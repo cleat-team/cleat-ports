@@ -164,6 +164,11 @@ jobs:
       # machine's bad half-hour as a permanent property of SQL Server, which is
       # a known-failures list by another name: an expectation nobody rechecks.
       - name: Run port
+        env:
+          # Turns on `coverage run` + a JUnit report for the Python port, which
+          # the assertion-execution step below needs. Set only for that port:
+          # the Go ports have no equivalent and would pay for nothing.
+          CLEAT_PORTS_COVERAGE: ${{ matrix.port == 'dbos-transact-py' && '1' || '0' }}
         run: make port PORT=${{ matrix.port }} DIALECT=${{ matrix.dialect }}
       - name: Prove this leg used ${{ matrix.dialect }}
         # The matrix key is a string we wrote; asserting on it proves only that
@@ -206,6 +211,29 @@ jobs:
         # where a dialect-specific background failure shows up unmixed.
         if: always()
         run: python3 scripts/check-worker-log.py
+
+      - name: Every assertion in a passing test actually ran
+        # The third member of the family the two checks above belong to.
+        # ports#172 was an assertion that ran and could not distinguish the
+        # behaviours it named; ports#173 was a harness action that silently did
+        # nothing, turning five recovery tests into no-crash controls that
+        # passed. This one is an assertion that never RAN -- a guard not
+        # entered, an early return -- in a test that reported green.
+        #
+        # Here rather than in ci.yml deliberately: it needs the suite run under
+        # coverage, which the per-PR run has no reason to pay for. The sibling
+        # omission that ports#164 was about is the opposite mistake, and the
+        # reasoning is recorded so this placement is read as a choice.
+        #
+        # dbos-transact-py only: coverage of test files is a Python capability.
+        # Go excludes _test.go from its coverage by design, so the Go ports have
+        # no equivalent and are NOT covered by this. Said plainly because a
+        # green check here must not be read as a statement about all 201 cases.
+        if: always() && matrix.port == 'dbos-transact-py'
+        run: |
+          python3 scripts/selftest-check-assertions.py
+          python3 scripts/check-assertions-executed.py \
+            ports/dbos-transact-py ports/dbos-transact-py/junit.xml
 
       - name: Upload log
         if: always()
