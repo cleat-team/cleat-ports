@@ -371,7 +371,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_promise_wakes.py` | 2 | none — cleat-specific: does the promise wake path share cleat#953's defect |
 | `test_promises.py` | 3 | `test_dbos.py` — `set_event`/`get_event` |
 | `test_query_state.py` | 2 | `test_dbos.py` — workflow status readable while running |
-| `test_queues.py` | 6 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
+| `test_queues.py` | 7 | `test_queue.py` — deduplication by Idempotency-Key, priority accepted |
 | `test_recovery.py` | 4 | `test_failures.py` — recovery counts after a crash |
 | `test_replay.py` | 2 | `test_dbos.py` |
 | `test_results.py` | 6 | `test_failures.py` — upstream's test_nonserializable_return; the property generalises past pickle, and cleat substitutes rather than failing |
