@@ -21,14 +21,20 @@ does not show:
 | upstream file | cases | portable, unported |
 |---|---:|---:|
 | `test_dbos.py` | 61 | 17 → 9 → **2**, see below |
-| `test_failures.py` | 37 | 5 |
-| `test_scheduler.py` | 35 | 5 |
-| `test_client.py` | 57 | 3 |
-| `test_async.py` | 33 | 1 |
-| `test_concurrency.py` | 11 | 1 |
-| `test_workflow_management.py` | 46 | 1 |
+| `test_failures.py` | 37 | 5 → **0** |
+| `test_scheduler.py` | 35 | 5 → **0** |
+| `test_client.py` | 57 | 3 → **0** |
+| `test_async.py` | 33 | 1 → **0** |
+| `test_concurrency.py` | 11 | 1 → **0** |
+| `test_workflow_management.py` | 46 | 1 → **0** |
 | `test_queue.py` | 91 | 0 |
-| **total** | **371** | **33 → 25 → 18** |
+| **total** | **371** | **33 → 25 → 18 → 2** |
+
+*The right-hand column is now checked rather than typed:
+`scripts/check-worklist-totals.py` reconciles every row against the worklist it
+summarises and against the ported tests, and CI fails when a row contradicts its
+own evidence. The arrows are kept because this document's subject is how the
+number moved.*
 
 **Second correction, and the two are not the same mistake.** cleat-agent1-31
 audited their own 9 against cleat's surface case by case and it is **2**, which
