@@ -194,6 +194,23 @@ jobs:
           scripts/check-issue-citations.sh --self-test
           scripts/check-issue-citations.sh "origin/${{ github.base_ref || 'develop' }}"
 
+  worklist-totals:
+    name: The remaining-work table matches its evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The selftest runs FIRST and its failure fails the job. A reconciliation
+      # check that has stopped matching anything reports success over an empty
+      # set -- the same shape as the defect it exists to catch -- so the
+      # known-positives and the two vacuity cases are the load-bearing half.
+      - name: The check can still tell right from wrong
+        run: python3 scripts/selftest-check-worklist-totals.py
+      - name: next-upstream.md reconciles with the worklists
+        run: python3 scripts/check-worklist-totals.py
+
   port:
     name: ${{ matrix.port }}
     needs: discover
@@ -297,7 +314,7 @@ jobs:
   # is inspected rather than inferred.
   ports-gate:
     name: All ports
-    needs: [discover, port]
+    needs: [discover, port, worklist-totals]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -317,6 +334,16 @@ jobs:
           echo "discover:   ${{ needs.discover.result }}"
           echo "port:       ${{ needs.port.result }}"
           echo "needs_ports: ${{ needs.discover.outputs.needs_ports }}"
+          echo "worklist-totals: ${{ needs['worklist-totals'].result }}"
+
+          # Gated here rather than left as its own check, because a status that
+          # is not in this job's needs is not in the required set and reports
+          # without preventing. It has no skip case -- it runs on every change,
+          # so anything other than success is a failure.
+          if [ "${{ needs['worklist-totals'].result }}" != "success" ]; then
+            echo "::error::the remaining-work table no longer matches its evidence"
+            exit 1
+          fi
 
           if [ "${{ needs.discover.result }}" != "success" ]; then
             echo "::error::discover did not succeed, so nothing here knows what should have run"
