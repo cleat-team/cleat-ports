@@ -21,7 +21,7 @@ two still open.**
 | 2. `saga-temporal-port/ISSUES.md` is stale | n/a — about an upstream project's own doc |
 | 3. mis-cased `parent_close_policy` | cleat#938 |
 | 4. one delivery satisfies two `AwaitSignals` | cleat#900 |
-| 5. no "await N distinct signals" primitive | **not filed — see below** |
+| 5. no "await N distinct signals" primitive | **cleat#1132 — verified and filed** |
 | 6. query on an unknown run answers 200 | cleat#935 |
 | 7. query state is published, not computed | **deliberately not filed** — Won't fix, recorded |
 | 8. one path segment, two identifier kinds | cleat#942 |
@@ -30,19 +30,35 @@ two still open.**
 | 11. timeout on a signal already queued | cleat#953 |
 | 12. child that continues as new is orphaned | cleat#955 |
 
-**Entry 5 is not filed and deliberately not filed today.** Its load-bearing
-claim is that `AwaitSignalsWithQuorum`'s `minCount` counts *deliveries* rather
-than *distinct names*, so three deliveries of one signal satisfy a quorum of
-three. That claim is plausible and I could not confirm it: the interface comment
-says "at least minCount signals from the named set", which is ambiguous on
-exactly the point at issue, and the counting is not in `cmd/cleat-worker` or
-`engine`. Filing a missing-API request on an unverified mechanism is the failure
-this repo keeps documenting, so it waits for someone to verify it.
+**Entry 5 is now cleat#1132, verified by reproduction the same day.** The audit
+above declined to file it because its load-bearing claim — that
+`AwaitSignalsWithQuorum`'s `minCount` counts *deliveries* rather than *distinct
+names* — could not be confirmed from source. It is confirmed, and the entry
+understated it: this is not only a missing primitive, the existing call's
+counting is the reason it is missing.
 
-What *is* verified is the behaviour the port depends on:
-`await_signals_test.go::TestRepeatingOneSignalDoesNotSatisfyTheOthers` asserts
-three copies of one signal time out rather than completing a multi-signal wait,
-and it passes. So whatever quorum does, the port's workaround is sound.
+    quorum 3 over {alpha, beta, gamma}, only alpha ever sent:
+    result: {"got":3,"names":"alpha,alpha,alpha","outcome":"quorum"}
+
+The mechanism is in `cleat/runtime_signals.go`: nothing in the tree ever sets
+`awaitSignalsWithQuorum`, so the fallback loop is the implementation; it counts
+arrivals with `len(results) < minCount`, and `remaining` is assigned once from
+`signalNames` and never narrowed — a variable named for a narrowing that does
+not happen.
+
+**The reproduction took four attempts and the first three gave the reassuring
+answer**, which is worth recording here because it is the reason the source
+reading was not enough on its own. All three returned
+`{"got":0,"outcome":"timedOut"}` — which reads as *quorum correctly requires
+distinct names*, the opposite of the truth. The causes were a stale worker
+binary that could not run the module, a fixture field misread (`calls` for
+`attempts`), signal responses discarded without checking their status, and a
+wrong request field (`name` for `signal_name`, rejected 400). Four broken
+instruments, one answer, and it was the comfortable one every time.
+
+What was already verified stands: `await_signals_test.go::TestRepeating
+OneSignalDoesNotSatisfyTheOthers` asserts the port's workaround behaves
+correctly, and it passes.
 
 **How to check a row here, since the obvious way does not work.** Searching
 cleat's issues for an entry's wording finds neighbours rather than the entry —
@@ -296,9 +312,13 @@ notices the fix — the construction the DBOS port used for cleat#900.
 
 ## 5. There is no "await these N distinct signals" primitive
 
-**Class:** Missing API
+**Class:** Missing API — and the existing quorum call's counting is why
 **Upstream sample:** `await-signals/`
-**Status:** Open
+**Status:** Filed as cleat#1132 (2026-09-10), reproduced first. A quorum of 3
+over `{alpha, beta, gamma}` is satisfied by three deliveries of `alpha`:
+`{"got":3,"names":"alpha,alpha,alpha","outcome":"quorum"}`. The fallback loop in
+`cleat/runtime_signals.go` is the only implementation — nothing sets
+`awaitSignalsWithQuorum` — it counts arrivals, and `remaining` is never narrowed.
 
 **What upstream asserts**
 
