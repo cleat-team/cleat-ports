@@ -86,9 +86,37 @@ name. Both errors report a populated file as empty — they make the survey look
 Fourteen of the forty-seven unread cases are semaphores, and they are the only
 unread group aimed at a cleat surface that **already exists**: `AcquireLock` and
 `ReleaseLock` (`engine/imports.go`), concurrency keys, and the 409 a key refusal
-returns. The other five unread files are visibility, domain metadata, domain
-audit and a config store — Cadence-side machinery, on the same footing as the
-sharding and replication the survey already excludes.
+returns.
+
+**The other five I dismissed by their names, in the same paragraph that refuses
+to judge the semaphore cases by theirs.** What I wrote was that visibility,
+domain metadata, domain audit and a config store are "Cadence-side machinery, on
+the same footing as the sharding and replication the survey already excludes."
+That is a judgement about 33 cases nobody has read, made from four file names,
+sitting three paragraphs above an argument for why exactly that move is unsafe.
+
+It is also already falsified. `dbVisibilityPersistenceTest.go` is the largest
+unread file at 12 cases, and the visibility family has produced real cleat
+findings — cleat#1182 and cleat#1183 are both listing-and-filtering gaps. A
+related one, reported by the session doing that reading: **cleat has no
+`cancelled` status**, so a status filter cannot select cancelled runs as such.
+Verified here rather than taken on report, because the issue number I was handed
+turned out to carry a different finding:
+
+    grep -rhoE "'(ready|running|done|failed|cancelled|canceled|terminated)'" \
+      --include='*.sql' migrations/postgres/ | sort | uniq -c
+
+`ready` `done` `failed` `running` `suspended` `terminated` `pending` — and no
+spelling of *cancelled*. Cancellation lives in separate columns
+(`cancellation_requested`, `cancellation_reason`), which is precisely the shape a
+visibility suite asks about and a status filter cannot express.
+
+"Visibility is Cadence machinery" is the inference that misses all of it.
+
+So those five are **unread**, on the same footing as the semaphores, and the
+sentence that ranked them is withdrawn rather than softened. The semaphores are
+still the suggested next read — they aim at a surface that certainly exists —
+but *suggested next* is a claim about order, not about the others' worth.
 
 What is in them, by case name:
 
