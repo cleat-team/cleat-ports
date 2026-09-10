@@ -78,6 +78,31 @@ Stripped of the retry policy the case is `Test_SingleSubOrchestrator_Failed`,
 which is ported above, so porting it would add a second copy of one assertion
 under a name claiming another.
 
+**`Test_TerminateOrchestration_Recursive_TerminateCompletedSubOrchestration` —
+claimed 2026-09-09, cleat-agent1 (session_01QPgBuD).**
+
+Claimed here rather than in `docs/durabletask-go-orchestrations-survey.md`,
+which is the agreed place, because two PRs (#140, #148) currently have that file
+open and a third writer guarantees a conflict for one of them. The purpose of
+claiming is that another session can see it before starting; this file is as
+visible and is the port's own.
+
+**Two mappings this case needs, both checked against cleat rather than assumed.**
+
+*Recursion is decided at a different time.* Upstream passes
+`WithRecursiveTerminate(recurse)` at **terminate** time and parametrises over
+both values. cleat decides per child at **spawn** time, via
+`ChildWorkflowOptions.ParentClosePolicy` — so upstream's `recurse=true` maps to
+a child spawned `TERMINATE`, and `recurse=false` to one spawned `ABANDON`, which
+is cleat's default. The parametrisation ports; the flag does not.
+
+*There is no terminate route.* The per-run verbs are `allowed-signals cancel dag
+disable enable history promises query retry routing signal start tags terminal
+update`. `enforceParentClosePolicy` fires when the parent **closes** — completes
+or fails — so the port drives it by letting the parent finish rather than by
+terminating it. Same predicate, reached the way this engine reaches it.
+
+
 ## Cases examined first-hand, and what each check established
 
 Named because a survey of upstream establishes what **upstream** asserts; it
