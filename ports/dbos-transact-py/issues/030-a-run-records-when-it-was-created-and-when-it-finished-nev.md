@@ -2,7 +2,7 @@
 
 **Class:** Missing API
 **Upstream test:** `tests/test_queue.py` — `test_simple_queue`
-**Status:** Open
+**Status:** RESOLVED 2026-09-09 — cleat#1094 and cleat#1106
 
 **What upstream asserts**
 
@@ -114,3 +114,49 @@ found by asking what class they belonged to.
 
 Queue latency becomes computable once cleat#1094 and cleat#1105 are both in --
 not with #1094 alone, which is what this entry's original framing implied.
+
+
+---
+
+## Resolved, 2026-09-09
+
+**This entry is closed, and both halves of it were fixed the same day it was
+being cited.**
+
+    cleat#1094  added `started_at` -- "when a worker FIRST began executing this
+                run" -- on all three dialects
+    cleat#1106  fixed GetWorkflowByID, which selected `created_at` and four
+                other fields into locals and never assigned them, so a single
+                GET returned `0001-01-01T00:00:00Z` while the LIST endpoint
+                returned the true value for the same run
+
+So the entry's claim -- that a schema-wide search for
+`start|claim|dequeue|first_run` returns only `reclaim_count`, and that queue
+latency and execution time are therefore both unavailable -- is no longer true.
+Both are computable now:
+
+    queue latency   = started_at   - created_at
+    execution time  = completed_at - started_at
+
+Measured on a real run against `develop`: `created_at` 00:15:06.179793,
+`started_at` .187747, `completed_at` .536338.
+
+**How this was found, because the route matters.** Not by re-reading the entry.
+I measured a live run while classifying an upstream case, got
+`0001-01-01T00:00:00Z` from the single GET, and could not reconcile it with
+`engine/db.go`, which plainly selects and assigns `created_at`. The
+contradiction was a **stale binary**: the worker was built at `ebc1fb79`, an
+ancestor of #1106, roughly fifteen hours old.
+
+That is worth recording as its own hazard. A port suite measures whatever
+binary the harness last installed, and a finding derived from it dates from
+that build rather than from `develop`. `bin/.cleat-build` names the sha, and
+comparing it against the fix you are reasoning about is one command:
+
+    git merge-base --is-ancestor "$(sed -n 's/^sha=//p' bin/.cleat-build)" <fix-sha>
+
+**Coverage is in `tests/test_run_clock.py`**, which asserts the ordering and,
+separately, that the single GET and the list agree about `created_at` -- the
+#1106 shape specifically, which is invisible from either endpoint alone.
+Falsified against the pre-#1106 build: both cases fail there, naming the Go zero
+time.

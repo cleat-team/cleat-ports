@@ -230,6 +230,7 @@ UPSTREAM = [
 MAPPING = {
     "test_concurrency.py": ("test_queue.py", "concurrency keys are cleat's dedup surface"),
     "test_queues.py": ("test_queue.py", "deduplication by Idempotency-Key, priority accepted"),
+    "test_run_clock.py": ("test_queue.py", "upstream test_simple_queue's dequeued_at >= created_at, unblocked by cleat#1094 and #1106"),
     "test_locks.py": ("test_queue.py", "serialising work through a held key"),
     "test_priority_order.py": ("test_queue.py", "priority is a queue control"),
     "test_run_metadata.py": ("test_dbos.py",

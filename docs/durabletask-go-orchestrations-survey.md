@@ -190,7 +190,7 @@ the one this document warned about.
 | upstream case | verdict |
 |---|---|
 | `Test_EmptyOrchestration` | covered |
-| `Test_SingleTimer` | **split — the timestamp half is a DECLINE** |
+| `Test_SingleTimer` | **split — the timestamp half was wrongly declined, see below** |
 | `Test_SingleActivity` | **split — the unicode half is UNCOVERED** |
 | `Test_ActivityChain` | covered |
 | `Test_ActivityRetries` | covered — `test_retries.py::test_a_retryable_failure_is_retried_with_backoff` |
@@ -229,11 +229,29 @@ body and is not affected. Different channel, and the existing note explicitly
 calls itself "a limit of the instrument rather than a judgement that unicode is
 uninteresting".
 
-**`Test_SingleTimer` is a decline, not a coverage item.** Beyond completion it
-asserts `metadata.LastUpdatedAt >= metadata.CreatedAt`. cleat records no start
-time and ISSUES 30 records that `GET /api/workflows/:id` returns `created_at` as
-`0001-01-01T00:00:00Z` to a client. The ordering is unaskable here, so it belongs
-with the eight declines rather than the covered bucket.
+**`Test_SingleTimer`'s timestamp half — I declined this and was wrong.**
+
+I wrote that it asserts `metadata.LastUpdatedAt >= metadata.CreatedAt`, that
+cleat records no start time, and that `GET /api/workflows/:id` returns
+`created_at` as `0001-01-01T00:00:00Z`, citing ISSUES 30. The last part I had
+*measured*, which is why I believed the rest.
+
+**The measurement was against a binary fifteen hours old.** ISSUES 30 was true
+when written and both halves were fixed the same day: cleat#1094 added
+`started_at` on all three dialects, and cleat#1106 fixed `GetWorkflowByID`,
+which had been selecting `created_at` and four other fields into locals without
+assigning them — so the LIST endpoint returned the true value while the single
+GET returned the zero time.
+
+Against current `develop`: `created_at` 00:15:06.179793, `started_at` .187747,
+`completed_at` .536338. The ordering is fully askable, and it is now asserted in
+`tests/test_run_clock.py` — along with the endpoint disagreement itself, which
+is invisible from either endpoint alone.
+
+So this moves out of the declines. **The declines are 8 again, not 9**, and the
+lesson is narrower than "check the entry": a port measures whatever binary the
+harness last installed, so a finding derived from it dates from that build
+rather than from `develop`. `bin/.cleat-build` names the sha.
 
 **`Test_ActivityFanOut` is fully covered and worth saying why**, because it was
 the one I expected to fail. It asserts a specific output ordering and a duration
@@ -244,8 +262,13 @@ Between them both halves are asserted.
 
 ### What this does to the totals
 
-    before   8 declines · 10 portable and novel · 12 unverified
-    after    9 declines · 12 portable and novel ·  8 verified as covered
+    before        8 declines · 10 portable and novel · 12 unverified
+    after check   9 declines · 12 portable and novel ·  8 verified as covered
+    after fix     8 declines · 12 portable and novel ·  8 verified, 1 now ported
+
+The middle line stood for about an hour. `Test_SingleTimer` went into the
+declines on a measurement taken against a stale binary; its timestamp half is
+askable and is now ported.
 
 **The direction is the finding.** This document warned that the 12 must not be
 added to the 10 because the dbos `test_dbos.py` figure went 17 → 9 → 2 as it was
