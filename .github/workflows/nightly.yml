@@ -194,6 +194,19 @@ jobs:
           name: leg-${{ matrix.port }}--${{ matrix.dialect }}
           path: leg-markers/
           if-no-files-found: error
+      - name: The worker logged no unexplained errors
+        # Same step as ci.yml's. It is here because the omission was the point:
+        # ports#163 added this to ci.yml only, and the nightly -- the run whose
+        # uploaded logs carried the 74 SQL errors that prompted cleat#1133 in
+        # the first place -- did not get it. Landing a fix in one workflow and
+        # not its sibling is exactly what ports#162 was, one file over.
+        #
+        # The nightly is per-DIALECT where ci.yml is per-port, so this leg sees
+        # one dialect's log in isolation. That is the stronger placement: it is
+        # where a dialect-specific background failure shows up unmixed.
+        if: always()
+        run: python3 scripts/check-worker-log.py
+
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
