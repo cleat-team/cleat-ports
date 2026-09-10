@@ -22,6 +22,25 @@ because the test is about task lists. The second passes `TestReplicationDLQ`,
 `TestReplicationTasks` and `TestConflictResolveWorkflowExecutionWithCASMismatch`
 as clean, because their assertions go through generic helpers.
 
+### And the strictest bucket is a third wrong
+
+The 3-test bucket — the most conservative reading available — contains
+`TestDeleteCurrentWorkflow`, which carries this comment in the upstream source:
+
+> `// "this test is only applicable for cassandra (uses TTL based deletes)"`
+
+**One of the three is explicitly store-specific, said so by its own authors, and
+neither scan could see it.** A prose comment is not a token either scan looks
+for, and the test's assertions are entirely generic. So the ceiling on the
+strictest classification is not 3, it is 2 — a third of the cleanest bucket was
+wrong.
+
+Measured across all three files: **4 of 64 tests carry an explicit skip or a
+store-specific note** (`TestDeleteCurrentWorkflow`, `TestTransferTasksComplete`,
+`TestCreateFailoverMarkerTasks`, `TestReadBranchByPagination`). That is a small
+number and it is not the point — the point is which bucket the first one landed
+in.
+
 **Two readings that disagree by 9× and are wrong in opposite directions.** This
 is the same trap as cleat#1137, where the narrow scan missed the confirmed bug
 and the wide one flagged the fix as the defect. The conclusion is the same:
