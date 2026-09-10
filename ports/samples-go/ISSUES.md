@@ -8,11 +8,56 @@ Empty is the correct starting state. Add entries as you port, not at the end.
 
 ---
 
+## Filing audit, 2026-09-10
+
+Every entry below was checked for whether it reached `cleat-team/cleat`, because
+a finding recorded here and not filed there is work this repo did and did not
+deliver. Twelve entries: **eight filed, one filed today, one deliberately not,
+two still open.**
+
+| entry | upstream |
+|---|---|
+| 1. Saga steps cannot be factored | **cleat#1131 — filed today** |
+| 2. `saga-temporal-port/ISSUES.md` is stale | n/a — about an upstream project's own doc |
+| 3. mis-cased `parent_close_policy` | cleat#938 |
+| 4. one delivery satisfies two `AwaitSignals` | cleat#900 |
+| 5. no "await N distinct signals" primitive | **not filed — see below** |
+| 6. query on an unknown run answers 200 | cleat#935 |
+| 7. query state is published, not computed | **deliberately not filed** — Won't fix, recorded |
+| 8. one path segment, two identifier kinds | cleat#942 |
+| 9. durable clock goes backwards | cleat#944 |
+| 10. determinism checks skip host-call-free functions | cleat#949 |
+| 11. timeout on a signal already queued | cleat#953 |
+| 12. child that continues as new is orphaned | cleat#955 |
+
+**Entry 5 is not filed and deliberately not filed today.** Its load-bearing
+claim is that `AwaitSignalsWithQuorum`'s `minCount` counts *deliveries* rather
+than *distinct names*, so three deliveries of one signal satisfy a quorum of
+three. That claim is plausible and I could not confirm it: the interface comment
+says "at least minCount signals from the named set", which is ambiguous on
+exactly the point at issue, and the counting is not in `cmd/cleat-worker` or
+`engine`. Filing a missing-API request on an unverified mechanism is the failure
+this repo keeps documenting, so it waits for someone to verify it.
+
+What *is* verified is the behaviour the port depends on:
+`await_signals_test.go::TestRepeatingOneSignalDoesNotSatisfyTheOthers` asserts
+three copies of one signal time out rather than completing a multi-signal wait,
+and it passes. So whatever quorum does, the port's workaround is sound.
+
+**How to check a row here, since the obvious way does not work.** Searching
+cleat's issues for an entry's wording finds neighbours rather than the entry —
+"distinct signals" returns two real signal defects that are not this one. Read
+the entry's `Status:` line first; it is the only field that claims a filing.
+
 ## 1. Saga steps cannot be factored: the API is closure-based, the analyzer rejects closures
 
 **Class:** Design difference (with a cost worth naming)
 **Upstream sample:** `saga/`
-**Status:** Open
+**Status:** Filed as cleat#1131 (2026-09-10), reproduced first — a two-step saga
+factored with a closure-producing helper fails `cleat build` with four E009s,
+one per closure constructed. The issue notes that E009 already exempts types
+implementing `PluginCaller`, so the analyzer has a whitelist mechanism and the
+question is whether `SagaStep`'s funcs can use it.
 
 **What upstream asserts**
 
