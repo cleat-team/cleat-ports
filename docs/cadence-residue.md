@@ -117,6 +117,56 @@ signal). So this case is fully accounted for with nothing left to port.
 ever grows is a residue nobody trusts, and "cleat already does this" is a result
 the survey's row-by-name method could not produce.
 
+## Third pass: `TestContinueAsNew` — not a gap, and I nearly filed it
+
+The richest-looking case outside the dedup family. It asserts, on a
+continue-as-new transition:
+
+- the predecessor closes with a **distinct** `CloseStatusContinuedAsNew`;
+- `FirstExecutionRunID` is carried **unchanged** onto the new run — a stable
+  chain root readable from any link;
+- the "current" pointer for the workflow id now names the new run.
+
+Measured against cleat, a continue-as-new predecessor's record is:
+
+```json
+{"id": "0f749af4-…", "status": "done", "result": "{}", …}
+```
+
+`done`, with an empty result, and no field naming a successor or a root. On that
+alone it reads as two gaps: no distinct close status, and no chain root.
+
+**It is neither, and the port's own test is what says so.**
+
+cleat carries a `continued_from` column and a separate
+`GET /api/workflows/{id}/terminal` that walks the chain forward.
+`test_the_chain_is_followable_to_the_run_carrying_the_result` records that this
+was decided in cleat#826, and asserts **both** halves deliberately:
+
+> polling the original id still reports done with an empty result, because that
+> is what that row honestly contains … A change that made the first line return
+> the successor's result would be the rejected option arriving by the back door,
+> and would fail here.
+
+So the predecessor's `done` is not an omission. `GetWorkflowByID` keeps meaning
+"the row with this id"; making it follow the chain was considered and rejected,
+because four call sites and the admin dashboard would have begun receiving a
+different row, with a different id, than they asked for.
+
+The one genuine difference that survives: Cadence's `FirstExecutionRunID` is a
+**forward-stable root** readable from any link, where cleat's `continued_from`
+is a **backward pointer**. Both reach the outcome; a root answers "every run of
+this logical workflow" in one query where the backward chain needs a walk. That
+is a design difference, not a defect, and proposing the root here would be
+second-guessing a documented decision with no evidence of a problem behind it.
+
+**The method note is the reusable part.** I had two gaps written down before
+reading `test_continue_as_new.py`. What stopped me was checking **what the port
+already asserts** rather than only what the engine's record shows. A missing
+field in a response is evidence about that response, not about the system — and
+in this repo the decision that made it missing is usually written down beside a
+test that pins it. Read the port before concluding the engine lacks something.
+
 ## The honest read on the estimate
 
 Five read now, and the verdicts do not cluster the way a count would suggest:
@@ -128,6 +178,7 @@ Five read now, and the verdicts do not cluster the way a count would suggest:
 | `TestCreateWorkflowExecutionWithWorkflowRequestsDedup` | **not a gap** — cleat already satisfies it |
 | `TestCreateWorkflowExecutionRunIDReuseWithoutReplication` | not portable — asserts a layer boundary cleat lacks |
 | `TestCreateWorkflowExecutionDeDup` | not portable — needs a caller-supplied run id |
+| `TestContinueAsNew` | **not a gap** — cleat#826 decided this shape deliberately |
 
 ### Settling the fifth
 
@@ -155,7 +206,7 @@ after deletion, and that would be a real defect. It is specifically that **no
 API path lets a test express the precondition**, which is a statement about
 reachability from the port, not about the engine's correctness.
 
-**One new issue from five cases**, not five portable cases from five. That is
+**One new issue from six cases**, not five portable cases from five. That is
 still **not** a basis for revising 20–27 to any other number — saying "so it is really 17" would be exactly the false precision this
 document exists to avoid. What it does establish:
 
