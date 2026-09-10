@@ -752,3 +752,60 @@ find my error in a specific case than trust a total.
 The file's yield, for the record: **52 cases → 4 issues** — cleat#1151,
 cleat#1172, cleat#1175, and cleat#1177 by way of `TestGetCurrentWorkflow`. Two of
 the four came from cases a name-level triage would have discarded.
+
+
+## The corpus, and the five files nobody opened
+
+With `executionManagerTest.go` closed it is worth stating where the other 80
+cases are. Measured across both checkouts — the local `cadence/` holds only six
+files, which is why an earlier count of this corpus was low:
+
+| | cases | status |
+|---|---:|---|
+| `executionManagerTest.go` | 52 | **closed** — every case named above |
+| the five other originally-tabled files | 33 | adjudicated, **0 portable**, reasons recorded |
+| the semaphore family (3 files) | 14 | 3 read → 1 issue; **11 with another session** |
+| **five files never opened** | **33** | **listed in a counting table and nothing else** |
+| | **132** | |
+
+The last row is the point. `dbVisibilityPersistenceTest.go`,
+`metadataPersistenceV2Test.go`, `domainAuditPersistenceTest.go`,
+`configStorePersistenceTest.go` and `executionManagerTestForEventsV2.go` appear
+in this document exactly once each, as a number in a table. No case in any of
+them has been read.
+
+### Body-level triage of the 33
+
+| file | n | surface it exercises | cleat has it? |
+|---|---:|---|---|
+| `dbVisibilityPersistenceTest.go` | 12 | `ListOpen/ClosedWorkflowExecutions`, by type / by workflow id / by status, pagination, time skew | **yes — `ListWorkflows`** |
+| `metadataPersistenceV2Test.go` | 7 | domain CRUD, incl. **concurrent** create and update | partly — domain ≈ tenant, `tenant_settings` |
+| `domainAuditPersistenceTest.go` | 6 | an audit log of domain changes, with pagination and filtering | partly — there is an `auditlog` **plugin** |
+| `configStorePersistenceTest.go` | 5 | dynamic config with an **optimistic version collision** | partly — `tenant_settings` |
+| `executionManagerTestForEventsV2.go` | 3 | `TestWorkflowCreationWithVersionHistories`, and two duplicates of cases already adjudicated | **no** — version histories |
+
+### Why this changes the estimate rather than extending it
+
+This document's estimate of a thin residue was formed from the six files that
+were adjudicated, and **all six returned 0 portable**. Those six were also the
+ones examined *first*. The five never opened are not a random remainder — they
+are what was left after the persistence-internals files had been picked off, and
+at least one of them lands squarely on a surface cleat has.
+
+`WorkflowFilter` is `{Status, InputContains, ErrorContains, Search, Offset, Limit}`.
+Four of the twelve visibility cases map onto it directly:
+
+| upstream case | cleat surface |
+|---|---|
+| `TestFilteringByCloseStatus` | `filter.Status` |
+| `TestVisibilityPagination` | `filter.Offset` / `filter.Limit` |
+| `TestFilteringByType` | `filter.Search`, which matches `def_name` |
+| `TestMultipleUpserts` | repeated status transitions on one row |
+
+**No gap is claimed here — none of these has been read.** What is claimed is
+that the estimate was built on a sample that excluded them, and that "0 portable
+across six files" is evidence about those six.
+
+One flag for whoever takes it: cleat paginates with `OFFSET`, and offset
+pagination over a set that changes between pages is a classic source of skipped
+and repeated rows. `TestVisibilityPagination` is the case that would ask.
