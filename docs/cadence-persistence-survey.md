@@ -10,9 +10,10 @@ governs: this repo re-expresses assertions from prose and never copies.
 
 ## The headline
 
-**129 test functions; roughly 20 to 27 are portable.** The rest is machinery
-cleat does not have — multi-cluster replication, sharding, and task-list
-matching — and that is a finding about cleat's shape rather than a gap in it.
+**132 test functions across 14 files. Six files were read; eight were not.** Of
+the 85 cases in the six, roughly 20 to 27 are portable — the rest is machinery
+cleat does not have, which is a finding about cleat's shape rather than a gap in
+it. **The other 47 cases have not been assessed at all.**
 
 | file | cases | portable | why the rest is not |
 |---|---:|---:|---|
@@ -22,7 +23,100 @@ matching — and that is a finding about cleat's shape rather than a gap in it.
 | `matchingPersistenceTest.go` | 12 | ~0–1 | task lists; cleat's workers poll `workflow_instances` directly |
 | `queuePersistenceTest.go` | 4 | 0 | domain replication queues |
 | `shardPersistenceTest.go` | 5 | 0 | cleat does not shard |
-| **total** | **129** | **~20–27** | |
+| **read** | **85** | **~20–27** | |
+| `semaphoreMetadataPersistenceTest.go` | 5 | **unread** | see "The eight files this survey did not read" |
+| `semaphoreTasksPersistenceTest.go` | 5 | **unread** | |
+| `semaphoreTokenPersistenceTest.go` | 4 | **unread** | |
+| `dbVisibilityPersistenceTest.go` | 12 | **unread** | |
+| `metadataPersistenceV2Test.go` | 7 | **unread** | |
+| `domainAuditPersistenceTest.go` | 6 | **unread** | |
+| `configStorePersistenceTest.go` | 5 | **unread** | |
+| `executionManagerTestForEventsV2.go` | 3 | **unread** | |
+| **unread** | **47** | **unknown** | |
+| **total** | **132** | | |
+
+## The eight files this survey did not read
+
+**This table used to have six rows, a total of `129`, and no indication that it
+was a sample.** It listed six of the directory's fourteen contract-test files
+and presented a directory-wide headline over them. A reader — including its
+author, a day later — takes it as an enumeration, because that is what a file
+column with a total row looks like.
+
+Three numbers, none of which agreed, and the arithmetic is the whole diagnosis:
+
+| | |
+|---|---:|
+| the six listed rows, summed | **85** |
+| the total row as published | **129** |
+| all fourteen files, measured | **132** |
+
+The published total was not the sum of its own rows and was not the true total
+either. `132 − 129 = 3`, exactly the case count of
+`executionManagerTestForEventsV2.go` — the one file in the directory whose name
+does not end `PersistenceTest.go`. That is consistent with the headline having
+come from a glob that missed it, though the glob was not recorded, so treat it
+as the likeliest reconstruction rather than as established.
+
+Re-derive, and note it takes **two** readings that can disagree — a strict one
+anchored on a method receiver, and a loose one that over-matches on purpose. On
+this directory they agree file-by-file at 132; a strict parse running clean and
+a loose parse finding nothing more is evidence, while a strict parse alone is a
+claim:
+
+    for f in $(gh api 'repos/uber/cadence/git/trees/<pinned-sha>?recursive=1' \
+        --jq '.tree[].path' | grep '^common/persistence/persistence-tests/.*\.go$'); do
+      gh api "repos/uber/cadence/contents/$f?ref=<pinned-sha>" --jq .content |
+        base64 -d | grep -cE '^func \([A-Za-z_][A-Za-z0-9_]* \*[A-Za-z0-9_]+\) Test'
+    done
+
+Exclude `persistenceTestBase.go`, `shared_test.go` and
+`visibilitySamplingClient_test.go`: helpers and unit tests, not contract suites.
+That is 17 files in the directory and 14 that carry cases.
+
+**Two readings were needed because the first two attempts under-counted, both in
+the same direction.** A receiver pattern of `[A-Za-z]+` excludes digits, so
+`*MetadataPersistenceSuiteV2` matched nothing and its file read as **0**; and
+assuming the receiver variable is `s` did the same to a file that uses another
+name. Both errors report a populated file as empty — they make the survey look
+*more* complete, not less, which is why neither announced itself.
+
+### The three semaphore suites are the part worth reading next
+
+Fourteen of the forty-seven unread cases are semaphores, and they are the only
+unread group aimed at a cleat surface that **already exists**: `AcquireLock` and
+`ReleaseLock` (`engine/imports.go`), concurrency keys, and the 409 a key refusal
+returns. The other five unread files are visibility, domain metadata, domain
+audit and a config store — Cadence-side machinery, on the same footing as the
+sharding and replication the survey already excludes.
+
+What is in them, by case name:
+
+| suite | cases |
+|---|---|
+| `semaphoreMetadataPersistenceTest.go` | create-and-get, a default bucket size, a create **conflict**, get **not-found**, list |
+| `semaphoreTasksPersistenceTest.go` | claim a bucket, bucket-state not-found, queue lifecycle, **a stale range id is fenced out**, **buckets are independent** |
+| `semaphoreTokenPersistenceTest.go` | grant and release, **the same owner under a different token is rejected**, **seeding is idempotent**, scan a bucket |
+
+The bolded four are the ones that name a property cleat has an analogue for —
+fencing on a stale identifier, independence between keys, idempotent seeding, and
+a second grant to a holder — and cleat#1172 already came out of the listing half
+of this surface: a concurrency-key refusal names only the key the caller supplied,
+never the holder, and the holder cannot be looked up because `?concurrency_key=`
+is ignored and the listing is capped.
+
+**No `portable` column, deliberately, and this is not caution for its own sake.**
+The bolding above is a *name-level* triage; it says what fourteen functions are
+called, not what they assert. cleat's own `CLAUDE.md` records the case that makes
+that distinction expensive: `TestFinalizeDeferPhaseIsFencedOnTheClaimAndOnTheMarker`
+stayed green with the marker predicate deleted, because what refused the repeated
+finalize was the ordinary fence — three cases in one test, three different things
+doing the refusing, and the name attributed all three to one.
+
+Publishing a portability estimate off names would be **the same defect this
+section exists to correct**, one layer in: a table that reads as an assessment of
+something nobody examined. The estimate is owed a reading, and until someone does
+it these fourteen are `unread`.
 
 That ratio is lower than `durabletask-go`'s, whose `backend_test.go` was 7–8 of
 10. The absolute count is comparable or larger, and `cases` is a nominal
