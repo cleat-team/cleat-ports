@@ -152,3 +152,64 @@ def test_a_result_the_store_cannot_hold_is_replaced_and_the_run_reports_success(
         "reported before. That is an improvement and this assertion is what "
         "notices it -- the point of this test is that the caller cannot tell."
     )
+
+
+# The characters the fixture returns, decoded. Written as escapes in the Go
+# source and compared as real code points here, so the assertion fails if the
+# engine hands back the ESCAPES rather than the characters -- which is a real
+# outcome and a passing one for a naive string comparison against the raw JSON.
+UNICODE_EXPECTED = {
+    "cjk": "世界",
+    "accent": "café",
+    "astral": "\U0001F680",
+    "quoted": 'say "hi"',
+}
+
+
+def test_a_non_ascii_result_survives_all_three_dialects(cleat, bad_result_workflow):
+    """A result the store ACCEPTS must also come back unmangled.
+
+    Every other case in this file asks whether a value is rejected. This asks
+    the opposite question about a value that is accepted everywhere, and the
+    three dialects answer it with different machinery: `JSONB` on Postgres,
+    `JSON` on MySQL, and `NVARCHAR(MAX)` behind a `CHECK (ISJSON(...))` on SQL
+    Server.
+
+    **Why it is worth a case when all three currently hold it.** The failure it
+    guards is silent in exactly the way this file's docstring describes: a
+    narrowing to `VARCHAR`, or a connection charset that is not `utf8mb4`,
+    substitutes `?` for characters it cannot represent and leaves the run
+    `done` with an empty `error_msg`. A caller sees a successful workflow and a
+    corrupted result. Checked before writing this: SQL Server's column is
+    `nvarchar(-1)` — that is `NVARCHAR(MAX)` — so it holds today, and this
+    pins it.
+
+    **Found by verifying a coverage claim, not by suspecting a bug.**
+    `durabletask-go`'s `Test_SingleActivity` asserts its output is
+    `"Hello, 世界!"`, and the survey classified that case as already covered
+    here. The completion half was; the unicode half was not. Nothing in this
+    port put a non-ASCII byte in an input or an asserted result — 46 lines
+    contained non-ASCII and every one was an em-dash in prose.
+
+    **This is not the limit `test_scheduling.py` records.** That one is real and
+    is about the FIXTURE KEY channel: keys travel in a URL path and
+    `http.client` encodes the request line as ASCII, so a non-ASCII key raises
+    `UnicodeEncodeError` in the test process. A workflow result travels in a
+    JSON body and is unaffected — different channel, and that note says so.
+
+    The astral character matters on its own: `U+1F680` is outside the BMP, so
+    SQL Server stores it as a UTF-16 surrogate pair. A layer that counts
+    characters rather than code units can split it, which produces a lone
+    surrogate rather than a substitution and fails differently.
+    """
+    final = _run(cleat, bad_result_workflow, "unicode")
+    assert final["status"] == "done", f"the run did not complete: {final}"
+
+    got = _result(final)
+    assert got == UNICODE_EXPECTED, (
+        f"a non-ASCII result did not round-trip. got {got!r}, want "
+        f"{UNICODE_EXPECTED!r}. Question marks mean the column or the "
+        "connection charset cannot represent the character; escaped text like "
+        r"'世' means something returned the JSON source rather than "
+        "decoding it."
+    )
