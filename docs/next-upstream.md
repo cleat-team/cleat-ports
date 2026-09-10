@@ -30,6 +30,46 @@ does not show:
 | `test_queue.py` | 91 | 0 |
 | **total** | **371** | **33 → 25 → 18** |
 
+> **Third correction (2026-09-10): the 18 does not reconcile with the worklists
+> it summarises, and the direction of the error is downward.** Two rows are
+> contradicted in bold by their own worklist headings — `test-client.md` says
+> *"### Portable — 3 · **ported 2026-09-09**"* and `test-scheduler.md` says
+> *"### Portable — 5 · **all five ported 2026-09-09**"*, against 3 and 5
+> **unported** here. That is 8 of the 18.
+>
+> Checking the rest mechanically — does a ported test name the upstream case in
+> its docstring, the convention this port already follows — **13 of the 14
+> portable cases enumerated by name across the worklists are cited by a test
+> that exists.** The fourteenth is `test_step_retries_no_final_sleep_async`,
+> which `test-failures.md` itself says to merge into its sync twin.
+>
+> `test_failures.py`'s row says 5; four are cited (one,
+> `test_a_permanent_failure_is_not_reported_as_an_exhausted_budget`, names
+> `test_step_should_retry_on_last_attempt` in its own docstring) and the fifth is
+> that merge. `test_async.py`'s single case is cited too.
+>
+> **A defensible remaining figure is 2–4, not 18** — plausibly `test_dbos.py`'s 2,
+> `test_concurrency.py`'s 1, and `test_workflow_management.py`'s 1, which that
+> worklist says is an ISSUES entry rather than a test to write.
+>
+> **What is measured and what is not.** Measured: the worklist headings, and that
+> 13 of 14 named cases appear in a ported test. Not measured: that each of those
+> tests actually asserts the upstream property — citation is a strong signal and
+> not a proof, and I did not re-read all thirteen.
+>
+> **This is the failure this document diagnoses, applied to its own headline.**
+> The text below says an unenumerated count has nothing to reconcile against.
+> The 18 is a column of per-file totals, and the two files whose worklists state
+> their status in bold are the two it contradicts. The enumerated sections were
+> right and the summary was stale, which is the direction summaries fail in.
+>
+> **It changes the decision.** *"Finish the 18, then add a second upstream"*
+> reads very differently at 2–4: the first upstream is close to finished, and the
+> second is due now rather than after a block of work. Someone should confirm the
+> residual by reading those two-to-four cases before the count is quoted again —
+> including this correction.
+
+
 **Second correction, and the two are not the same mistake.** cleat-agent1-31
 audited their own 9 against cleat's surface case by case and it is **2**, which
 makes the total **18**. Four of the nine need something cleat does not have — an
