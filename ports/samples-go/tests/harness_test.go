@@ -337,21 +337,113 @@ func awaitQueryState(t *testing.T, runID, key, want string, timeout time.Duratio
 // deploy-workflow, not `cleat deploy`: the CLI's DB-touching subcommands are
 // PostgreSQL-only by design and refuse a MySQL or SQL Server DSN, so the CLI
 // path would work on one dialect and be assumed on the other two.
+// unconditionalBuildWarnings are emitted by every WASM build of every workflow,
+// including one that makes no host calls at all, so they say nothing about the
+// package being built. cleat's generator emits both imports unconditionally --
+// wasm/generator.go, "Always include cleat_complete -- the export wrapper calls
+// it" -- while wasm/scan.go compares the binary's imports against the
+// WORKFLOW's computed closure, which they are never in by construction. Filed
+// as cleat#1125.
+//
+// They are filtered rather than tolerated because the point of surfacing
+// warnings is that someone will read them, and a channel that cries wolf twice
+// on every build is one nobody reads. That is not hypothetical: README.md
+// records a W003 warning that correctly predicted a failure, went unnoticed,
+// and was nearly filed as a cleat defect instead.
+//
+// The suppressed count is reported, so this stays a filter rather than a
+// silence -- and when cleat#1125 is fixed the count goes to zero and the filter
+// matches nothing, rather than needing to be removed.
+var unconditionalBuildWarnings = []string{
+	`host function "cleat_complete" imported from WASM env but not in computed closure`,
+	`host function "cleat_poll_work" imported from WASM env but not in computed closure`,
+}
+
+// reportBuildWarnings surfaces toolchain warnings from a SUCCESSFUL build.
+//
+// deploy() read stderr only in the failure branch, so a warning on a build that
+// succeeded was discarded -- and the toolchain's warnings are predictions of
+// failures that arrive later wearing a different name. W003 ("a single string
+// parameter receives the ENTIRE input JSON") was emitted, dropped here, and
+// resurfaced two layers away as a result stored as `{}`.
+//
+// t.Logf rather than t.Errorf: some warnings are advisory, and a harness that
+// failed on every one would hold the suite hostage to the toolchain's wording.
+// t.Logf is printed whenever the test fails and under -v, which puts the
+// prediction in front of whoever is reading the failure it predicted.
+func reportBuildWarnings(t *testing.T, pkg, stderr string) {
+	t.Helper()
+	shown, suppressed := buildWarnings(stderr)
+	if len(shown) == 0 {
+		return
+	}
+	t.Logf("building %s produced %d toolchain warning(s); %d unconditional ones suppressed (cleat#1125).\n"+
+		"These are PREDICTIONS: a warning here usually surfaces later as a wrong RESULT rather than as a build error.\n  %s",
+		pkg, len(shown), suppressed, strings.Join(shown, "\n  "))
+}
+
+// buildWarnings splits a build's stderr into the warnings worth showing and a
+// count of the unconditional ones dropped. Pure, and separate from the logging,
+// so it can be tested against REAL captured toolchain output rather than
+// against a hand-written imitation of it -- the filter's whole job is to match
+// what the toolchain actually emits, and a fixture I wrote myself would agree
+// with my belief about that rather than with the toolchain.
+func buildWarnings(stderr string) (shown []string, suppressed int) {
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "Warning:") {
+			continue
+		}
+		known := false
+		for _, u := range unconditionalBuildWarnings {
+			if strings.Contains(line, u) {
+				known = true
+				break
+			}
+		}
+		if known {
+			suppressed++
+			continue
+		}
+		shown = append(shown, line)
+	}
+	return shown, suppressed
+}
+
 func deploy(t *testing.T, pkg, workflowName string) string {
 	t.Helper()
 	outDir := filepath.Join(repoRoot, ".port-results", "wasm", "samples-go", pkg)
 	pkgDir := filepath.Join(repoRoot, "ports", "samples-go", "workflows", pkg)
 
 	built := exec.Command(filepath.Join(repoRoot, "scripts", "build-workflow.sh"), pkgDir, outDir)
-	wasm, err := built.Output()
-	if err != nil {
-		stderr := ""
-		var ee *exec.ExitError
-		if ok := asExitError(err, &ee); ok {
-			stderr = tail(string(ee.Stderr), 2000)
-		}
-		t.Fatalf("building %s failed: %v\n%s", pkg, err, stderr)
+	// Captured separately rather than via Output(), which requires Stderr to be
+	// nil -- which is why the old code could reach the toolchain's output only
+	// through *exec.ExitError, i.e. only when the build FAILED.
+	var stdout, stderr bytes.Buffer
+	built.Stdout = &stdout
+	built.Stderr = &stderr
+	if err := built.Run(); err != nil {
+		t.Fatalf("building %s failed: %v\n%s", pkg, err, tail(stderr.String(), 2000))
 	}
+	// Reading STDERR alone is complete here, and that is a property of the
+	// wrapper rather than of cleat. scripts/build-workflow.sh line 76 runs the
+	// whole `cleat build` invocation with `) >&2`, so cleat's stdout and stderr
+	// are MERGED into this stream and the wrapper's own stdout carries nothing
+	// but the .wasm path.
+	//
+	// That matters because cleat splits its warnings across both streams under
+	// the identical "  Warning: " prefix: analyzer warnings including W003 go to
+	// stdout (cmd/cleat/main.go:322), the orphaned-import warnings to stderr
+	// (:506). A consumer invoking `cleat build` DIRECTLY and reading one stream
+	// would silently see a subset -- neither stream says the other exists. Filed
+	// as cleat#1128.
+	//
+	// So this capture is correct because of the merge, not because W003 happens
+	// to be on stderr. Measured, not assumed: built through the wrapper, stdout
+	// was 37 bytes containing only the path and zero "Warning:" lines, while all
+	// three warnings arrived on stderr.
+	reportBuildWarnings(t, pkg, stderr.String())
+	wasm := stdout.Bytes()
 
 	deployed := exec.Command(filepath.Join(repoRoot, "bin", "deploy-workflow"),
 		"-db", os.Getenv("CLEAT_PORTS_DSN"),
@@ -379,14 +471,6 @@ func buildOnly(t *testing.T, pkg string) (string, bool) {
 	out, err := exec.Command(
 		filepath.Join(repoRoot, "scripts", "build-workflow.sh"), pkgDir, outDir).CombinedOutput()
 	return string(out), err == nil
-}
-
-func asExitError(err error, target **exec.ExitError) bool {
-	ee, ok := err.(*exec.ExitError)
-	if ok {
-		*target = ee
-	}
-	return ok
 }
 
 func envOr(name, fallback string) string {

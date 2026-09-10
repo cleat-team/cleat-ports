@@ -244,8 +244,20 @@ its result"* — on the strength of one contrast that had **two** variables in i
 Changing one at a time gave the real answer, and the toolchain had already given
 it before the first run.
 
-Surfacing build warnings from `deploy()` is worth doing and is not in this PR;
-it changes shared harness behaviour for every port and belongs on its own.
+`deploy()` now surfaces them. It reads the toolchain's stderr on a **successful**
+build too, not only through `*exec.ExitError` on a failed one, and reports what
+it finds with `t.Logf` -- which Go prints whenever the test fails, putting the
+prediction in front of whoever is reading the failure it predicted. The same
+change is in `ports/samples-go` and in the Python harness.
+
+Two of the warnings are filtered out, and that is the other half of why W003 was
+missed. `cleat_complete` and `cleat_poll_work` are reported as orphaned imports
+on **every build of every workflow**, including one that makes no host calls at
+all -- cleat's generator emits both unconditionally while its scanner compares
+them against the workflow's closure, which they are never in. So even a surfaced
+W003 would have arrived third in a list whose first two entries are always
+wrong. Filed as cleat#1125; the suppressed count is reported rather than hidden,
+so when it is fixed the filter goes inert instead of stale.
 
 ## Not a coverage ratio
 
