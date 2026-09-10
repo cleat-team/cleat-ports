@@ -96,14 +96,71 @@ running() {
 # leaving it on is the point: a port that starts workflows over an unauthenticated
 # API is exercising a configuration nobody deploys. Cheaper to mint one key here
 # than to have every port assert against a path production does not use.
+# Is the cached key known-good, known-bad, or unknowable?
+#
+#   0  it authenticates
+#   1  it does not, or there is no file
+#   2  cannot tell -- nothing is serving, so the question has no answer yet
+#
+# The three-way answer is the point. `[ -s "$KEYFILE" ]` asks whether the file
+# is non-empty, which is a different question from whether the key works, and
+# the two diverge exactly when a suite has truncated the tenant rows: the file
+# keeps a key the database no longer knows. The failure then lands later as
+# `401 invalid or revoked API key`, naming authentication -- which is the only
+# part of the system behaving correctly.
+#
+# This is the same shape as the DSN note in cleat's CLAUDE.md: "A DSN that is
+# set but does not connect looks exactly like one that works. Setting the
+# variable is what stops a test skipping. Connecting is a separate question."
+key_state() {
+  [ -s "$KEYFILE" ] || return 1
+  healthy || return 2
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 \
+      -H "Authorization: Bearer $(cat "$KEYFILE")" \
+      "$API_URL/api/workflows" 2>/dev/null)" || return 2
+  case "$code" in
+    200) return 0 ;;
+    401|403) return 1 ;;
+    # Any other code is about the endpoint, not the credential. Re-minting on a
+    # 500 would burn a key row per call and blame the wrong thing.
+    *) return 2 ;;
+  esac
+}
+
 mint_key() {
-  [ -s "$KEYFILE" ] && return 0
+  # `key_state` on a bare line would be fatal: this script runs under `set -e`,
+  # so a function returning 1 -- which is key_state's ordinary way of saying
+  # "revoked" -- terminates the shell before the re-mint it was asked for. The
+  # symptom was `ensure` exiting silently with the stale key still in place,
+  # i.e. exactly the defect this function is meant to fix, caused by the fix.
+  # `|| state=$?` puts the call in a condition context, where set -e does not
+  # fire.
+  local state=0
+  key_state || state=$?
+  case $state in
+    0) return 0 ;;
+    2) [ -s "$KEYFILE" ] && return 0 ;;
+  esac
   ( cd "$SRC" && "$ROOT/bin/cleat-worker" \
       -db "$CLEAT_PORTS_DSN" \
       -driver "$CLEAT_PORTS_DIALECT" \
       -generate-api-key "$CLEAT_PORTS_TENANT" 2>/dev/null ) \
     | sed -n 's/^Key: *//p' | tr -d '[:space:]' > "$KEYFILE"
   [ -s "$KEYFILE" ] || { echo "failed to mint an API key" >&2; rm -f "$KEYFILE"; exit 1; }
+
+  # Minting wrote a file; that is not the same as minting a key that works, and
+  # this function's whole defect was treating the two as one.
+  # `if ! key_state && [ $? -eq 1 ]` was the first attempt and is wrong: after
+  # `! cmd`, $? is the NEGATED status, so the guard reads 0 where key_state said
+  # 1. Capture the status, then branch on it.
+  local after=0
+  key_state || after=$?
+  if [ "$after" -eq 1 ]; then
+    echo "minted an API key that does not authenticate against $API_URL" >&2
+    rm -f "$KEYFILE"
+    exit 1
+  fi
 }
 
 fixture_healthy() { curl -sf -m 2 "$CLEAT_PORTS_FIXTURE_URL/healthz" >/dev/null 2>&1; }
