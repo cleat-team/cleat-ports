@@ -568,3 +568,59 @@ That is 17 assigned by surface, and **triage is not reading** — the semaphore
 family is the standing evidence, where two cases whose names and surfaces both
 looked like opportunities turned out to be satisfied twice over. These 17 remain
 available to anyone who wants to check the family assignment by reading them.
+
+
+## Auditing the *already covered* verdicts
+
+The section above says the survey's blind spot is the **covered** bucket, so the
+obvious next move was to audit it rather than leave the observation as a remark.
+The question asked of each covered verdict: **is it backed by something that
+executed, or by something that was read?**
+
+| verdict | backed by | holds? |
+|---|---|---|
+| `TestCreateWorkflowExecutionWithWorkflowRequestsDedup` — cleat already satisfies it | a live-worker measurement: 200 `already_started` vs 409 on the concurrency key | **yes** |
+| `TestStaleRangeIDIsFencedOut` | `test_a_stale_generation_is_refused_as_a_conflict` (exists, passes) | **yes** |
+| `TestBucketsAreIndependent` | `test_distinct_keys_do_not_block_each_other` and its cross-worker sibling | **yes** |
+| parent-close cascade — *"cleat already has a configurable cascade"* | four port test files driving all three of `ABANDON`, `TERMINATE`, `REQUEST_CANCEL`, including `ports/durabletask-go/tests/terminate_recursive_test.go` | **yes** |
+| `TestContinueAsNew` — the chain is followable | `test_the_chain_is_followable_to_the_run_carrying_the_result` | **no — see below** |
+
+Four of five are backed by something that ran. That is a better result than the
+section above implied, and worth recording: the *covered* bucket is where this
+class of defect lives, but it is not where most of them live.
+
+### The fifth, and why a passing test was not enough
+
+`test_the_chain_is_followable_to_the_run_carrying_the_result` starts a workflow
+that continues as new, waits for the chain, calls
+`GET /api/workflows/{id}/terminal`, and asserts the successor comes back. Real
+chain, real PostgreSQL, in CI, **green** — and it was green over
+**cleat#1177**, a statement that raises on every chain that has a successor.
+
+`scripts/worker.sh` connects the worker as `postgres://postgres`. A superuser
+bypasses RLS unconditionally, `FORCE ROW LEVEL SECURITY` included. Same
+statement, same rows, same database, role changed:
+
+```
+postgres  (this harness)   -> returns the successor
+cleat_app (deployments)    -> ERROR: cleat.tenant_id is not set
+```
+
+**The test is not weak and its assertions are not vacuous. It measures a system
+configured so that the thing that breaks cannot break.** Filed as
+cleat-ports#198, and the cleat-side census that bounds it as cleat#1178.
+
+### What the audit changes about the method
+
+"Backed by a passing test" is one question and **"backed by a passing test run
+in the configuration that matters"** is another, and only the second is worth
+anything. Privilege level is the part of a configuration nothing states: a
+harness picks a convenient credential once, in a setup script, and every
+mechanism that credential disables reports green from then on.
+
+The concrete follow-up is in cleat-ports#198 as a **falsifiable prediction**
+rather than a caveat: pointing the worker at `cleat_app` should turn red exactly
+the tests reaching `/terminal`, because cleat#1178 enumerates the whole
+population and finds one live statement. If anything else breaks, the census is
+incomplete — which is the more valuable outcome and the reason to run it cheaply
+instead of reasoning about it further.
