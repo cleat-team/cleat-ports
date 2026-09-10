@@ -13,7 +13,7 @@ governs: this repo re-expresses assertions from prose and never copies.
 **132 test functions across 14 files. Six files were read; eight were not.** Of
 the 85 cases in the six, roughly 20 to 27 are portable — the rest is machinery
 cleat does not have, which is a finding about cleat's shape rather than a gap in
-it. **The other 47 cases have not been assessed at all.**
+it. Of the other 47, **three have since been read and 44 remain unassessed.**
 
 | file | cases | portable | why the rest is not |
 |---|---:|---:|---|
@@ -25,14 +25,14 @@ it. **The other 47 cases have not been assessed at all.**
 | `shardPersistenceTest.go` | 5 | 0 | cleat does not shard |
 | **read** | **85** | **~20–27** | |
 | `semaphoreMetadataPersistenceTest.go` | 5 | **unread** | see "The eight files this survey did not read" |
-| `semaphoreTasksPersistenceTest.go` | 5 | **unread** | |
-| `semaphoreTokenPersistenceTest.go` | 4 | **unread** | |
+| `semaphoreTasksPersistenceTest.go` | 5 | 2 read | both already covered by cleat — see below |
+| `semaphoreTokenPersistenceTest.go` | 4 | 1 read | one real gap: cleat#1172 — see below |
 | `dbVisibilityPersistenceTest.go` | 12 | **unread** | |
 | `metadataPersistenceV2Test.go` | 7 | **unread** | |
 | `domainAuditPersistenceTest.go` | 6 | **unread** | |
 | `configStorePersistenceTest.go` | 5 | **unread** | |
 | `executionManagerTestForEventsV2.go` | 3 | **unread** | |
-| **unread** | **47** | **unknown** | |
+| **not fully read** | **47** | **44 unassessed** | 3 semaphore cases have since been read |
 | **total** | **132** | | |
 
 ## The eight files this survey did not read
@@ -98,12 +98,22 @@ What is in them, by case name:
 | `semaphoreTasksPersistenceTest.go` | claim a bucket, bucket-state not-found, queue lifecycle, **a stale range id is fenced out**, **buckets are independent** |
 | `semaphoreTokenPersistenceTest.go` | grant and release, **the same owner under a different token is rejected**, **seeding is idempotent**, scan a bucket |
 
-The bolded four are the ones that name a property cleat has an analogue for —
-fencing on a stale identifier, independence between keys, idempotent seeding, and
-a second grant to a holder — and cleat#1172 already came out of the listing half
-of this surface: a concurrency-key refusal names only the key the caller supplied,
-never the holder, and the holder cannot be looked up because `?concurrency_key=`
-is ignored and the listing is capped.
+The bolded four name a property cleat has an analogue for — fencing on a stale
+identifier, independence between keys, idempotent seeding, and a second grant to
+a holder.
+
+**Three of the fourteen have since been read, and the result is the argument for
+everything below.** Recorded on `cadence-residue.md`; verified here against the
+cleat-side tests named:
+
+| case | on reading it |
+|---|---|
+| `TestGrantSameOwnerDifferentTokenIsRejected` | **a real gap** — cleat#1172 |
+| `TestStaleRangeIDIsFencedOut` | **already covered** — `test_a_stale_generation_is_refused_as_a_conflict` |
+| `TestBucketsAreIndependent` | **already covered, three times** — `test_distinct_keys_do_not_block_each_other` in both `test_concurrency.py` and `test_locks.py`, plus `test_distinct_keys_do_not_block_across_workers` |
+
+So **11 of the 14 remain unread**, and two of the four properties bolded above as
+"cleat has an analogue for" turn out to be properties cleat has already **tested**.
 
 **No `portable` column, deliberately, and this is not caution for its own sake.**
 The bolding above is a *name-level* triage; it says what fourteen functions are
@@ -115,8 +125,16 @@ doing the refusing, and the name attributed all three to one.
 
 Publishing a portability estimate off names would be **the same defect this
 section exists to correct**, one layer in: a table that reads as an assessment of
-something nobody examined. The estimate is owed a reading, and until someone does
-it these fourteen are `unread`.
+something nobody examined. The estimate is owed a reading.
+
+**And the three read since settle it, in the least comfortable way available.** A
+name-level score would have marked `TestStaleRangeIDIsFencedOut` and
+`TestBucketsAreIndependent` as opportunities, because their names describe
+properties cleat genuinely has — and both are already tested, one of them three
+times over. **The names were accurate and the conclusion drawn from them would
+have been wrong.** A name tells you what a case is *about*; only reading tells you
+whether the thing it is about is already covered on this side. That distinction
+does not show up in any count.
 
 That ratio is lower than `durabletask-go`'s, whose `backend_test.go` was 7–8 of
 10. The absolute count is comparable or larger, and `cases` is a nominal
