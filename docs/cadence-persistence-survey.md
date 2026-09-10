@@ -115,6 +115,17 @@ cleat-side tests named:
 So **11 of the 14 remain unread**, and two of the four properties bolded above as
 "cleat has an analogue for" turn out to be properties cleat has already **tested**.
 
+**Both "already covered" verdicts were independently audited in ports#199 and
+hold** — that audit asks of each covered verdict whether it is backed by something
+that *executed* rather than something that was read, and four of its five held.
+Read it before relying on any "already covered" in this file, because the one that
+failed did so for a reason no reading catches: the port harness connects as a
+PostgreSQL **superuser**, which bypasses `FORCE ROW LEVEL SECURITY` unconditionally,
+so a green test can be measuring a system configured such that the thing that
+breaks cannot break. *Backed by a passing test* and *backed by a passing test run in
+the configuration that matters* are different claims, and only the second is worth
+anything.
+
 **No `portable` column, deliberately, and this is not caution for its own sake.**
 The bolding above is a *name-level* triage; it says what fourteen functions are
 called, not what they assert. cleat's own `CLAUDE.md` records the case that makes
