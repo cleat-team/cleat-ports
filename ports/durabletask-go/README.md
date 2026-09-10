@@ -42,8 +42,8 @@ in this area", and two cases already fail it — see below.
 
 ## In progress
 
-**`Test_SingleSubOrchestrator_Failed` and `_Failed_Retries` — claimed 2026-09-09,
-cleat-agent1 (session_01QPgBuD).** Claimed here rather than announced elsewhere,
+**`Test_SingleSubOrchestrator_Failed` — ported; it found cleat#1115 (ISSUES 2).
+`_Failed_Retries` — declined, see below.** Claimed here rather than announced elsewhere,
 because two sessions ported the same upstream case tonight by each assuming the
 other had not.
 
@@ -54,6 +54,29 @@ error-shaped assertion is `assert not r.get("error")` — the *absence* of one.
 Upstream asserts the opposite direction, that a failed child's message reaches
 the parent's failure details, and the `_Retries` variant asserts it after the
 child exhausts a retry policy.
+
+### `Test_SingleSubOrchestrator_Failed_Retries` — needs something cleat lacks
+
+Upstream's variant attaches a **retry policy to the sub-orchestration** and
+asserts the same failure propagation after the child exhausts it. cleat has no
+per-child retry policy:
+
+```go
+type ChildWorkflowOptions struct {
+    Version           int
+    ParentClosePolicy ParentClosePolicy
+    Priority          int
+}
+```
+
+and the only retry export is `cleat_call_retry`, whose signature is
+`(svc, op, req, maxAttempts, initialIntervalMs, backoffCoefficient100x,
+maxIntervalMs, ...)` — a **service-call** retry, not a child-workflow one.
+Re-derive with `grep -oE '\.Export\("[^"]+"\)' engine/imports.go | grep -i retry`.
+
+Stripped of the retry policy the case is `Test_SingleSubOrchestrator_Failed`,
+which is ported above, so porting it would add a second copy of one assertion
+under a name claiming another.
 
 ## Cases examined first-hand, and what each check established
 
