@@ -22,6 +22,7 @@ and says plainly that rate limiting has nothing to test rather than inventing a
 proxy for it.
 """
 
+import concurrent.futures
 import json
 import uuid
 
@@ -288,4 +289,79 @@ def test_a_key_used_for_one_workflow_does_not_answer_for_another(
 
     assert second_status != 200 or second.get("workflow_id") != first["id"], (
         f"second start answered {second_status} {second!r}"
+    )
+
+
+def test_concurrent_starts_under_one_key_elect_exactly_one_creator(
+    cleat, retry_workflow, fixture_calls
+):
+    """Under a race, exactly one caller is told it created the run.
+
+    PORTED FROM uber/cadence, and kept here rather than in a cadence port
+    because the property is worth more than the directory. See
+    docs/cadence-persistence-survey.md: that suite's
+    TestCreateWorkflowExecutionConcurrentCreate spawns concurrent creates of one
+    workflow id and asserts `s.Equal(int32(1), numOfErr)` -- exactly one racer
+    fails. Cadence ERRORS the losers; cleat answers them 200 with
+    `already_started`. Same election, different report, and this asserts cleat's.
+
+    WHY ITS NEIGHBOURS DO NOT COVER IT. test_the_same_idempotency_key_starts_one
+    _run already pins the 201-then-200 distinction -- but SEQUENTIALLY, sending
+    the second start after the first returned. So does every other dedup test
+    here, and so does ports#156's pair in the durabletask-go port. Sequential
+    starts exercise the LOOKUP: the run exists, the second start finds it.
+
+    They cannot exercise the RACE, where several starts reach the key before any
+    has committed a run. That is the case an idempotency key exists for, and the
+    one where a check-then-insert without a uniqueness constraint behind it
+    would hand TWO callers a 201 and run the body twice.
+
+    Eight racers rather than two: the window is milliseconds wide, and two
+    threads from a barrier miss it often enough that green would prove little.
+    """
+    key = f"cdd-{uuid.uuid4().hex[:8]}"
+    idem = f"idem-{uuid.uuid4().hex[:8]}"
+    payload = {"service": "flaky", "key": key, "attempts": 1, "intervalMs": 50,
+               "failTimes": 0, "failStatus": 0}
+
+    racers = 8
+    with concurrent.futures.ThreadPoolExecutor(max_workers=racers) as pool:
+        results = [f.result() for f in [
+            pool.submit(cleat.start, retry_workflow, payload, idempotency_key=idem)
+            for _ in range(racers)]]
+
+    creators = [b for st, b in results if st == 201]
+    dupes = [b for st, b in results if st == 200]
+
+    assert len(creators) == 1, (
+        f"{len(creators)} of {racers} concurrent starts were answered 201, not one. "
+        f"A 201 means 'this call created the run', so more than one is two callers "
+        f"each told they created it -- a check-then-insert with no uniqueness "
+        f"constraint behind it. statuses: {[st for st, _ in results]}"
+    )
+    assert len(creators) + len(dupes) == racers, (
+        f"some starts were neither 201 nor 200: {[st for st, _ in results]}. "
+        f"Cadence errors every racer but one; if cleat has adopted that, this "
+        f"test should assert it rather than be deleted."
+    )
+
+    run_id = creators[0]["id"]
+    for b in dupes:
+        assert b.get("workflow_id") == run_id, (
+            f"a deduplicated racer was pointed at {b.get('workflow_id')!r}, not at "
+            f"the created run {run_id!r}. The election picked one creator and told "
+            f"the losers about a different run."
+        )
+        assert b.get("already_started") == "true", (
+            f"a deduplicated racer did not report already_started: {b!r}"
+        )
+
+    final = cleat.await_terminal(run_id, timeout=60.0)
+    assert final["status"] == "done", f"the elected run did not finish: {final!r}"
+
+    calls = fixture_calls(key)
+    assert calls == 1, (
+        f"the body ran {calls} times for {racers} concurrent starts that elected "
+        f"one creator. Electing a single creator while executing more than once is "
+        f"the failure the status codes cannot see."
     )
