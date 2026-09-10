@@ -46,7 +46,7 @@ re-start, winner status = "done"   -> {"already_started":"true","workflow_id":"d
 Byte-identical, HTTP 200 both times, with the run confirmed `done` in between.
 So a caller retrying a start cannot tell whether it joined a live run or a
 finished one, and the right next action differs — wait, or fetch the result.
-It must make a second request to find out. Filed as cleat#1149.
+It must make a second request to find out. Filed as cleat#1151.
 
 **`TestCreateWorkflowExecutionRunIDReuseWithoutReplication` — NOT portable**,
 and its own comment says why: *"this create should work since we are relying on
