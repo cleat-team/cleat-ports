@@ -46,6 +46,20 @@ KNOWN = [
      "cleat#1133"),
     ("mssql: 'now' is not a recognized built-in function name.", "cleat#1133"),
     (r'pq: syntax error at or near \"LIMIT\"', "cleat#1133"),
+    # cleat#1134 fixed the line above for the jobqueue reaper on PostgreSQL and
+    # the reaper still does not run: the replacement subquery is keyed on `id`,
+    # and task_queue has no such column -- its key is
+    # (tenant_id, queue_name, job_id). So the error changed shape rather than
+    # going away, and the new shape was not matched by the entry written for
+    # the old one. That is the allowlist behaving as designed, and it is why
+    # this entry gets its own issue number instead of being folded into #1133.
+    #
+    # The `Invalid column name 'id'` entry above is very probably this same
+    # jobqueue arm on SQL Server -- its MSSQL literal carries the identical
+    # `id IN (SELECT id ...)` -- but it is left attributed to #1133 because
+    # nothing has measured that it comes only from jobqueue, and moving an
+    # attribution on a guess is how an allowlist stops meaning anything.
+    (r'pq: column \"id\" does not exist', "cleat#1141"),
     ("Error 1064 (42000)", "cleat#1133"),
     # email-notify has no sendgrid key in this harness and fails init, once,
     # then stays inert. Not a defect -- the plugin is simply unconfigured, and
@@ -105,8 +119,30 @@ def error_lines(text):
 
 
 def main():
-    root = pathlib.Path(os.environ.get("CLEAT_PORTS_RESULTS_ROOT")
-                        or (pathlib.Path(__file__).resolve().parent.parent / ".port-results"))
+    # An argument that looks like it directs the check and does not is worse
+    # than no argument at all. This script used to accept argv[1] silently and
+    # scan the default tree regardless, so
+    #
+    #     check-worker-log.py "$CLEAT_PORTS_RESULTS_DIR"
+    #
+    # read a DIFFERENT directory from the one named on the command line and
+    # reported confidently about it. That is how a falsification of this
+    # script's own allowlist came back green on 2026-09-10 while testing a
+    # temp directory the script never opened.
+    #
+    # CI passes no argument and is unaffected; this is a local-debugging trap,
+    # which is exactly when someone is trying to establish what a log contains.
+    if len(sys.argv) > 2:
+        print(f"usage: {pathlib.Path(sys.argv[0]).name} [results-dir]", file=sys.stderr)
+        return 2
+    if len(sys.argv) == 2:
+        root = pathlib.Path(sys.argv[1])
+        if not root.is_dir():
+            print(f"no such results directory: {root}", file=sys.stderr)
+            return 2
+    else:
+        root = pathlib.Path(os.environ.get("CLEAT_PORTS_RESULTS_ROOT")
+                            or (pathlib.Path(__file__).resolve().parent.parent / ".port-results"))
     logs = sorted(root.glob("**/worker*.log"))
     if not logs:
         # Distinguish the two reasons there is no log, because one of them is a
