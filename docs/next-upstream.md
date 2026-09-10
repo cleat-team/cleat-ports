@@ -175,6 +175,44 @@ unusable — `GET /repos/temporalio/features/license` still returns 404.
 proof of a bad licence, but reading a source-available licence carefully enough
 to rely on it is work with no payoff while three permissive candidates remain.
 
+## The second filter, for whoever picks a third
+
+The licence table above is the first gate. This is the second, and it is the one
+that decided `durabletask-go`: **§1 below asks whether a suite's tests run
+without external infrastructure.** That is not about running them — this repo
+re-expresses assertions and never executes upstream — it is a proxy for whether
+the assertions are *about an engine* or about standing one up.
+
+Measured 2026-09-10 from each candidate's own CI, so it is checkable rather than
+recalled:
+
+| candidate | how its CI runs tests | reads as |
+|---|---|---|
+| `temporalio/sdk-go` | `integration-test -dev-server`, plus a `docker-compose-test` job | needs a **server**; the interesting assertions are in the integration suite |
+| `temporalio/sdk-python` | `poe test --workflow-environment time-skipping` | needs a **downloaded test server**, but no `services:` block — a middle case |
+| `uber/cadence` | `ci-checks.yml` and friends; not examined | unexamined |
+| `conductor-oss/conductor` | `ci.yml`; not examined | unexamined |
+| `restatedev/sdk-typescript` | **no `ci.yml`** — its workflows are `_test-<runtime>-template.yml` per runtime | unexamined; the shape suggests runtime-matrix testing rather than engine assertions |
+
+**`restatedev/sdk-typescript`'s row is the one to be careful with.** A first pass
+recorded "no server needed" for it, from a grep over a `ci.yml` that does not
+exist — 0 bytes fetched. An empty search over an absent file is not evidence,
+and it is the same mistake this repo keeps documenting. Its per-runtime
+templates need reading before anything is claimed.
+
+**What this does not settle.** Needing a server is not disqualifying on its own:
+we read assertions, we do not run them. It matters because a suite whose setup
+is a server tends to assert against that server's semantics, while
+`durabletask-go`'s backend-contract tests assert against a *storage* contract,
+which is cleat's shape (§2). A candidate that needs a server may still be worth
+porting if its assertions survive the translation — that judgement needs the
+same case-by-case read the two existing surveys did, and nobody has done it.
+
+Cost, unchanged and worth restating before anyone starts: on the evidence of the
+first two ports, **the survey is a day and the fixtures are the long pole.**
+
+---
+
 ---
 
 ## Why `durabletask-go`
