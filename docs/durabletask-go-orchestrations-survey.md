@@ -151,9 +151,43 @@ asserts the property:
 | `Test_TerminateOrchestration_Recursive_TerminateCompletedSubOrchestration` ×2 | the same, where a sub-orchestration has already completed — cleat's arms carry `AND status NOT IN ('done','failed')`, so the completed child is exactly the row those predicates exclude |
 | ~~`Test_RecreateCompletedOrchestration`~~ | **already covered — this row was stale.** `ports/dbos-transact-py/tests/test_queues.py::test_a_completed_run_still_answers_for_its_idempotency_key` asserts cleat's side of exactly this divergence, side-effect count and all, and predates the survey. Checked 2026-09-10 while picking work off this table |
 | `Test_SingleActivity_ReuseInstanceIDIgnore` | **PORTED** — `ports/durabletask-go/tests/reuse_id_test.go`. Upstream's opt-in `IGNORE` is cleat's only policy, so the selection half does not port and the behaviour half does. The two novel assertions are that the surviving run keeps the **first** start's *input* and its *`created_at`*; the existing dedup tests send identical payloads on both starts and structurally cannot see either |
-| `Test_ExternalEventTimeout` ×2 | event-or-timeout, both branches, in one fixture |
+| ~~`Test_ExternalEventTimeout`~~ ×2 | **already covered — this row was stale.** `ports/samples-go/tests/await_signals_test.go` asserts both branches: the timeout branch requires `"timedOut":true` when the wait is not satisfied, and the event branch requires its *absence* when a signal is delivered promptly. Across two tests rather than one fixture, which is how this repo names cases — after what they assert about cleat, not after their upstream origin. Checked 2026-09-10 |
 | `Test_ContinueAsNew_Events` | events carried across a continue-as-new boundary — **CLAIMED 2026-09-09 by session `01UbTiXNC2rGrEbBheCUkd57`**, and it lands as a divergence rather than a port: upstream's `WithKeepUnprocessedEvents()` is opt-in and cleat has no counterpart. `ContinueAsNew` never touches `workflow_signals` on any of the three dialects, and the table is keyed by `workflow_id`, so an unconsumed signal stays on the old run. Porting the assertion cleat *can* answer |
-| `Test_ExternalEventContention` | three events raised, ordering across a continue-as-new |
+| ~~`Test_ExternalEventContention`~~ | **split, and both halves are already settled.** *Ordering* is covered by `test_signals.py::test_a_signal_goes_to_the_await_that_named_it_and_same_name_signals_queue_in_order`, which asserts per-name queues each FIFO. *Across a continue-as-new* is **not portable**: ports#148 established that `workflow_signals` is keyed `(workflow_id, signal_name)` and `ContinueAsNew` mints a new run id without touching that table, so a signal raised before the boundary is stranded on the old run and cannot be consumed after it. The upstream scenario is unreproducible in cleat rather than unported |
+
+**This table is exhausted — there is no portable, unported work left in it.**
+Verified row by row on 2026-09-10, and the result is worth more than the
+verdicts: **three of its seven rows were wrong**, all in the direction of
+overstating what remained.
+
+| row | state |
+|---|---|
+| `Test_TerminateOrchestration_Recursive` ×2 | ported — ports#149, ports#155 |
+| `..._TerminateCompletedSubOrchestration` ×2 | ported — ports#149 |
+| `Test_RecreateCompletedOrchestration` | **stale** — already covered |
+| `Test_SingleActivity_ReuseInstanceIDIgnore` | ported — ports#156 |
+| `Test_ExternalEventTimeout` ×2 | **stale** — already covered |
+| `Test_ContinueAsNew_Events` | ported — ports#148 |
+| `Test_ExternalEventContention` | **split** — half covered, half not portable |
+
+**Why a work-list drifts in this direction specifically.** A row is written when
+a survey judges a case portable and unported. Nothing rewrites it when someone
+later ports the property under a local name, and this repo names tests after
+what they assert about *cleat* rather than after their upstream origin — which
+is the right convention and is exactly why the drift is invisible to a search
+for the upstream name.
+
+**So verify a row before building it, and verify it by ASSERTION.** Searching
+pull requests for the upstream case name gives both kinds of wrong answer:
+`Test_ExternalEventTimeout` returned a merged PR that was a *docs* PR merely
+listing the name, while the case itself was covered by tests containing none of
+that vocabulary. Grep for the property instead — `timedOut`, `created_at`,
+whatever the case actually claims.
+
+The mirror of this is already on the record: ports#145 found **four of twelve**
+"already covered" rows wrong in the opposite direction. A work-list overstates
+what is left as readily as it understates it, and both cost the same duplicated
+evening.
 
 **Declines — cleat has no counterpart:**
 
@@ -163,7 +197,7 @@ asserts the property:
 | `Test_PurgeOrchestration_Recursive` ×2 | same, plus recursion |
 | `Test_SuspendResumeOrchestration` | no operator-initiated suspend. cleat suspends on awaits; `cancel` is terminal by design and `resume` is deliberately rejected. Probes a decision cleat has made rather than a gap |
 | `Test_IsReplaying` | no is-replaying surface exists — not a host call, not a field. cleat's analyzer refuses non-deterministic constructs at build time instead of exposing replay state at run time |
-| `Test_ConcurrentTimers` | creates three timers, then awaits them. cleat's `DurableSleepMs` blocks; there is no timer *handle* to hold and await later |
+| `Test_ConcurrentTimers` | **decline stands; the stated reason did not.** There IS a timer handle — `cleat.Selector.AddTimer` (`cleat/selector.go:88`) races a timer against signals and children. The real limit is that a `Selector` holds **one** timer: `signals` and `children` are slices, `timer` is a single pointer, and a second `AddTimer` silently *replaces* the first. So a timer-vs-signal race is expressible and a timer-vs-timer race is not. Filed as cleat#1129. Corrected 2026-09-10 |
 | `Test_SingleActivity_ReuseInstanceIDTerminate` | no "terminate the running one and start fresh" policy |
 | `Test_SingleActivity_ReuseInstanceIDError` | no "reject if the id is in use" policy — cleat has exactly one reuse behaviour, and it is IGNORE |
 
