@@ -95,12 +95,42 @@ DB-down-finalizing. The harness can produce the first — `scripts/worker.sh
 stop` sends SIGTERM, `scripts/worker.sh crash` sends `kill -9` — so *released*
 and *the owner died* are both producible.
 
-**Not yet ported, and the obstacle is specific.** A workflow is only claimed
+**Not yet ported, and the obstacle has moved.** A workflow is only claimed
 while a segment is executing; a durable sleep suspends and releases, so a
-sleeping run is not held by anyone and draining releases nothing. Catching a
-run mid-segment needs the fixture service to be able to block a call, which it
-cannot (`scripts/fixture-service.py` has no delay). Until it can, the drain
-window is a race rather than an assertion.
+sleeping run is not held by anyone and draining releases nothing. Catching a run
+mid-segment needs the fixture service to be able to block a call.
+
+The sentence that stood here said it could not — "`scripts/fixture-service.py`
+has no delay". That was **already false when it was written**: `delay_ms` landed
+in #127 at 21:57 and this file claimed its absence in #135 at 23:24, 87 minutes
+later. Both were the same session's, an hour and a half apart. A blocker is a
+statement about the tree at a moment, and this one was copied forward from
+before the tree changed under it.
+
+What a fixed delay does *not* solve is the part the last sentence got right: a
+delay gives a window of known length but says nothing about when the call
+arrived, so the test still times its move against a duration. That is a race
+with a comfortable margin, and margins are what a loaded runner removes.
+
+`GET /inflight/<key>` and `POST /release/<key>` close it. The test waits until
+the fixture reports the call is in the handler *now*, acts while it provably is,
+and then releases:
+
+    start the run, whose step calls the fixture with delay_ms
+    poll GET /inflight/<key> until it reports 1     <- provably mid-segment
+    scripts/worker.sh stop                          <- the drain under test
+    POST /release/<key>
+
+So the remaining work is the port itself, not the harness. Proving *re-claimed*
+rather than merely *released* needs a second worker to pick the run up, and the
+harness already has one: `CLEAT_PORTS_WORKER_INSTANCE` gives each instance its
+own API port, pidfile and log, and `scripts/worker.sh` says in as many words
+that it exists "so cross-worker cases are expressible at all".
+
+The first draft of this paragraph said the harness ran only one, in the same
+edit that corrected the delay claim above. Checked before committing, which is
+the only reason it is not a second stale blocker in the file that exists to
+retire the first.
 
 **A cleat-specific observation worth keeping separate from the port.**
 `ReleaseWorkflow`'s UPDATE does not touch `reclaim_count`; the reaper's does
