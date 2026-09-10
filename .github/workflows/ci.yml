@@ -149,6 +149,14 @@ jobs:
         # failure mode a green suite cannot report. No database, no services,
         # seconds on a runner that is already up.
         run: python3 scripts/selftest-fixture-service.py
+      - name: A build warning still reaches a reader
+        # The harnesses read the toolchain's stderr only when a build FAILED, so
+        # a warning on a build that SUCCEEDED was discarded -- and those
+        # warnings are predictions of failures that arrive later wearing a
+        # different name. Pure text filter: no database, no services,
+        # milliseconds. The Go ports cover the same filter in their own
+        # tests/buildwarnings_test.go.
+        run: python3 scripts/selftest-build-warnings.py
 
       - name: Inventory tables match the tree
         # The dbos-transact-py README's two tables are generated. They were

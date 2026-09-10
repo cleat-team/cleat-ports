@@ -11,12 +11,22 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 import uuid
 import time
 import urllib.error
 import urllib.request
 
 import pytest
+
+# The build-warning filter lives in scripts/ rather than here so that
+# scripts/selftest-build-warnings.py can exercise it without importing this
+# file. It cannot: the `list[str] | None` annotations below are evaluated at
+# def time and need 3.10+, and the self-test runs in CI's `discover` job, which
+# pins no Python version (only the port job sets up 3.12). See
+# scripts/build_warnings.py.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "scripts"))
+from build_warnings import format_build_warnings as _format_build_warnings  # noqa: E402
 
 
 # Entry-point parameters, per deployed workflow name, filled in by
@@ -464,6 +474,28 @@ def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") 
     )
     if built.returncode != 0:
         pytest.fail(f"building {pkg_name} failed:\n{built.stderr[-2000:]}")
+    # Surface toolchain warnings from a SUCCESSFUL build. `built.stderr` used to
+    # be read only when the build FAILED, so a warning on a build that succeeded
+    # was discarded -- and the toolchain's warnings are predictions of failures
+    # that arrive later wearing a different name. W003 ("a single string
+    # parameter receives the ENTIRE input JSON") was emitted, dropped here, and
+    # resurfaced two layers away as a result stored as `{}`; it was nearly filed
+    # as a cleat defect. Printed rather than raised, because some warnings are
+    # advisory and a harness that failed on every one would hold the suite
+    # hostage to the toolchain's wording -- pytest replays captured stdout for a
+    # failing test, which puts the prediction in front of whoever is reading the
+    # failure it predicted.
+    # built.stderr alone is complete, and that is the WRAPPER's doing, not
+    # cleat's: scripts/build-workflow.sh line 76 runs the whole `cleat build`
+    # with `) >&2`, merging cleat's two streams here while its own stdout carries
+    # only the .wasm path. cleat itself splits warnings across both streams under
+    # the identical "  Warning: " prefix -- analyzer warnings including W003 on
+    # stdout, orphaned-import warnings on stderr -- so a consumer calling the CLI
+    # directly and reading one stream sees a subset with nothing to indicate it.
+    # cleat#1128.
+    _warned = _format_build_warnings(pkg_name, built.stderr)
+    if _warned:
+        print(_warned)
 
     # deploy-workflow, not `cleat deploy`. The CLI's DB-touching subcommands are
     # PostgreSQL-only and refuse a MySQL or SQL Server DSN on purpose --
