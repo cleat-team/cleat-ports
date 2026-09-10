@@ -127,7 +127,33 @@ Five read now, and the verdicts do not cluster the way a count would suggest:
 | `TestPersistenceStartWorkflow` | portable but **duplicates** #1151; rest is sharding |
 | `TestCreateWorkflowExecutionWithWorkflowRequestsDedup` | **not a gap** — cleat already satisfies it |
 | `TestCreateWorkflowExecutionRunIDReuseWithoutReplication` | not portable — asserts a layer boundary cleat lacks |
-| `TestCreateWorkflowExecutionDeDup` | undecided |
+| `TestCreateWorkflowExecutionDeDup` | not portable — needs a caller-supplied run id |
+
+### Settling the fifth
+
+`TestCreateWorkflowExecutionDeDup` was left undecided in the first pass because
+its assertions are type-level. Read in full, the sequence is: create a run, drive
+it to `Completed`, then create again with `CreateWorkflowModeWorkflowIDReuse`
+and `PreviousRunID` set to **the same run id the request carries** — and expect
+`WorkflowExecutionAlreadyStartedError`.
+
+The property is a good one: **completion frees the workflow id, but a run id may
+never be resurrected.** Reuse is a workflow-id-level permission, not a
+run-id-level one.
+
+**It is not portable, because its precondition does not exist in cleat.**
+`handleStartWorkflow` accepts `input`, `entry_point`, `concurrency_key`,
+`tenant_id`, `namespace` and `priority` — there is no run-id field. A caller
+cannot name a run id, so it cannot reuse one, so the refusal has nothing to
+refuse. This is the same shape as
+`TestCreateWorkflowExecutionRunIDReuseWithoutReplication`: an assertion about a
+control surface cleat does not expose.
+
+Worth noting what that argument is *not*. It is not "cleat generates run ids so
+the case is irrelevant" — a generated id could still be resurrected internally
+after deletion, and that would be a real defect. It is specifically that **no
+API path lets a test express the precondition**, which is a statement about
+reachability from the port, not about the engine's correctness.
 
 **One new issue from five cases**, not five portable cases from five. That is
 still **not** a basis for revising 20–27 to any other number — saying "so it is really 17" would be exactly the false precision this
