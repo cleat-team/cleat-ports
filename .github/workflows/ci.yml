@@ -266,6 +266,13 @@ jobs:
         with:
           name: log-${{ matrix.port }}
           path: .port-results/
+          # `.port-results` is a DOTTED directory and upload-artifact@v4 skips
+          # hidden files unless told otherwise, so this step uploaded NOTHING
+          # while reporting success -- measured: `total_count: 0` on three
+          # consecutive runs, one of them from the same night. nightly.yml hit
+          # this and fixed it; the fix did not reach here, which is why the log
+          # a failing PR needs is the one log that has never been attached.
+          include-hidden-files: true
           if-no-files-found: ignore
 
   # A single, stable check for branch protection to require.
