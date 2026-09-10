@@ -691,3 +691,59 @@ the point a fourth time: it returns a stopped workflow to `ready` and replays it
 recorded history **in place**, preserving every step already taken. Cadence's
 reset builds a **new run** from a snapshot and re-points the current pointer at
 it. Same word, different operation.
+
+
+## The file, closed: every case named
+
+The triage above assigned cases to families by prose, which cannot be checked —
+*"9 task-queue cases"* is not auditable, and a reader cannot tell whether the
+ninth was ever looked at. So here are the remaining **25** by name.
+
+| `TestDeleteActiveClusterSelectionPolicy` | active-cluster selection |
+| `TestGetActiveClusterSelectionPolicy` | active-cluster selection |
+| `TestDeleteWorkflow` | mutable-state CRUD |
+| `TestGetWorkflow` | mutable-state CRUD |
+| `TestUpdateDeleteWorkflow` | mutable-state CRUD |
+| `TestUpsertWorkflowActivity` | mutable-state CRUD |
+| `TestWorkflowMutableStateActivities` | mutable-state CRUD |
+| `TestWorkflowMutableStateChildExecutions` | mutable-state CRUD |
+| `TestWorkflowMutableStateInfo` | mutable-state CRUD |
+| `TestWorkflowMutableStateRequestCancel` | mutable-state CRUD |
+| `TestWorkflowMutableStateSignalInfo` | mutable-state CRUD |
+| `TestWorkflowMutableStateSignalRequested` | mutable-state CRUD |
+| `TestWorkflowMutableStateTimers` | mutable-state CRUD |
+| `TestCancelTransferTaskTasks` | task queues + ack cursors |
+| `TestReplicationTransferTaskRangeComplete` | task queues + ack cursors |
+| `TestReplicationTransferTaskTasks` | task queues + ack cursors |
+| `TestSignalTransferTaskTasks` | task queues + ack cursors |
+| `TestTimerTasksComplete` | task queues + ack cursors |
+| `TestTimerTasksRangeComplete` | task queues + ack cursors |
+| `TestTransferTasksRangeComplete` | task queues + ack cursors |
+| `TestTransferTasksThroughUpdate` | task queues + ack cursors |
+| `TestUpdateWorkflowExecutionTasks` | task queues + ack cursors |
+| `TestUpdateWorkflowExecutionStateCloseStatus` | two-field (state, closeStatus) |
+| `TestCreateWorkflowExecutionWithZombieState` | zombie lifecycle state |
+| `TestUpdateWorkflowExecutionWithZombieState` | zombie lifecycle state |
+
+
+| family | reason, already adjudicated above |
+|---|---|
+| task queues + ack cursors | internal task queues with ack cursors; cleat's workers poll `workflow_instances` directly |
+| mutable-state CRUD | round-trips on internal maps, as the `TestWorkflowMutableState*` family |
+| active-cluster selection | multi-cluster replication; cleat has no cluster-selection concept |
+| zombie lifecycle state | a run that exists but is not current — cleat's `zombie` is an unstopped process, a homonym (above) |
+| two-field (state, closeStatus) | guards a caller-supplied two-field encoding; cleat has one `status` column written only by store methods |
+
+**52 cases: 27 adjudicated individually, 25 assigned to a family by the API
+surface their bodies exercise.** No case in `executionManagerTest.go` is now
+unaccounted for.
+
+**Assignment is not reading, and the table is here so the difference is
+visible.** Any row above can be checked by opening the case; three times in this
+survey a plausible-looking assignment has been wrong, once in each direction.
+The rows are listed rather than counted precisely because I would rather someone
+find my error in a specific case than trust a total.
+
+The file's yield, for the record: **52 cases → 4 issues** — cleat#1151,
+cleat#1172, cleat#1175, and cleat#1177 by way of `TestGetCurrentWorkflow`. Two of
+the four came from cases a name-level triage would have discarded.
