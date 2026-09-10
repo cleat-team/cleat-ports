@@ -33,6 +33,31 @@ says which class cleat assigned: 1 means permanent, MaxAttempts means transient.
     GET /healthz          liveness, so the runner can wait rather than sleep
     GET /calls/<key>      how many times that key has been called
     GET /log/<key>        WHICH operations that key saw, in arrival order
+    GET /peak/<key>       most calls ever in the handler at once, under that key
+    GET /inflight/<key>   how many are in the handler RIGHT NOW
+    POST /release/<key>   end every hold under that key, now
+
+`delay_ms` holds a call inside the handler. That is what makes the worker slot
+running it observably occupied, and `/peak/` is how the parallelism assertion
+reads the result.
+
+`/inflight/` and `/release/` are for a different question: not "did N run at
+once" but "act on the system WHILE this one call is mid-flight". A fixed delay
+cannot answer it. It gives a window of known length but says nothing about when
+the call arrived, so the test is left timing its move against a duration -- a
+race with a comfortable margin, and a margin is precisely what a loaded CI
+runner takes away.
+
+With these two the test waits on the observable instead:
+
+    start the workflow
+    poll GET /inflight/<key> until it reports 1     <- the call is in the handler
+    do the thing under test (stop the worker, ...)  <- provably mid-segment
+    POST /release/<key>                             <- let it finish
+
+`delay_ms` remains a mandatory ceiling on the hold. A gate with no timeout turns
+a forgotten release into a hung CI job, and a hang reports nothing about what it
+was testing.
 
 The ordered log exists for the saga port. A compensation test has to prove the
 compensating calls happened IN REVERSE, and a counter cannot tell "withdraw
@@ -77,6 +102,27 @@ _lock = threading.Lock()
 _inflight = defaultdict(int)
 _peak = defaultdict(int)
 
+# Release gates, so a held call can be ended by the TEST rather than by its own
+# clock. `delay_ms` alone gives a window of known length; it does not tell the
+# test when the call ARRIVED, so a test that needs the worker caught mid-segment
+# still has to guess where inside the window it is. That is a race with a
+# generous margin, not an assertion -- and a margin is exactly what disappears
+# on a loaded CI runner.
+#
+# With a gate the test waits for `GET /inflight/<key>` to report the call is
+# actually in the handler, acts, then `POST /release/<key>`. No margin to tune
+# and nothing to be wrong about if the runner stalls: the wait is on the
+# observable, not on a duration.
+# A COUNTER rather than an Event, and that is not a style choice. An Event
+# stays set once fired, so the second test to hold under a key it had already
+# released would sail straight through the wait and the hold would silently
+# stop holding -- a fixture that reports success while no longer doing the one
+# thing it exists to do. The counter makes each waiter wait for a release
+# NEWER than the one it arrived under, which is correct for repeat use and for
+# several calls held under one key at once.
+_released = defaultdict(int)
+_gate = threading.Condition()
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload):
@@ -94,6 +140,15 @@ class Handler(BaseHTTPRequestHandler):
             key = self.path[len("/calls/"):]
             with _lock:
                 return self._send(200, {"key": key, "attempts": _counts[key]})
+        if self.path.startswith("/inflight/"):
+            # CURRENT occupancy, as opposed to /peak/'s high-water mark. A test
+            # that wants to act while a call is in flight needs to know it is in
+            # flight NOW; a high-water mark of 1 is equally true a minute after
+            # the call returned.
+            key = self.path[len("/inflight/"):]
+            with _lock:
+                return self._send(200, {"key": key, "inflight": _inflight[key]})
+
         if self.path.startswith("/peak/"):
             key = self.path[len("/peak/"):]
             with _lock:
@@ -157,6 +212,15 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt_eval_count": 1,
                 "eval_count": 1,
             })
+
+        if self.path.startswith("/release/"):
+            key = self.path[len("/release/"):]
+            with _lock:
+                held = _inflight[key]
+            with _gate:
+                _released[key] += 1
+                _gate.notify_all()
+            return self._send(200, {"key": key, "released": held})
 
         if not self.path.startswith("/call/"):
             return self._send(404, {"error": "not found"})
@@ -227,12 +291,34 @@ class Handler(BaseHTTPRequestHandler):
         # thing that could serialise them is this lock.
         delay_ms = int(req.get("delay_ms") or 0)
         if delay_ms:
+            # The epoch is read BEFORE the call is published as in-flight, and
+            # the order is the whole correctness argument. A test releases when
+            # it sees /inflight/<key> report 1, so the release can land at any
+            # moment after that increment. Reading the epoch after it would let
+            # a release slip into the gap, be counted, and then be waited past
+            # -- the waiter would sit out the full ceiling and the test would
+            # fail as a timeout with nothing to point at. Reading it first makes
+            # any release after this line, however early, one this waiter is
+            # still waiting for.
+            with _gate:
+                seen = _released[key]
             with _lock:
                 _inflight[key] += 1
                 if _inflight[key] > _peak[key]:
                     _peak[key] = _inflight[key]
             try:
-                time.sleep(delay_ms / 1000.0)
+                # A wait rather than a sleep, so `delay_ms` becomes a CEILING a
+                # release can cut short instead of a duration the test must
+                # outlast. Callers that pass only `delay_ms` are unaffected:
+                # nothing releases, the wait runs full term, and the peak
+                # measurement it was written for reads exactly as before.
+                #
+                # The ceiling stays mandatory on purpose. A gate with no timeout
+                # turns a forgotten release into a hung CI job, and a hang is the
+                # one failure that reports nothing about what it was testing.
+                with _gate:
+                    _gate.wait_for(lambda: _released[key] > seen,
+                                   timeout=delay_ms / 1000.0)
             finally:
                 with _lock:
                     _inflight[key] -= 1

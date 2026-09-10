@@ -142,6 +142,14 @@ jobs:
           # becomes the missing-token case and reports a pass.
           SELFTEST_VALID_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/selftest-report-path.sh
+      - name: The fixture service still holds, and still releases
+        # Every port depends on scripts/fixture-service.py and nothing tested
+        # it. A fixture that stops doing its job does not fail -- it makes the
+        # tests relying on it pass for the wrong reason, which is the one
+        # failure mode a green suite cannot report. No database, no services,
+        # seconds on a runner that is already up.
+        run: python3 scripts/selftest-fixture-service.py
+
       - name: Inventory tables match the tree
         # The dbos-transact-py README's two tables are generated. They were
         # hand-maintained until 2026-09-08 and drifted -- eight cases across
