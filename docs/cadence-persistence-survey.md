@@ -97,19 +97,39 @@ sitting three paragraphs above an argument for why exactly that move is unsafe.
 
 It is also already falsified. `dbVisibilityPersistenceTest.go` is the largest
 unread file at 12 cases, and the visibility family has produced real cleat
-findings — cleat#1182 and cleat#1183 are both listing-and-filtering gaps. A
-related one, reported by the session doing that reading: **cleat has no
-`cancelled` status**, so a status filter cannot select cancelled runs as such.
-Verified here rather than taken on report, because the issue number I was handed
-turned out to carry a different finding:
+findings — cleat#1182 and cleat#1183 are both listing-and-filtering gaps, and
+three cases read there have yielded two issues against a corpus rate nearer one
+in eight.
 
-    grep -rhoE "'(ready|running|done|failed|cancelled|canceled|terminated)'" \
-      --include='*.sql' migrations/postgres/ | sort | uniq -c
+A related one, reported by the session doing that reading: **cleat has no
+`cancelled` status**, so `filter.Status` cannot select cancelled runs as a class.
+Cancellation lives in `cancellation_requested` / `cancellation_reason` instead —
+precisely the shape a visibility suite asks about and a status filter cannot
+express.
 
-`ready` `done` `failed` `running` `suspended` `terminated` `pending` — and no
-spelling of *cancelled*. Cancellation lives in separate columns
-(`cancellation_requested`, `cancellation_reason`), which is precisely the shape a
-visibility suite asks about and a status filter cannot express.
+**That claim is verified; the enumeration this file first published alongside it
+was wrong, and how it was wrong is the more useful half.** The status vocabulary
+lives in **two languages** — Go string literals and shipped SQL — and a scan of
+either alone returns a set that is wrong in both directions:
+
+| | |
+|---|---|
+| only in SQL status comparisons | `suspended`, `terminated` |
+| only in Go status assignments | `dead_lettered` |
+| in both | `done`, `failed`, `ready`, `running`, `terminating` |
+
+The first draft here grepped **postgres SQL only**, and published `pending` as a
+workflow status. `pending` is the `DEFAULT` on *other* tables
+(`migrations/postgres/001_schema.sql:319,374`) — the scan was never scoped to
+`workflow_instances`, so it answered a question about the whole schema and was
+read as answering one about workflows. It also missed `dead_lettered`, which
+exists only on the Go side, and `terminating`.
+
+So no total is published here: scoping a vocabulary to one table needs more than
+either grep, and the load-bearing claim does not need one. *No spelling of
+`cancelled` appears as a status in either language* — the seventeen `"cancelled"`
+literals in Go are all error strings and error classification (`engine/errors.go`,
+`callerror_class_test.go`), never a status assignment.
 
 "Visibility is Cadence machinery" is the inference that misses all of it.
 
