@@ -92,6 +92,7 @@ while 53 cases existed. Hence the command beside the number.
 | `signal-counter/` | 4 | `tests/signal_counter_test.go` |
 | `childworkflow-continueasnew/` | 3 | `tests/child_continue_as_new_test.go` |
 | `goroutine/`, `mutex/` (as refusals) | 4 | `tests/nondeterminism_test.go` |
+| `await-signals/` (the quorum primitive) | 2 | `tests/quorum_test.go` |
 
 **Four skips**: one on cleat#933 symptom A — a single signal delivery satisfying
 more than one `AwaitSignals`. Three of the original four were released when
