@@ -13,3 +13,10 @@ __pycache__/
 *.wasm
 .pytest_cache/
 node_modules/
+
+# coverage artefacts from `make test CLEAT_PORTS_COVERAGE=1`, which the nightly
+# sets so scripts/check-assertions-executed.py has data to read. Both are
+# per-run and neither is meaningful outside the run that produced them.
+.coverage
+.coverage.*
+junit.xml

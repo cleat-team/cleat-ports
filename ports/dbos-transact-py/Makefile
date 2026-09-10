@@ -24,14 +24,27 @@ setup: ## create the venv and install cleat's Python SDK
 	@echo "==> using $(PYTHON) ($$($(PYTHON) -V 2>&1))"
 	$(PYTHON) -m venv $(VENV)
 	$(PY) -m pip install --quiet --upgrade pip
-	$(PY) -m pip install --quiet pytest
+	$(PY) -m pip install --quiet pytest coverage
 	# The Python SDK ships from the cleat repo cloned by scripts/install-cleat.sh,
 	# so the port always tests the SDK matching the toolchain under test rather
 	# than the last version published to PyPI.
 	$(PY) -m pip install --quiet -e ../../.cleat-src/python-sdk
 
+# CLEAT_PORTS_COVERAGE=1 runs the suite under coverage and writes a JUnit
+# report, which is what scripts/check-assertions-executed.py needs to tell a
+# test that PASSED without asserting from one that errored before it could
+# assert. Coverage data alone cannot separate those two, and the difference is
+# the whole finding -- so both artefacts, or neither.
+#
+# Off by default: the per-PR CI does not need it and the nightly does.
+ifeq ($(CLEAT_PORTS_COVERAGE),1)
+PYTEST := $(PY) -m coverage run --source=tests -m pytest --junitxml=$(CURDIR)/junit.xml
+else
+PYTEST := $(PY) -m pytest
+endif
+
 test: ## run the ported tests
-	$(PY) -m pytest -v tests/
+	$(PYTEST) -v tests/
 
 clean:
 	rm -rf $(VENV) __pycache__ tests/__pycache__ .pytest_cache
