@@ -218,6 +218,80 @@ want with no evidence anyone needs it, and this document is not a wish list.
   reminder that upstream case counts include cases like this one, and a
   "portable" row costed from a name would have costed this at full price.
 
+## The survey's table lists 6 of 14 test files, and does not say so
+
+Counting `Test*` methods in every file the survey's table names: **85**. The
+survey's headline is **129**. Its own rows sum to 85.
+
+That is not an arithmetic error. `common/persistence/persistence-tests/` holds
+**17 files, 14 of them test suites**, and the table names six. Counting the
+other eight the same way gives 40, so 125 — and `metadataPersistenceV2Test.go`
+uses a receiver shape this count does not match, which covers the rest. **The
+129 is right for the directory; the table is a selection presented as an
+enumeration.**
+
+Anyone reading the table concludes those six files are the corpus. They are not.
+
+## And the omitted files include the family most likely to port
+
+| file the table omits | cases |
+|---|---:|
+| `dbVisibilityPersistenceTest.go` | 12 |
+| `domainAuditPersistenceTest.go` | 6 |
+| `configStorePersistenceTest.go` | 5 |
+| **`semaphoreMetadataPersistenceTest.go`** | **5** |
+| **`semaphoreTasksPersistenceTest.go`** | **5** |
+| **`semaphoreTokenPersistenceTest.go`** | **4** |
+| `executionManagerTestForEventsV2.go` | 3 |
+
+**Fourteen semaphore cases, none of them looked at.** cleat has a lock and
+concurrency-key surface — `AcquireLock`/`ReleaseLock`, concurrency keys,
+`tests/test_locks.py`, `test_distinct_keys_do_not_block_each_other` — so this is
+the closest structural match in the whole directory, and it is the part the
+survey's table does not mention.
+
+Read to check rather than assumed. `TestGrantSameOwnerDifferentTokenIsRejected`:
+
+> the owner claims the first token → `SemaphoreGrantApplied`
+> a second grant of a **different** token to the **same owner** →
+> `SemaphoreGrantAlreadyHeld`, **and the response reports the token the owner
+> already holds**
+> the second slot **was never claimed and is still free**
+
+Two properties there, and cleat has a stake in both. The refusal **names what
+you already hold** — the same shape as `already_started`, and the half cleat's
+version does not do (cleat#1151). And a refused grant **must not consume
+capacity**, which is a durability property a lock implementation can get wrong
+silently.
+
+Others in the family that look worth reading: `TestStaleRangeIDIsFencedOut`
+(cleat has `ErrFenceLost` and generation fencing), `TestSeedIsIdempotent`, and
+`TestBucketsAreIndependent`, whose cleat analogue already exists as a port test.
+
+**Not claiming these are portable.** Names and one reading are not verdicts —
+that is the whole method of this document, and six of the sixteen cases read so
+far turned out not to be portable for reasons no name revealed. What is measured
+is that **the family exists, matches a surface cleat has, and was outside the
+table.**
+
+## The six the table does list are now fully accounted for
+
+| file | cases | verdict |
+|---|---:|---|
+| `executionManagerTest.go` | 52 | 16 read → **1 issue** (cleat#1151) |
+| `historyV2PersistenceTest.go` | 5 | **0** — history branch trees; cleat's history is linear |
+| `historyTaskDLQPersistenceTest.go` | 7 | **0** — a DLQ of internal *history tasks* with ack cursors, not a workflow DLQ |
+| `matchingPersistenceTest.go` | 12 | **0** — task lists, leases and ack levels; cleat's workers poll `workflow_instances` |
+| `queuePersistenceTest.go` | 4 | **0** — domain replication queues |
+| `shardPersistenceTest.go` | 5 | **0** — shard owner, `RangeID`, per-cluster ack levels |
+
+The shard row needs its reason stated precisely, because cleat **does** have a
+thing called a shard. `engine/sharded_store.go`'s `ShardConfig` is a connection
+string and a tenant list — static routing. Cadence's shard is an owner with a
+lease and a fencing `RangeID`, a coordination primitive for distributing work
+across hosts. Same word, different concept; the survey's "cleat does not shard"
+is right in substance and would read as wrong to anyone who greps first.
+
 ## The honest read on the estimate
 
 Five read now, and the verdicts do not cluster the way a count would suggest:
