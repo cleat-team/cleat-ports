@@ -874,3 +874,96 @@ cancel and one that **ignored** it produce byte-identical rows —
 `cancellation_requested = true`, `status = 'done'`, `completed_at` set — and
 both branches are existing passing tests. Only the workflow's own result payload
 distinguishes them, and that is application-defined.
+
+
+## The corpus is closed: 132 cases, 14 files
+
+The remaining three of the five never-opened files, and the totals.
+
+### `domainAuditPersistenceTest.go` — 6 cases, 1 issue
+
+| case | verdict |
+|---|---|
+| `TestDomainAuditLogWithStateBefore` | **gap → cleat#1185** |
+| `TestCreateAndGetDomainAuditLog` | not portable — see below |
+| `TestCreateMultipleAuditLogs` | not portable |
+| `TestGetDomainAuditLogsPagination` | not portable |
+| `TestGetDomainAuditLogsByOperationType` | not portable |
+| `TestGetDomainAuditLogsByTimeRange` | not portable |
+
+Upstream keeps a dedicated `domain_audit_logs` table with its own
+`CreateDomainAuditLog` / `GetDomainAuditLogs`, queryable by operation type, by
+time range, and with pagination.
+
+cleat's audit is a different kind of thing: an `EventTypeAdminAction` **event
+appended to one workflow's `event_history`**. It is per-run, there is no audit
+table, and there is no audit query API — so the five query-shaped cases have no
+surface to test rather than a surface that answers differently.
+
+**The observation that survives the "not portable" verdict** is that this shape
+has a consequence nobody has written down: an audit you can only read one
+workflow at a time cannot answer the operator-dimension question. *"What did
+this operator do today?"* and *"show me every force-fail this week"* require
+knowing which workflows to look at first, and `GET /api/workflows/{id}/events`
+has no `event_type` filter, so even per-run it means fetching up to 1000 events
+and filtering client-side. Recorded as a comment on cleat#1185 rather than filed
+separately.
+
+### `configStorePersistenceTest.go` — 5 cases, not portable *today*
+
+Dynamic config with an optimistic version collision
+(`TestUpdateVersionCollisionFailure` and four around it).
+
+`tenant_settings` exists (migration 039) with the clamp rule the design wants —
+a tenant may lower a worker ceiling and never raise it. **It has no write path
+in the codebase**: every Go reference is a `GetTenantSettings` read, on all
+three dialects. No insert, no update, no API, no `cleatctl` command.
+
+So the operation these cases test does not exist, and the family is unportable
+for that reason alone. It is also a **forward-looking constraint** rather than a
+dead end: the table has `updated_at` and no version column, so the obvious write
+path is last-write-wins with no collision detection — exactly what
+`TestUpdateVersionCollisionFailure` exists to prevent. Recorded on **cleat#1187**,
+which is where that write path will be built.
+
+### `executionManagerTestForEventsV2.go` — 3 cases, none portable
+
+| case | verdict |
+|---|---|
+| `TestWorkflowCreation` | asserts `BranchToken` — history **branch trees**; cleat's history is linear, the reason already recorded for `historyV2PersistenceTest.go` |
+| `TestWorkflowCreationWithVersionHistories` | version histories; cleat has 0 files mentioning the concept |
+| `TestContinueAsNew` | **duplicate** of the `TestContinueAsNew` already adjudicated in `executionManagerTest.go` — not a gap, cleat#826 |
+
+### The totals
+
+| file | cases | issues |
+|---|---:|---:|
+| `executionManagerTest.go` | 52 | 4 |
+| `dbVisibilityPersistenceTest.go` | 12 | 2 |
+| `matchingPersistenceTest.go` | 12 | 0 |
+| `historyTaskDLQPersistenceTest.go` | 7 | 0 |
+| `metadataPersistenceV2Test.go` | 7 | 0 |
+| `domainAuditPersistenceTest.go` | 6 | 1 |
+| `historyV2PersistenceTest.go` | 5 | 0 |
+| `shardPersistenceTest.go` | 5 | 0 |
+| `configStorePersistenceTest.go` | 5 | 0 |
+| the semaphore family (3 files) | 14 | 1 |
+| `queuePersistenceTest.go` | 4 | 0 |
+| `executionManagerTestForEventsV2.go` | 3 | 0 |
+| **total** | **132** | **8** |
+
+Eleven of the fourteen semaphore cases remain with another session; every other
+case in the corpus is adjudicated.
+
+**The estimate was ~20–27 portable of 129. The measured answer is 8 issues from
+132 cases** — and the shape of the miss is more useful than the number. The
+estimate was built by reading names, and this survey's three name failures were
+a false negative, a false positive and a false synonym, in that order. Names
+were wrong in every available direction.
+
+**And the distribution was not where the estimate put it.** Most of the residue
+came from two files: `executionManagerTest.go` and `dbVisibilityPersistenceTest.go`
+gave 6 of the 8 issues from 64 of the 132 cases, while the eight
+persistence-internals files gave 0 from 45. The visibility file was one of the
+five nobody had opened, and had been dismissed twice — once by each of two
+sessions — from its file name.
