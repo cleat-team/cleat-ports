@@ -402,6 +402,45 @@ def inventory(tests_dir):
     return "\n".join(L)
 
 
+def malformed_table_rows(readme):
+    """Rows whose cell count disagrees with their own table's header.
+
+    Why this is separate from the stale-row check above: that one is scoped to
+    the GENERATED blocks by header line, deliberately, because this README has
+    hand-authored tables whose rows also begin "| `test_" and checking the whole
+    file flagged eleven of them. The narrowing was right and it left everything
+    hand-authored unchecked -- which is how two rows of the upstream-counts
+    table sat in #115..#140 holding three cells of a FOUR column table, with
+    content spliced in from the port-files table two hundred lines below.
+    `test_workflow_management.py` read 5 cases there and 46 in the table above
+    it, and --check called the file clean the whole time.
+
+    Column count is checkable without knowing what a table is supposed to say,
+    so this applies to every table in the file, generated or not, and cannot
+    reintroduce those eleven false positives.
+    """
+    def cells(line):
+        return len(line.strip().strip("|").split("|"))
+
+    out, lines, fence = [], readme.split("\n"), False
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("```"):
+            fence = not fence
+        if (not fence and lines[i].startswith("|")
+                and i + 1 < len(lines) and re.fullmatch(r"\|[-: |]+", lines[i + 1])):
+            width, hdr = cells(lines[i]), i + 1
+            j = i + 2
+            while j < len(lines) and lines[j].startswith("|"):
+                if cells(lines[j]) != width:
+                    out.append((j + 1, width, cells(lines[j]), lines[hdr - 1], lines[j]))
+                j += 1
+            i = j
+            continue
+        i += 1
+    return out
+
+
 def totals(tests_dir):
     """The figures that used to be stored as two table rows.
 
@@ -487,6 +526,17 @@ if __name__ == '__main__':
                     "branch collides on -- which is why it was removed. Delete "
                     "these rows; --check and --inventory both print the "
                     "figures:\n  " + "\n  ".join(stored))
+            bad = malformed_table_rows(readme)
+            if bad:
+                raise SystemExit(
+                    "README.md has table rows whose cell count disagrees with "
+                    "their own header, so a row is carrying content from a "
+                    "different table (or has lost a column). This is not a "
+                    "formatting nit: the last splice put 5 in a cases column "
+                    "whose other table said 46.\n  " + "\n  ".join(
+                        f"line {n}: header has {w} columns, row has {g}\n"
+                        f"    header: {h}\n    row:    {r}"
+                        for n, w, g, h, r in bad))
             print("README.md inventory tables match the tree")
             # The totals live here rather than in the file, so CI reports them
             # on every run and no contribution has to rewrite a shared line.

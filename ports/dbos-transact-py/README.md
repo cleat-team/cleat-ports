@@ -56,9 +56,9 @@ old values exactly, which is how it was identified rather than guessed:
 | `test_dbos.py` | 138 | 61 | **61** |
 | `test_queue.py` | 103 | 77 | **91** |
 | `test_async.py` | 57 | 32 | **33** |
-| `test_concurrency.py` | 5 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
+| `test_concurrency.py` | 21 | 11 | **11** |
 | `test_failures.py` | 43 | 37 | **37** |
-| `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
+| `test_workflow_management.py` | 44 | 44 | **46** |
 | `test_scheduler.py` | 35 | 35 | **35** |
 | `test_client.py` | 54 | 54 | **57** |
 
@@ -77,10 +77,14 @@ and cited as the one row counted by collection rather than by grep. It is 91:
 that has already been corrected once reads as settled, and this one was carried
 forward by three sessions without being re-derived.
 
-**Four rows are unchanged from the grep figure**, which is why the old numbers
-looked plausible for so long: inner helpers appear only in files that declare
-workflows locally, and parametrize only in four files. A method that is right
-on half the corpus is the hardest kind to doubt.
+**Only `test_scheduler.py` is unchanged from the grep figure** — the other
+seven all moved. What made the old numbers look plausible for so long is
+narrower than "the method is right half the time": on three files
+(`test_workflow_management.py`, `test_scheduler.py`, `test_client.py`) grep
+equals the *function* count, because those files declare no workflows inside
+test bodies, so the figure had no visible tell. Inner helpers inflate the other
+five; parametrize expands four. A method that leaves no trace on the rows it
+gets wrong is the hardest kind to doubt.
 
 **An anchored `grep -cE '^(async )?def test_'` also gives the right answer on
 all eight, and should still not be used.** It excludes inner helpers only
