@@ -300,7 +300,7 @@ table.**
 
 | file | cases | verdict |
 |---|---:|---|
-| `executionManagerTest.go` | 52 | 16 read → **1 issue** (cleat#1151) |
+| `executionManagerTest.go` | 52 | 18 read → **2 issues** (cleat#1151, cleat#1175) |
 | `historyV2PersistenceTest.go` | 5 | **0** — history branch trees; cleat's history is linear |
 | `historyTaskDLQPersistenceTest.go` | 7 | **0** — a DLQ of internal *history tasks* with ack cursors, not a workflow DLQ |
 | `matchingPersistenceTest.go` | 12 | **0** — task lists, leases and ack levels; cleat's workers poll `workflow_instances` |
@@ -405,3 +405,74 @@ document exists to avoid. What it does establish:
 `ports/dbos-transact-py`, where the harness and fixtures exist, at roughly one
 issue per three cases read. Open the port only if a reading pass finds a cluster
 that needs Cadence-shaped fixtures to express — nothing so far does.
+
+
+## Two more from `executionManagerTest.go`, and what the read count actually is
+
+### `TestCreateWorkflowExecutionConcurrentCreate` — portable, and it found something
+
+Two goroutines continue-as-new from the same base execution; exactly one must
+fail. cleat **satisfies** this. Nothing in cleat tests it, and the reason it
+holds is not the reason it appears to hold. Filed as **cleat#1175**.
+
+`PostgresStore.ContinueAsNew` completes the predecessor under
+`WHERE id = $1 AND assigned_to = $2 AND generation = $5`, and 0 rows rolls back
+the successor insert too. Tracing which predicate excludes a second concurrent
+caller:
+
+| the second caller is… | excluded by |
+|---|---|
+| a different worker | `assigned_to = $2` — it never held the claim |
+| a stale caller from an earlier claim | `generation = $5` — claiming bumps it |
+| **a second caller on the same claim** | **`SET assigned_to = NULL`** |
+
+Nothing in that statement bumps `generation`, so for the third row the `WHERE`
+clause that reads as the guard cannot tell the two callers apart. The exclusion
+is a **`SET` clause**. It works, it is unnamed, and no test would notice it
+going away — which matters because **decision 4 of the capability-gap review,
+already approved, is a durable record of which worker ran a workflow**, and the
+cheapest implementation of that is to stop discarding `assigned_to`.
+
+Measured, per function body rather than per file:
+
+| | |
+|---|---:|
+| test funcs mentioning `ContinueAsNew` | 80 |
+| test funcs using a concurrency construct | 125 |
+| **both, in the same function** | **0** |
+| both `ErrFenceLost` and a concurrency construct | **0** |
+
+The first two rows are the controls. `ErrFenceLost` appears 57 times across 12
+test files and **every** occurrence *arranges* the lost fence rather than racing
+for it. That is the right way to test the predicate and it cannot see the
+property Cadence asserts: not "a stale caller is rejected" but "two live callers
+cannot both win."
+
+### `TestUpdateWorkflowExecutionWithWorkflowRequestsDedup` — not a new issue, a constraint on an open one
+
+Upstream keys dedup on **`(RequestID, RequestType)`**, not `RequestID`: one
+client request id legitimately produces a `Start` row *and* a `Signal` row, and
+re-presenting either is an error without shadowing the other.
+
+cleat's `idempotency_keys` has no operation-type column. That is harmless today
+only because signals carry no key at all (**cleat#1121**) — there is nothing for
+a start's row to collide with. It stops being harmless the moment #1121 lands.
+Recorded as a comment there rather than as a new issue, since it constrains that
+implementation rather than describing a present defect.
+
+### The read count, stated with its denominator
+
+The row above now says **18 read**. A mechanical scan — every case name in
+`executionManagerTest.go`, matched against this document — reports **22
+accounted for, 30 unread**.
+
+The two numbers measure different things and both are in the file, so neither is
+a correction of the other. **18** is cases *adjudicated*: a verdict was reached
+and written down. **22** is names that *appear* here, four of which appear only
+in passing. Earlier in this survey I said "36 unread", which is neither; it was
+`52 − 16` carried forward after the read count had moved.
+
+**30 is a lower bound on what is unread**, and deliberately so: the scan counts
+a name as read if it appears anywhere in this document, which can only
+over-count reading. That is the direction that ends enquiry, so it is the one
+to state explicitly rather than to round off.
