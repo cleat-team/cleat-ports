@@ -79,11 +79,58 @@ layering against cleat's public API.
 type-level (`IsType(&WorkflowExecutionAlreadyStartedError{})`) and the property
 depends on setup this pass did not follow.
 
+## Second pass: two more read, and one of them is a NON-gap
+
+**`TestPersistenceStartWorkflow` — portable, but already captured.** Its
+substance is the same property as `TestCreateWorkflowExecutionBrandNew`: the
+already-started error carries `RunID`, `State`, `CloseStatus` and
+`LastWriteVersion`. Filed as cleat#1151. The remainder of the case asserts
+`ShardOwnershipLostError`, which cleat has no analogue for. **Counting this as a
+second portable case would double-count one gap** — worth saying, because a
+name-based pass would have counted it.
+
+**`TestCreateWorkflowExecutionWithWorkflowRequestsDedup` — NOT a gap. cleat
+already satisfies it, and arguably more idiomatically.**
+
+Cadence distinguishes two duplicate conditions by error type:
+`DuplicateRequestError` (this exact request was seen before, carrying its
+`RequestType` and the `RunID` it produced) versus
+`WorkflowExecutionAlreadyStartedError` (a different request tried to start an id
+that is already running).
+
+Measured on a live worker, cleat draws the same line with status codes:
+
+| condition | cleat |
+|---|---|
+| same `Idempotency-Key` — your own retry | **200** `{"already_started":"true","workflow_id":…}` |
+| same `Cleat-Concurrency-Key`, different request | **409** `workflow already running with key …` |
+
+Those are the two situations that matter to a caller and they are already
+separable: one means *your work is running*, the other means *someone else's is*.
+
+The one dimension Cadence carries that cleat does not is `RequestType` — its
+dedup covers request kinds beyond `start`. cleat's covers starts only, and the
+signal half of that is already filed as cleat#1121 (a re-sent signal is a second
+signal). So this case is fully accounted for with nothing left to port.
+
+**Recording non-gaps matters as much as recording gaps.** A residue that only
+ever grows is a residue nobody trusts, and "cleat already does this" is a result
+the survey's row-by-name method could not produce.
+
 ## The honest read on the estimate
 
-One of three read is portable; one is definitely not; one is undecided. That is
-a sample of three, and it is **not** a basis for revising 20–27 to any other
-number — saying "so it is really 17" would be exactly the false precision this
+Five read now, and the verdicts do not cluster the way a count would suggest:
+
+| case | verdict |
+|---|---|
+| `TestCreateWorkflowExecutionBrandNew` | portable — found cleat#1151 |
+| `TestPersistenceStartWorkflow` | portable but **duplicates** #1151; rest is sharding |
+| `TestCreateWorkflowExecutionWithWorkflowRequestsDedup` | **not a gap** — cleat already satisfies it |
+| `TestCreateWorkflowExecutionRunIDReuseWithoutReplication` | not portable — asserts a layer boundary cleat lacks |
+| `TestCreateWorkflowExecutionDeDup` | undecided |
+
+**One new issue from five cases**, not five portable cases from five. That is
+still **not** a basis for revising 20–27 to any other number — saying "so it is really 17" would be exactly the false precision this
 document exists to avoid. What it does establish:
 
 - **the portable cases cluster in dedup / current-execution / lifecycle**, not
