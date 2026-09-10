@@ -65,8 +65,18 @@ Method: a `go/ast` pass emitting every `if` inside a `Test*` function whose body
 calls `t.Fatal`/`t.Error`, a marker inserted before each, run in a throwaway
 worktree.
 
-**123 guards, 119 reached, 47 tests with every guard reached.** The four
-unreached:
+**123 guards, 119 reached, 47 tests with every guard reached.**
+
+**That is a REACHABILITY number, not an assertion-quality number**, and the
+distinction is not pedantic — it is the same gap #172 fell through. A guard can
+be reached while its condition can never be false; reachability scores that
+clean. The Python figure has the same limit for the same reason. Neither half
+of this sweep measures whether an assertion *can fail* — only that it runs.
+Measuring the engine is what catches the other thing, which is how #172, #1141
+and #1148 were found. (Raised by another session reviewing this file, and they
+were right.)
+
+The four unreached:
 
 - **3** in `Test_SingleSubOrchestrator_Failed`, which skips on cleat#1115.
 - **1** in `TestASleepAdvancesTheClockByExactlyTheSleep`, which is **not** a
@@ -93,9 +103,12 @@ and falsify it in both directions the way `selftest-check-assertions.py` is.
 
 ## What none of this establishes
 
-- **Not** that the assertions are well chosen. It establishes that they run and
-  that they can fail. #172 ran and could not fail, and no coverage tool would
-  have caught it — only measuring the engine did.
+- **Not** that the assertions are well chosen, and **not that they can fail.**
+  It establishes only that they RUN. #172 ran and could not fail, and no
+  coverage or reachability tool would have caught it — only measuring the engine
+  did. An earlier draft of this file said the sweep established "that they run
+  and that they can fail". It does not, and the overclaim was in the section
+  written to prevent overclaiming.
 - **Not** anything about the five capability gaps (no pre-emptive cancellation,
   no queue concurrency limit, no detached handle, no executor identity, no
   per-run timeout). Those are absent semantics, not weak tests.
