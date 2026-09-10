@@ -52,6 +52,16 @@ BIG_INT_RETURNED = '{"x":123456789012345678901234567890}'
 BIG_INT_STORED = {
     "postgres": {"x": 123456789012345678901234567890},
     "mysql": {"x": 1.2345678901234566e29},
+    # Measured 2026-09-10, which is what this row was waiting for -- the skip
+    # below declined to guess, and a guess would have been wrong in the
+    # interesting direction: mssql looks like MySQL in most result-shape
+    # questions and here it behaves like PostgreSQL.
+    #
+    # Verified two ways rather than one. `valid` returns {"ok":true} on the same
+    # worker, so the path works and this is not an artifact of a broken run; and
+    # the same probe reproduced postgres's documented value exactly, so the
+    # method is the one that produced the two rows above.
+    "mssql": {"x": 123456789012345678901234567890},
 }
 
 
@@ -103,8 +113,10 @@ def test_a_large_integer_result_keeps_whatever_precision_the_dialect_offers(
         pytest.skip(
             f"what {dialect} does with an integer past 2**53 has not been measured; "
             f"add a row to BIG_INT_STORED once it has. See cleat#1022 -- postgres "
-            f"keeps it exactly and mysql narrows it to a double, so a third answer "
-            f"is entirely possible and guessing one would assert nothing."
+            f"and mssql keep it exactly and mysql narrows it to a double, so a "
+            f"fourth answer is entirely possible and guessing one would assert "
+            f"nothing. All three supported dialects now have a row, so reaching "
+            f"this skip means a NEW dialect was added without measuring it."
         )
 
     final = _run(cleat, bad_result_workflow, "big-int")
