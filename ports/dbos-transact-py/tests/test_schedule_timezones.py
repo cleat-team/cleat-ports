@@ -151,12 +151,34 @@ def test_a_cron_in_a_named_zone_is_scheduled_on_that_zones_clock(
         f"{utc_lo.isoformat()} -- the disagreement is not about the zone"
     )
 
-    offset = ZoneInfo(ZONE).utcoffset(lo.astimezone(ZoneInfo(ZONE)))
-    assert got - plain_got == -offset, (
-        f"the two schedules differ by {got - plain_got}, and {ZONE}'s offset "
-        f"on that date is {offset}. The same expression in two zones must "
-        "differ by exactly the offset between them."
-    )
+    # THE THIRD ASSERTION THIS USED TO MAKE IS GONE, and deliberately.
+    #
+    # It compared the two schedules to each other:
+    #
+    #     assert got - plain_got == -offset
+    #
+    # "the same expression in two zones must differ by exactly the offset
+    # between them" -- which is true only when both next-noons land on the same
+    # DATE. They do not, whenever the current time sits between the two noons.
+    # At 12:08 UTC on 2026-09-10 the zoned schedule was
+    #
+    #     2026-09-10 16:00 UTC   (noon EDT, still ahead)
+    #     2026-09-11 12:00 UTC   (noon UTC, already past, so tomorrow)
+    #
+    # -- twenty hours apart, both correct, and the assertion failed. It turned
+    # `develop` red for the four hours between noon UTC and noon in New York,
+    # and it would do so every day.
+    #
+    # The two straddle guards above do not cover it: they ask whether the
+    # REQUEST straddled a noon, not whether the two answers landed on different
+    # days, which is a different question and the one that bites.
+    #
+    # Removed rather than guarded, because it asserted nothing the two
+    # assertions above do not already assert exactly. `got` is pinned to `lo`
+    # and `plain_got` to `utc_lo`, each computed independently by
+    # next_noon_utc; the relationship between them is then fully determined. A
+    # third assertion derived from the same helper cannot fail unless one of
+    # those two already has.
 
 
 def test_a_schedule_that_names_no_zone_gets_the_documented_default(
