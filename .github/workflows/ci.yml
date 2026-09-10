@@ -260,6 +260,15 @@ jobs:
         env:
           CLEAT_PORTS_PG_PORT: "5432"
         run: make port PORT=${{ matrix.port }}
+      - name: The worker logged no unexplained errors
+        # Runs BEFORE the upload and after the port, with `if: always()` so a
+        # failed suite still gets its log read. A port asserts on workflow
+        # outcomes over HTTP; the worker's background loops fail without
+        # failing anything, so this is the only step that can see them.
+        # One nightly's mssql leg carried 74 such errors in a PASSING run.
+        if: always()
+        run: python3 scripts/check-worker-log.py
+
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
