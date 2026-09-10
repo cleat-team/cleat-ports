@@ -50,6 +50,7 @@ the right conclusion by the wrong mechanism -- and a reader asking "can a caller
 influence this key?" would have been told no, which is false.
 """
 
+import time
 import uuid
 
 import pytest
@@ -179,4 +180,105 @@ def test_whitespace_around_a_key_is_not_part_of_it(cleat, retry_workflow):
         f"({status_b}, {second!r}), so header values are no longer being trimmed "
         "on the way in. The blank-key cases in this file pass BECAUSE of that "
         "trimming -- re-derive why they still pass before trusting them."
+    )
+
+
+def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
+    cleat, retry_workflow, dead_letter_workflow
+):
+    """The dedup returns the right RUN. It does not return the right ANSWER.
+
+    An idempotency key exists so a caller that lost a response can retry
+    safely. The retry is told *the work is already under way, here is its id* --
+    and that sentence is identical whether the run is still going, finished, or
+    dead-lettered. Three outcomes, three different next actions for the caller,
+    one response.
+
+    The consequence worth stating: **a client that treats `already_started` as
+    success reports a dead-lettered workflow as succeeded.** Nothing in the
+    response contradicts that reading, and the caller has to make a second
+    request to find out otherwise.
+
+    Not a claim that the dedup is wrong. It returns the right id -- the sibling
+    test above pins that -- and the key row carries a 7-day expiry, which is a
+    sensible retry window. This is about what the response says about the run
+    it names.
+
+    Cheaper to fix than it looks: `idempotency_keys` already has an `error_msg`
+    column, written on the failure path, so for the dead-lettered half the
+    information is already in the row the retry looks the key up in. The
+    success half is different -- cleat#1049 dropped `idempotency_keys.result`
+    and the success path deliberately writes no idempotency row -- so a
+    *result* would need storage that was removed on purpose, while a *status*
+    or the stored *error* would not. cleat#1151.
+    """
+    ok_key = f"idem-ok-{uuid.uuid4().hex[:8]}"
+    status, started = cleat.start(retry_workflow, {
+        "service": "flaky", "key": f"idem-ok-{uuid.uuid4().hex[:8]}",
+        "attempts": 1, "intervalMs": 100, "failTimes": 0, "failStatus": 0,
+    }, idempotency_key=ok_key)
+    assert status == 201, f"start rejected: {status} {started}"
+    settled = cleat.await_terminal(started["id"], timeout=60.0)
+    assert settled["status"] == "done", (
+        f"the control run did not succeed ({settled['status']!r}), so the "
+        f"comparison below would be between two failures rather than between a "
+        f"success and a failure: {settled!r}"
+    )
+    _, after_success = cleat.start(retry_workflow, {
+        "service": "flaky", "key": "ignored", "attempts": 1, "intervalMs": 100,
+        "failTimes": 0, "failStatus": 0,
+    }, idempotency_key=ok_key)
+
+    dl_key = f"idem-dl-{uuid.uuid4().hex[:8]}"
+    status, dl_started = cleat.start(dead_letter_workflow, {
+        "service": "flaky", "key": f"idem-dl-{uuid.uuid4().hex[:8]}",
+        "attempts": 2, "intervalMs": 100,
+    }, idempotency_key=dl_key)
+    assert status == 201, f"start rejected: {status} {dl_started}"
+
+    deadline = time.time() + 90.0
+    dl_status = None
+    while time.time() < deadline:
+        code, body = cleat.api(f"/api/workflows/{dl_started['id']}")
+        dl_status = body.get("status")
+        if dl_status in ("dead_lettered", "failed"):
+            break
+        time.sleep(0.5)
+    assert dl_status in ("dead_lettered", "failed"), (
+        f"the failing run settled as {dl_status!r}; this test needs a run that "
+        f"did NOT succeed for the comparison to mean anything"
+    )
+    _, after_failure = cleat.start(dead_letter_workflow, {
+        "service": "flaky", "key": "ignored", "attempts": 2, "intervalMs": 100,
+    }, idempotency_key=dl_key)
+
+    # Both retries must at least name the run they joined -- that half works.
+    for label, resp in (("success", after_success), ("failure", after_failure)):
+        assert resp.get("already_started") == "true", (
+            f"the {label} retry did not report already_started: {resp!r}"
+        )
+        assert resp.get("workflow_id"), (
+            f"the {label} retry named no run: {resp!r}"
+        )
+
+    same_shape = set(after_success) == set(after_failure)
+    if same_shape:
+        pytest.skip(
+            f"cleat#1151: a retry is told the same thing whichever way the run "
+            f"went. After a run that reached 'done' the response carried "
+            f"{sorted(after_success)}; after one that reached {dl_status!r} it "
+            f"carried {sorted(after_failure)} -- the same fields, so the caller "
+            f"cannot tell a completed run from a dead-lettered one without a "
+            f"second request.\n"
+            f"\n"
+            f"A skip rather than a failure while #1151 is open, and every "
+            f"assertion above still ran: both retries deduplicated, both named "
+            f"a run, and the two runs genuinely reached different terminal "
+            f"states -- which is what makes the identical response a finding "
+            f"rather than a coincidence."
+        )
+
+    assert set(after_success) != set(after_failure), (
+        f"the responses are indistinguishable: {after_success!r} vs "
+        f"{after_failure!r}"
     )
