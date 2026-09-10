@@ -59,7 +59,7 @@ def _priorities(fixture_log, key):
     return [int(c.split(".p", 1)[1]) for c in fixture_log(key)]
 
 
-def test_priority_orders_the_second_batch(cleat, priority_mark_workflow, fixture_log):
+def test_priority_orders_the_second_batch(cleat, priority_mark_workflow, fixture_log, fixture_peak):
     """Of the work still queued, the worker claims the best priorities next.
 
     THE CONTROL IS THE ASSIGNMENT ORDER. Priorities are assigned in REVERSE
@@ -113,6 +113,42 @@ def test_priority_orders_the_second_batch(cleat, priority_mark_workflow, fixture
     seen = _priorities(fixture_log, key)
     assert len(seen) == ENQUEUED, (
         f"only {len(seen)} of {ENQUEUED} workflows started within 300s: {seen}"
+    )
+
+    # THE PREMISE, ASSERTED RATHER THAN COMMENTED.
+    #
+    # Everything below measures how dispatch ORDERED a queue. If no queue ever
+    # formed there is nothing to order, and the margin then measures enqueue
+    # order -- which is what happened: ports#187, where the hold was
+    # DurableSleepMs. That SUSPENDS the run and releases the worker slot, so all
+    # 60 started inside the 1.1s the test spent enqueueing them.
+    #
+    # A comment is not the safeguard, and this fixture is the proof: it CARRIED
+    # one, and the comment stated the wrong belief -- "the sleep after it holds
+    # the slot". It was the defect, written down, and it read as awareness.
+    #
+    # peak is the number of fixture calls open at once, so it is a direct count
+    # of workflows mid-execution. Measured, not chosen:
+    #
+    #     hold held (a durable call with delay_ms)   peak = 10
+    #     hold suspended (the pre-#188 sleep)        peak = 0
+    #
+    # No threshold to tune between those. CONCURRENCY workflows executing at one
+    # instant, out of ENQUEUED > CONCURRENCY enqueued, means the remainder were
+    # waiting -- which is the queue this test needs and cannot otherwise see.
+    #
+    # Deliberately not a span or a generation check. A span is a clock, and
+    # cleat-ports#115 is what a threshold between two timings costs here; a
+    # generation check needs the database. This needs neither.
+    peak = fixture_peak(key)
+    assert peak >= CONCURRENCY, (
+        f"only {peak} of these workflows were ever mid-execution at once, out of "
+        f"{ENQUEUED} enqueued against a worker running {CONCURRENCY} at a time.\n\n"
+        "So no queue formed, and the ordering assertion below has nothing to measure: "
+        "it would be reading enqueue order and calling it dispatch order. A peak of 0 "
+        "means the fixture was never asked to hold at all -- the workflow's hold is "
+        "suspending the run and releasing the slot instead of occupying it "
+        "(cleat-ports#187)."
     )
 
     ordered = seen[CONCURRENCY:]          # after the enqueue window
