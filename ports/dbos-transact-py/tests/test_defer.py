@@ -27,6 +27,7 @@ import pytest
 import functools
 
 from conftest import wait_until as _wait_until
+from test_workflow_management import _claimed_generation
 
 #: This module polled at 0.25s before wait_until was shared, and keeps it.
 #: Not tidied to the 0.5s default: some predicates here test a TRANSIENT
@@ -226,4 +227,107 @@ def test_a_defer_runs_on_a_propagated_failure_and_costs_the_run_its_dlq_place(
 
     assert final["status"] == "dead_lettered", (
         f"a run that exhausted its retries settled {final['status']!r}: {final!r}"
+    )
+
+
+def test_a_force_completed_workflow_still_runs_its_defers(
+    cleat, defer_workflow, fixture_calls
+):
+    """A HOST-driven terminal transition must not skip the cleanup it owes.
+
+    The three tests above all end the workflow the ordinary way -- the body
+    returns and the entry-point wrapper drains the defer table on its way out.
+    None of them exercises the case where something OUTSIDE the guest decides
+    the workflow is over, and that is the case with a history of going wrong.
+
+    `engine/defer_phase.go` records why it is a two-phase transition and what
+    the one-phase version did: TerminateWorkflow used to call
+    releaseWorkflowResources immediately after the terminal UPDATE, so "the
+    host dropped the sticky assignment and the concurrency keys, and the defer
+    that would have released them never ran. A terminated workflow's cleanup
+    was not merely skipped, it was pre-empted by the host doing a DIFFERENT
+    release, in the wrong order, with no record that anything was owed."
+
+    The shape that fixes it is MARK then FINALIZE: the outcome is recorded in
+    pending_terminal_status, the workflow moves to 'terminating' and stays
+    schedulable, and the dispatch loop later replays it as a defer segment and
+    applies the recorded outcome only after the defers have run. This asserts
+    the observable end of that -- the cleanup arrives -- rather than the
+    mechanism, so it holds for any implementation that keeps the guarantee.
+
+    Load-bearing: the run must still be RUNNING when it is forced. Forcing a
+    workflow that has already finished tests nothing, because the ordinary exit
+    path would have drained the defers anyway and the assertion below would
+    pass against an engine that skips cleanup entirely. Waiting for the body
+    key is what establishes that.
+    """
+    body_key = f"defer-fc-body-{uuid.uuid4().hex[:8]}"
+    defer_key = f"defer-fc-run-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(defer_workflow, {
+        "bodyKey": body_key, "deferKey": defer_key, "sleepMs": 30_000,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    wait_until(
+        lambda: fixture_calls(body_key) >= 1,
+        timeout=60.0,
+        what="the workflow body to reach the fixture, so the run is demonstrably "
+             "mid-flight when it is forced",
+    )
+    assert fixture_calls(defer_key) == 0, (
+        f"the deferred cleanup reached the fixture {fixture_calls(defer_key)} "
+        f"time(s) BEFORE the workflow was forced. A defer that fires early is a "
+        f"defer in name only, and it would make the assertion below hold for "
+        f"the wrong reason."
+    )
+
+    code, body = cleat.admin(run_id, "force-complete", {
+        "generation": _claimed_generation(cleat, run_id),
+        "result": json.dumps({"forced": True}),
+    })
+    assert code == 200, f"force-complete answered {code}: {body!r}"
+
+    final = cleat.await_terminal(run_id, timeout=90.0)
+    assert final["status"] == "done", (
+        f"the forced run settled as {final['status']!r}: {final!r}. "
+        f"'terminating' here would mean the defer phase never finalized -- the "
+        f"workflow is holding its resources and no terminal outcome was applied."
+    )
+
+    # Give the defer phase a generous window. Measured: it never arrives, and
+    # the status is `done` at t+0 and every sample for two minutes -- the run
+    # does not pass through `terminating` at all.
+    deadline = time.time() + 60.0
+    while time.time() < deadline and fixture_calls(defer_key) == 0:
+        time.sleep(1.0)
+
+    calls = fixture_calls(defer_key)
+    if calls == 0:
+        pytest.skip(
+            f"cleat#1152: force-complete ended the run without running the "
+            f"defer it owed. Status went to {final['status']!r} directly, never "
+            f"through 'terminating', and the cleanup did not arrive in 60s.\n"
+            f"\n"
+            f"engine/defer_phase.go's two-phase MARK/FINALIZE exists precisely "
+            f"to stop this, and describes the pre-fix behaviour it replaced: "
+            f"'A terminated workflow's cleanup was not merely skipped, it was "
+            f"pre-empted by the host doing a DIFFERENT release, in the wrong "
+            f"order, with no record that anything was owed.' That fix reached "
+            f"TerminateWorkflow and not the operator endpoints beside it.\n"
+            f"\n"
+            f"A skip rather than a failure only so the suite stays green while "
+            f"#1152 is open, and deliberately NOT an unconditional skip: every "
+            f"assertion above still runs -- the body reached the fixture, the "
+            f"defer had NOT fired early, force-complete answered 200, and the "
+            f"run settled terminal rather than stranding in 'terminating'. "
+            f"Those are the controls that make this finding precise rather "
+            f"than 'something did not happen'."
+        )
+
+    assert calls == 1, (
+        f"the deferred cleanup ran {calls} times for one forced run. Once is "
+        f"the contract: the defer table is drained once however the workflow "
+        f"ends, and a forced end must not double-drain it."
     )

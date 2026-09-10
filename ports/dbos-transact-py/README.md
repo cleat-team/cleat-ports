@@ -357,7 +357,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_continue_as_new.py` | 3 | `test_dbos.py` — bounded history via self-restart |
 | `test_cross_worker.py` | 3 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
 | `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
-| `test_defer.py` | 4 | `test_dbos.py` — cleanup that runs once though the body runs twice |
+| `test_defer.py` | 5 | `test_dbos.py` — cleanup that runs once though the body runs twice |
 | `test_detached.py` | 3 (1 skipped) | `test_workflow_management.py` — the nearest thing cleat has to fork |
 | `test_determinism.py` | 4 | `test_dbos.py` — stable IDs and randomness under recovery |
 | `test_executor_identity.py` | 1 (1 skipped) | `test_queue.py` — upstream test_queue_executor_id -- which worker ran a completed run; skipped, ISSUES.md 26 |
