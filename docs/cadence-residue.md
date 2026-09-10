@@ -167,6 +167,57 @@ field in a response is evidence about that response, not about the system — an
 in this repo the decision that made it missing is usually written down beside a
 test that pins it. Read the port before concluding the engine lacks something.
 
+## Sixteen read: where the file's residue actually is
+
+Continuing case by case rather than by name. Every row below was read; none was
+classified from its title.
+
+| family | n | verdict |
+|---|---:|---|
+| dedup / lifecycle | 5 | **1 new issue** (cleat#1151), 1 duplicate of it, 1 non-gap, 2 not portable |
+| `TestContinueAsNew` | 1 | **not a gap** — cleat#826 decided this shape deliberately |
+| `TestWorkflowMutableState*` | 7 | **not portable** — CRUD round-trips on internal maps |
+| corrupted / buffered / timer-tracking | 3 | **not portable** |
+
+**Sixteen cases, one new issue.**
+
+### The mutable-state family is one test written seven times
+
+`Activities`, `Timers`, `ChildExecutions`, `RequestCancel`, `SignalInfo`,
+`SignalRequested`, `Info`. All read; all the same shape — write an entry into
+mutable state, read it back and assert `len == 1` and that it equals what was
+written, delete it, assert `len == 0`.
+
+That is a **persistence round-trip on Cadence's own bookkeeping maps**, not a
+durable-execution contract. cleat exposes runs, statuses, results and history
+events; it has no mutable-state blob with typed sub-maps for a port to assert
+against.
+
+One member carries something extra and it is worth separating out:
+`ChildExecutions` also asserts a child records its `ParentWorkflowID`,
+`ParentRunID` and `InitiatedID`. **The parentage half is already satisfied** —
+`parent_workflow_id` is written on every child and, since cleat#1103, readable
+from the API. Verified against the database: a child's API record carries it and
+it matches. `InitiatedID` — the event id in the parent that initiated the child —
+has no cleat analogue, and correlating a child back to a point in its parent's
+history is a real capability cleat does not offer. Not filed: it is a plausible
+want with no evidence anyone needs it, and this document is not a wish list.
+
+### The last three
+
+- **`TestCleanupCorruptedWorkflow`** — asserts a run marked `WorkflowStateCorrupted`
+  stays readable and distinct from deleted, and that deleting the *current*
+  pointer leaves the run loadable by run id. **Not portable twice over:** cleat
+  has no corrupted state (grep finds only comments about data corruption), and
+  no current/execution table split. The state exists to support Cadence's
+  corruption-scanner tooling.
+- **`TestUpdateAndClearBufferedEvents`** — `BufferedEventsCount` and
+  `BufferedEventsSize`. No cleat analogue.
+- **`TestWorkflowTimerTaskTracking`** — 62 lines and **three assertions, all
+  `NoError`**. Nothing behavioural is asserted at all. Recorded because it is a
+  reminder that upstream case counts include cases like this one, and a
+  "portable" row costed from a name would have costed this at full price.
+
 ## The honest read on the estimate
 
 Five read now, and the verdicts do not cluster the way a count would suggest:
@@ -206,7 +257,7 @@ after deletion, and that would be a real defect. It is specifically that **no
 API path lets a test express the precondition**, which is a statement about
 reachability from the port, not about the engine's correctness.
 
-**One new issue from six cases**, not five portable cases from five. That is
+**One new issue from sixteen cases**, not five portable cases from five. That is
 still **not** a basis for revising 20–27 to any other number — saying "so it is really 17" would be exactly the false precision this
 document exists to avoid. What it does establish:
 
