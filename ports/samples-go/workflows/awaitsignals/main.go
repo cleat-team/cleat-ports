@@ -9,10 +9,17 @@
 // The mapping is the interesting part, so this workflow uses the LOOP over
 // AwaitSignals rather than quorum. Two reasons:
 //
-//   - Quorum is the closer-looking fit and the wrong one. minCount counts
-//     SIGNALS, not distinct names, so three deliveries of "approve" satisfy a
-//     quorum of 3 over three different names. Upstream's guarantee is that
-//     each named signal arrived once, which quorum cannot express.
+//   - Quorum WAS the closer-looking fit and the wrong one: minCount counted
+//     SIGNALS, not distinct names, so three deliveries of "approve" satisfied a
+//     quorum of 3 over three different names. Recorded as ISSUES entry 5, filed
+//     as cleat#1132, FIXED by cleat#1135 -- the awaited set is now narrowed as
+//     each distinct name arrives, so quorum expresses upstream's guarantee.
+//
+//     This fixture still loops, deliberately. It is the port of upstream's
+//     await-signals sample and several cases here assert its per-name timeout
+//     behaviour, which the loop is what produces. The quorum call is exercised
+//     by workflows/quorum and tests/quorum_test.go, which is where the fix is
+//     pinned so it cannot regress.
 //
 //   - The loop is what a reader porting this sample would write, so it is the
 //     path worth having coverage on.

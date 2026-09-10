@@ -21,7 +21,7 @@ two still open.**
 | 2. `saga-temporal-port/ISSUES.md` is stale | n/a — about an upstream project's own doc |
 | 3. mis-cased `parent_close_policy` | cleat#938 |
 | 4. one delivery satisfies two `AwaitSignals` | cleat#900 |
-| 5. no "await N distinct signals" primitive | **cleat#1132 — verified and filed** |
+| 5. no "await N distinct signals" primitive | **FIXED — cleat#1132 → cleat#1135**, asserted by `tests/quorum_test.go` |
 | 6. query on an unknown run answers 200 | cleat#935 |
 | 7. query state is published, not computed | **deliberately not filed** — Won't fix, recorded |
 | 8. one path segment, two identifier kinds | cleat#942 |
@@ -312,9 +312,23 @@ notices the fix — the construction the DBOS port used for cleat#900.
 
 ## 5. There is no "await these N distinct signals" primitive
 
-**Class:** Missing API — and the existing quorum call's counting is why
+**Class:** ~~Missing API~~ — **RESOLVED**, and the existing quorum call's counting was why
 **Upstream sample:** `await-signals/`
-**Status:** Filed as cleat#1132 (2026-09-10), reproduced first. A quorum of 3
+**Status:** **Fixed by cleat#1135 (2026-09-10), and now asserted here.**
+`AwaitSignalsWithQuorum` narrows the awaited set as each distinct name arrives,
+so the primitive entry 5 called missing exists: a quorum of N over N names is
+"await these N distinct signals". `tests/quorum_test.go` pins both halves.
+
+Measured across the fix with one fixture and the same three sends:
+
+    before  cleat d33f9ef   {"got":3,"names":"alpha,alpha,alpha","outcome":"quorum"}
+    after   cleat f05d240   {"got":1,"outcome":"timedOut"}
+
+The fixer also caught something the report missed: `remaining := signalNames`
+aliased the caller's slice, so narrowing it in place would have mutated the
+caller's array. It is copied now.
+
+Originally filed as cleat#1132 (2026-09-10), reproduced first. A quorum of 3
 over `{alpha, beta, gamma}` is satisfied by three deliveries of `alpha`:
 `{"got":3,"names":"alpha,alpha,alpha","outcome":"quorum"}`. The fallback loop in
 `cleat/runtime_signals.go` is the only implementation — nothing sets
