@@ -146,16 +146,39 @@ and then releases:
     scripts/worker.sh stop                          <- the drain under test
     POST /release/<key>
 
-So the remaining work is the port itself, not the harness. Proving *re-claimed*
-rather than merely *released* needs a second worker to pick the run up, and the
-harness already has one: `CLEAT_PORTS_WORKER_INSTANCE` gives each instance its
-own API port, pidfile and log, and `scripts/worker.sh` says in as many words
-that it exists "so cross-worker cases are expressible at all".
+**It was then built and run, and it does not work — for a reason further in.**
+Measured 2026-09-10 with exactly the sequence above:
 
-The first draft of this paragraph said the harness ran only one, in the same
-edit that corrected the delay claim above. Checked before committing, which is
-the only reason it is not a second stale blocker in the file that exists to
-retire the first.
+    reclaim_count after `worker.sh stop` mid-hold:  1   (want 0)
+    elapsed to completion:                         34s  (the reaper, not a re-claim)
+
+**A draining worker waits for in-flight work; it does not release it.**
+`cmd/cleat-worker/setup.go:1202` says so directly — on a cancelled context *or*
+a drain the loop stops claiming "and wait[s] for in-flight workflows to finish
+so events can be flushed cleanly". SIGTERM reaches that path: the handler
+cancels the context and the loop sets `draining` itself.
+
+So the rendezvous is exact and puts the run in precisely the state the release
+path excludes. `releaseWorkflow`'s drain caller (`setup.go:1387`) hands back a
+batch that was **claimed and not yet executed** — a TOCTOU guard for work
+claimed in the window between the drain check and the claim returning.
+
+**And there is a drain route, which does not help.** `POST /api/admin/drain`
+(`server.go:225`) sets the same flag, so the *state* is producible over HTTP.
+But a draining worker stops claiming, so draining first and starting work second
+cannot reach `:1387` either. The route makes the state producible and the race no
+more producible than before.
+
+`worker.sh stop_worker` also sends SIGTERM, waits 5s, then SIGKILL, so a hold
+longer than 5s ends in a kill and one shorter lets the segment finish with
+nothing left to release. Both ends of the range miss.
+
+**So this case is not portable**, and the second-worker machinery above is not
+the missing piece — nothing gets released for a second worker to pick up. The
+test and its fixture were written, run, and removed rather than skipped: a
+skipped test whose subject is unreachable asserts nothing and reads as work in
+progress.
+
 
 **A cleat-specific observation worth keeping separate from the port.**
 `ReleaseWorkflow`'s UPDATE does not touch `reclaim_count`; the reaper's does
