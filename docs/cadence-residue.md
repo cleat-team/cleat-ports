@@ -1,7 +1,10 @@
 # Cadence: what the residue is once you read it
 
 Follow-up to [cadence-persistence-survey.md](cadence-persistence-survey.md),
-which estimated **~20–27 portable of 129** and said plainly that only two cases
+which estimated **~20–27 portable of 129** — the figure that survey carried when
+this document was written, and which is **wrong**: the directory holds **132**,
+and the correction with its cause is below under "the six listed rows sum to 85".
+The survey itself now says 132. That estimate said plainly that only two cases
 had been read and *"treat every row below as a hypothesis until someone reads
 it."* This is that reading, for `executionManagerTest.go` — the file carrying
 most of the estimate (52 cases, ~15–20 claimed portable).
