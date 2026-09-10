@@ -699,6 +699,8 @@ The triage above assigned cases to families by prose, which cannot be checked â€
 *"9 task-queue cases"* is not auditable, and a reader cannot tell whether the
 ninth was ever looked at. So here are the remaining **25** by name.
 
+| case | assigned family |
+|---|---|
 | `TestDeleteActiveClusterSelectionPolicy` | active-cluster selection |
 | `TestGetActiveClusterSelectionPolicy` | active-cluster selection |
 | `TestDeleteWorkflow` | mutable-state CRUD |
