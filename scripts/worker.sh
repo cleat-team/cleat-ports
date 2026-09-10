@@ -449,11 +449,48 @@ MSG
 # Attributes match 005's exactly. A role created here with anything more is a
 # role the ports run under and deployments do not, which is the whole defect
 # being repaired.
+# pg_psql runs one psql invocation against the ports database, over whichever
+# channel this environment actually has.
+#
+# ONE helper for both callers below, deliberately. Two implementations of "talk
+# to postgres" is how they drift apart, and the drift is silent because each
+# works somewhere.
+#
+# `psql` on PATH first: that is CI, where PostgreSQL is a GitHub Actions SERVICE
+# container and `docker compose` knows nothing about it -- the first version of
+# this used compose unconditionally and every port job died with
+# `service "postgres" is not running`, having worked locally. `docker compose
+# exec` second: that is the local harness, where compose owns the database and
+# psql is frequently not installed on the host at all (it is not on mine).
+#
+# Arguments after the flags are passed through, so the caller writes one psql
+# command line rather than two.
+pg_psql() {
+  local user="$1" pass="$2" host="$3" port="$4"; shift 4
+  if command -v psql >/dev/null 2>&1; then
+    PGPASSWORD="$pass" psql -U "$user" -h "$host" -p "$port" -d cleat_ports "$@"
+  else
+    case "$host" in localhost|127.0.0.1) host="host.docker.internal" ;; esac
+    docker compose exec -T -e PGPASSWORD="$pass" postgres \
+      psql -U "$user" -h "$host" -p "$port" -d cleat_ports "$@"
+  fi
+}
+
 ensure_app_role() {
   [ "$CLEAT_PORTS_DIALECT" = "postgres" ] || return 0
 
+  # Every credential comes from the DSNs in force, not from defaults restated
+  # here: a second source for the same fact is what put the owner on one port
+  # and the worker on another.
+  local ocreds ouser opass ohost oport
+  ocreds=${CLEAT_PORTS_DSN#*://}
+  ouser=${ocreds%%:*}
+  opass=${ocreds#*:}; opass=${opass%%@*}
+  ohost=${ocreds#*@}; ohost=${ohost%%[:/]*}
+  oport=${ocreds#*@}; oport=${oport#*:}; oport=${oport%%/*}
+
   local pw="${CLEAT_PORTS_APP_PASSWORD:-cleat-app-ports-local}"
-  if ! docker compose exec -T postgres psql -U postgres -d cleat_ports -v ON_ERROR_STOP=1 -q -c "
+  if ! pg_psql "$ouser" "$opass" "$ohost" "${oport:-5432}" -v ON_ERROR_STOP=1 -q -c "
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cleat_app') THEN
@@ -477,7 +514,7 @@ ALTER ROLE cleat_app LOGIN PASSWORD '${pw}';
   # up SUPERUSER or BYPASSRLS somewhere looks identical until a tenant
   # assertion silently passes.
   local attrs
-  attrs=$(docker compose exec -T postgres psql -U postgres -d cleat_ports -tAc \
+  attrs=$(pg_psql "$ouser" "$opass" "$ohost" "${oport:-5432}" -tAc \
     "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'cleat_app'" \
     2>/dev/null | tr -d '\r')
   case "$attrs" in
@@ -511,9 +548,7 @@ ALTER ROLE cleat_app LOGIN PASSWORD '${pw}';
   rpass=${creds#*:}; rpass=${rpass%%@*}
   host=${creds#*@}; host=${host%%[:/]*}
   port=${creds#*@}; port=${port#*:}; port=${port%%/*}
-  case "$host" in localhost|127.0.0.1) host="host.docker.internal" ;; esac
-  if ! docker compose exec -T -e PGPASSWORD="$rpass" postgres \
-       psql -U "$ruser" -h "$host" -p "${port:-5432}" -d cleat_ports -tAc "SELECT 1" >/dev/null 2>&1; then
+  if ! pg_psql "$ruser" "$rpass" "$host" "${port:-5432}" -tAc "SELECT 1" >/dev/null 2>&1; then
     echo "cleat_app cannot authenticate over the DSN the worker will use:" >&2
     echo "  $CLEAT_PORTS_RUNTIME_DSN" >&2
     echo "Starting anyway would give a worker that answers 401 to every request," >&2
