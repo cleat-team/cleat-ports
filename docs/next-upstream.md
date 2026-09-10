@@ -411,3 +411,55 @@ first task in the port is the survey, by the method in `WORKLIST.md`:
   a directory, a harness entry, a fixture set of workflows, and a place in the
   nightly matrix. On the evidence of the first port, the survey is a day and
   the fixtures are the long pole.
+
+
+---
+
+## The port has a reach limit, and it is now measured (2026-09-10)
+
+This document recommends a backend contract over a client library on the
+grounds that it is *closer to cleat's shape*. Having judged
+`backend_test.go`'s ten cases against cleat
+(`durabletask-go-backend-survey.md`), that is true and **incomplete**: closer in
+subject, and further out of reach.
+
+**Four of the ten are satisfied by cleat and cannot be asserted from here.** Not
+"cleat lacks them" and not "upstream-internal" — a fifth verdict, with two
+distinct causes:
+
+| cause | cases |
+|---|---|
+| the surface is a **store method with no HTTP route** — `ClaimWorkflow` returning `(nil, nil)` on an empty queue is cleat's `ErrNoWorkItems`, and no route exposes it | `Test_ScheduleActivityTasks`, `Test_ScheduleTimerTasks` |
+| the property is a **timing distinction smaller than the poll interval**, and the mechanism differs by dialect | `Test_AbandonOrchestrationWorkItem`, `Test_AbandonActivityWorkItem` |
+
+The second is the sharper one. `ReleaseWorkflow` makes abandoned work
+immediately re-claimable and `pgNotify`s so a waiting worker wakes — but
+`-poll` defaults to **500ms**, which bounds how much a notify can save, and
+`pgNotify` is **PostgreSQL-only**: MySQL and SQL Server disable it by
+construction. A test timing the difference would measure a different mechanism
+on each dialect while appearing to measure one property.
+
+### What this means for choosing the next upstream
+
+**The port's reach is the HTTP surface, and an upstream's yield here is bounded
+by how much of its subject that surface exposes** — not by how close its subject
+is to cleat's. Those pull in opposite directions:
+
+- a **client library** tests things a client can see, so what is portable is
+  portable — but most of it is SDK shape rather than engine behaviour
+  (`test_client.py`: 3 of 57);
+- a **backend contract** tests engine behaviour, which is what we want — and a
+  growing fraction of it is reachable only from inside the process
+  (`backend_test.go`: 4 of 10 satisfied-but-unobservable, against 2 already
+  covered and 3 genuinely not portable).
+
+So the criterion is not *engine-ness*. It is **the intersection of engine-ness
+and HTTP-observability**, and `backend_test.go` is the first corpus where that
+intersection has been measured rather than assumed.
+
+**The practical consequence** is that engine-level assertions cleat *satisfies*
+and this suite *cannot see* belong in cleat's own Go tests, not in a port — and
+saying so is more useful than recording them as unportable, because they are
+neither absent nor covered. Anything routed that way should carry the property
+and the reason the port cannot hold it, or it will be re-derived by the next
+survey that reads the same file.
