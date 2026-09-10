@@ -246,6 +246,9 @@ MAPPING = {
     "test_workflow_management.py": ("test_workflow_management.py",
                                     "force-complete, force-fail, and their refusals"),
     "test_children.py": ("test_concurrency.py", "concurrent execution and isolation"),
+    "test_bulk_cancel.py": ("test_workflow_management.py",
+                            "upstream test_bulk_cancel -- a list of ids, not a filter, "
+                            "which is what makes it portable"),
     "test_parallelism.py": ("test_async.py",
                             "the one portable case: workflows actually run at once"),
     # The other half of upstream test_concurrency.py, and the only half of it
