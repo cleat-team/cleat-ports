@@ -71,6 +71,23 @@ KNOWN = [
 # looks at.
 EXECUTION = re.compile(r'"msg":"execution error"')
 
+# A cancelled context means the worker was SHUTTING DOWN, and every reason a
+# worker stops in this harness is deliberate: `scripts/worker.sh stop`, the
+# `crash` path, or end-of-run teardown. The recovery suite already asserts what
+# must happen next -- test_a_workflow_survives_the_loss_of_its_worker and its
+# neighbours -- so whether the run is reclaimed is covered, and the shutdown
+# error itself is not this file's business.
+#
+# Scoped by the SHAPE of the error rather than by an allowlist entry, for the
+# reason the execution-error exclusion above gives: an exemption list that grows
+# on red builds is a denominator shrinking one entry at a time. This is a
+# category that belongs to another test, not a case that needs excusing.
+#
+# It is narrow deliberately: only `context canceled`, which Go writes exactly
+# this way. A timeout, a closed pool or a lost connection all read differently
+# and still surface.
+SHUTDOWN = re.compile(r"context canceled")
+
 
 def error_lines(text):
     """Lines the worker logged at ERROR, in either of its two formats.
@@ -119,7 +136,7 @@ def main():
         text = log.read_text(encoding="utf-8", errors="replace")
         for line in error_lines(text):
             scanned += 1
-            if EXECUTION.search(line):
+            if EXECUTION.search(line) or SHUTDOWN.search(line):
                 continue
             for needle, issue in KNOWN:
                 if needle in line:
