@@ -109,10 +109,26 @@ figure is derived rather than written down — the note this replaces said
 Only cases skipped **outright**, by decorator, are counted. A conditional
 `pytest.skip()` inside a body is not: those are written to skip on a known
 defect and assert in full otherwise, so one becomes a passing case the day the
-defect is fixed, with nobody editing it. `test_dead_letters.py` has exactly one
-and it started passing when cleat#979 was fixed. Counting it as a skip would
-understate coverage and go stale silently, which is the failure this whole
-section exists to stop.
+defect is fixed, with nobody editing it. `test_dead_letters.py`'s started
+passing when cleat#979 was fixed. Counting these as skips would understate
+coverage and go stale silently, which is the failure this whole section exists
+to stop.
+
+This paragraph said "`test_dead_letters.py` has exactly one" until 2026-09-10,
+by which point there were nine across seven modules. **Do not write the count
+here** -- the section three paragraphs up is about exactly this failure, and
+this sentence had it. List them instead:
+
+```sh
+grep -rn "pytest.skip(" ports/dbos-transact-py/tests/*.py
+```
+
+Two kinds come back and they are not interchangeable. Most pin a known cleat
+defect and name its issue in the skip message, so the skip stops firing when
+the engine is fixed. The three in `test_schedule_timezones.py` are
+environmental -- a request that straddles noon cannot be judged either way --
+and will fire forever at some rate. Only the first kind is coverage waiting to
+arrive.
 
 ### `tests/test_async.py` is priority 3, and the reason is not the one given here until now
 

@@ -207,16 +207,50 @@ MSG
 }
 
 crash_worker() {
+  # A "crash" that killed nothing MUST NOT exit 0. This is the only operation
+  # in this script whose entire value is that it happened: a recovery test asks
+  # for a worker to die so it can watch the engine recover, and if nothing dies
+  # the test still runs, still passes, and is measuring the uncrashed control.
+  #
+  # That is not hypothetical. On 2026-09-10 this function printed "no worker
+  # running to kill" and returned 0 against a live, serving, untracked worker.
+  # The mid-backoff retry test then reported the control's call count and
+  # PASSED, agreeing with an engine that does the right thing and with one that
+  # does not. Five tests across two modules call crash(); all five were
+  # degraded and none of them could have said so.
   if running; then
     owned || refuse_foreign
     pid="$(cat "$PIDFILE")"
     kill -9 "$pid" 2>/dev/null || true
     for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "worker $pid survived SIGKILL after 10s; refusing to report a crash" >&2
+      exit 1
+    fi
     echo "worker killed (pid $pid)"
+    rm -f "$PIDFILE"
+  elif healthy; then
+    cat >&2 <<MSG
+refusing to "crash": $API_URL is serving but no pidfile identifies the worker.
+
+  pidfile: $PIDFILE (absent, empty, or naming a dead process)
+  serving: $(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -Fp 2>/dev/null | sed -n 's/^p//p' | head -1 | xargs -I{} ps -ww -p {} -o command= 2>/dev/null || echo "unknown")
+
+The usual cause is that the worker was started under a different
+CLEAT_PORTS_RESULTS_DIR than this invocation resolves, so this script looks for
+the pidfile in the wrong directory and concludes there is nothing to kill.
+"ensure" tolerates that -- it sees a healthy URL and reports "(pid unknown)" --
+and for every operation except this one, tolerating it is correct.
+
+Kill the process above and let "worker.sh ensure" start a tracked one.
+MSG
+    rm -f "$PIDFILE"
+    exit 1
   else
-    echo "no worker running to kill" >&2
+    echo "nothing is serving $API_URL, so there is no worker to crash" >&2
+    rm -f "$PIDFILE"
+    exit 1
   fi
-  rm -f "$PIDFILE"
 }
 
 stop_worker() {

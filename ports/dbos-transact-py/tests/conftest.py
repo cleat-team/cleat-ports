@@ -897,9 +897,56 @@ def worker():
         if done.returncode != 0:
             pytest.fail(f"worker.sh {action} failed:\n{done.stderr[-2000:]}")
 
+    pidfile = pathlib.Path(
+        os.environ["CLEAT_PORTS_RESULTS_DIR"]
+    ) / "worker.pid"
+
+    def worker_pid() -> "int | None":
+        try:
+            return int(pidfile.read_text().strip())
+        except (OSError, ValueError):
+            return None
+
+    def alive(pid: "int | None") -> bool:
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
     class Worker:
         def crash(self) -> None:
+            """SIGKILL the worker, and PROVE it died.
+
+            The proof is not ceremony. `worker.sh crash` used to exit 0 after
+            killing nothing whenever it could not find the pidfile -- which
+            happens whenever the worker was started under a different
+            CLEAT_PORTS_RESULTS_DIR -- and a recovery test whose crash silently
+            did nothing does not fail. It measures the uncrashed control and
+            PASSES, because "the engine recovered correctly" and "there was
+            never anything to recover from" produce the same observations.
+
+            worker.sh now refuses that case, and this is the second lock: it
+            catches a pidfile naming a process that is not the worker, which
+            worker.sh cannot detect and which fails the same silent way.
+            """
+            before = worker_pid()
             run("crash")
+            if before is None:
+                pytest.fail(
+                    "no worker pid was recorded before the crash, so this test "
+                    "cannot show that anything died. A recovery assertion made "
+                    "after an unverified crash is indistinguishable from the "
+                    "same assertion with no crash at all."
+                )
+            if alive(before):
+                pytest.fail(
+                    f"worker {before} is still alive after crash(). The test "
+                    f"below would have measured a run that was never "
+                    f"interrupted and would have passed."
+                )
 
         def stop(self) -> None:
             """Graceful shutdown, as opposed to crash().
