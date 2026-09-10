@@ -431,6 +431,97 @@ MSG
   rm -f "$PIDFILE"
 }
 
+# ensure_app_role gives cleat_app a password and LOGIN, idempotently.
+#
+# migrations/postgres/005_app_role.sql creates the role NOLOGIN and without a
+# password, deliberately -- its own comment says the operator supplies those.
+# So the harness is the operator here.
+#
+# Created BEFORE migrations rather than after, and that ordering is forced: the
+# worker opens its runtime pool before it runs migrations, so a role that
+# cannot log in kills it before 005 would have created one. 005's guard is
+# `IF NOT EXISTS (SELECT 1 FROM pg_roles ...)`, so it skips a role that is
+# already there, and its later `ALTER ROLE cleat_app NOSUPERUSER NOCREATEDB
+# NOCREATEROLE NOBYPASSRLS` does not touch LOGIN. The grants -- including
+# ALTER DEFAULT PRIVILEGES, which is what covers tables added by later
+# migrations -- all come from 005 and are left to it.
+#
+# Attributes match 005's exactly. A role created here with anything more is a
+# role the ports run under and deployments do not, which is the whole defect
+# being repaired.
+ensure_app_role() {
+  [ "$CLEAT_PORTS_DIALECT" = "postgres" ] || return 0
+
+  local pw="${CLEAT_PORTS_APP_PASSWORD:-cleat-app-ports-local}"
+  if ! docker compose exec -T postgres psql -U postgres -d cleat_ports -v ON_ERROR_STOP=1 -q -c "
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cleat_app') THEN
+        CREATE ROLE cleat_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+    END IF;
+END
+\$\$;
+ALTER ROLE cleat_app LOGIN PASSWORD '${pw}';
+" >/dev/null; then
+    echo "could not provision the cleat_app role on $CLEAT_PORTS_DSN" >&2
+    return 1
+  fi
+
+  # TWO CONTROLS, and the second one exists because its absence cost a whole
+  # suite run: 109 of 136 tests failed on `401 invalid or revoked API key`,
+  # which is one worker that could not authenticate wearing the costume of a
+  # hundred defects.
+  #
+  # Control 1 is on the PROPERTY, not the artifact. "The role exists" is not
+  # what matters -- "the role cannot escape a policy" is, and a role that picked
+  # up SUPERUSER or BYPASSRLS somewhere looks identical until a tenant
+  # assertion silently passes.
+  local attrs
+  attrs=$(docker compose exec -T postgres psql -U postgres -d cleat_ports -tAc \
+    "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'cleat_app'" \
+    2>/dev/null | tr -d '\r')
+  case "$attrs" in
+    "false false") : ;;
+    *)
+      echo "cleat_app is not subject to RLS (rolsuper rolbypassrls = '${attrs}')." >&2
+      echo "The worker would start and every tenant policy would be inert." >&2
+      return 1
+      ;;
+  esac
+
+  # Control 2: can the RUNTIME DSN actually connect? Provisioning reports
+  # success for having run the ALTER, which is a different claim -- and the
+  # worker does not turn a failure here into a refusal. Its RLS check has three
+  # arms, and an unreachable database takes the one that WARNS and continues
+  # (cmd/cleat-worker/main.go:647), so the worker comes up, serves 401 to
+  # everything, and the suite reports a hundred unrelated-looking failures.
+  #
+  # Asked over the same route the worker will use -- host and port from the
+  # runtime DSN, not the container's loopback -- because pg_hba can answer those
+  # differently and a control that takes a different path is not a control.
+  # Every credential comes FROM THE RUNTIME DSN, not from $pw. The first
+  # version of this used $pw and passed a deliberately-wrong DSN, because it
+  # was asking "can the password I just set authenticate" -- true, and a
+  # different question from "does the string the worker is about to use work".
+  # Those come apart exactly when they differ, which is the only case worth
+  # checking.
+  local creds host port ruser rpass
+  creds=${CLEAT_PORTS_RUNTIME_DSN#*://}
+  ruser=${creds%%:*}
+  rpass=${creds#*:}; rpass=${rpass%%@*}
+  host=${creds#*@}; host=${host%%[:/]*}
+  port=${creds#*@}; port=${port#*:}; port=${port%%/*}
+  case "$host" in localhost|127.0.0.1) host="host.docker.internal" ;; esac
+  if ! docker compose exec -T -e PGPASSWORD="$rpass" postgres \
+       psql -U "$ruser" -h "$host" -p "${port:-5432}" -d cleat_ports -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "cleat_app cannot authenticate over the DSN the worker will use:" >&2
+    echo "  $CLEAT_PORTS_RUNTIME_DSN" >&2
+    echo "Starting anyway would give a worker that answers 401 to every request," >&2
+    echo "which reads as a broken test suite rather than a broken connection." >&2
+    return 1
+  fi
+}
+
 start() {
   [ -x "$ROOT/bin/cleat-worker" ] || {
     echo "cleat-worker not built -- run: make install-cleat" >&2; exit 2; }
@@ -448,23 +539,31 @@ start() {
   [ -d "$SRC/migrations" ] || {
     echo "no migrations at $SRC/migrations -- run: make install-cleat" >&2; exit 2; }
 
-  # -rls-check=off, deliberately, with the trade-off stated.
+  # The worker runs as cleat_app with the RLS check ON. cleat-ports#198.
   #
-  # cleat refuses to start when its connection is not subject to row-level
-  # security, because for GetWorkflowByID and ListWorkflows the RLS policies
-  # are the ONLY tenant isolation -- neither has an application-level tenant
-  # filter. PostgreSQL never applies RLS to a superuser, and the compose
-  # database connects as `postgres`. The refusal is correct and it is a good
-  # check.
+  # This used to pass -rls-check=off and connect as `postgres`, with the
+  # trade-off written out honestly: PostgreSQL never applies a policy to a
+  # superuser, and for GetWorkflowByID and ListWorkflows the policies are the
+  # ONLY tenant isolation, so the refusal being silenced was the check doing
+  # its job. The justification given was that these ports are single-tenant and
+  # "cannot observe a cross-tenant leak either way".
   #
-  # The production fix is to run as the unprivileged cleat_app role
-  # (migrations/postgres/005_app_role.sql) with --migrate-db kept on the owner.
-  # This harness does not do that yet, and the cost of not doing it is real but
-  # bounded: these ports are single-tenant, so they cannot observe a
-  # cross-tenant leak either way, which also means they cannot catch a
-  # regression in it. A port that ever asserts tenant isolation must switch to
-  # cleat_app first, or it will pass on a connection where isolation is not in
-  # force at all.
+  # THAT REASONING COVERS ONE OF THE TWO FAILURE DIRECTIONS. It is sound for
+  # fail-OPEN -- a leak a single-tenant suite cannot see. It says nothing about
+  # fail-CLOSED, where the policy raises and the call errors, which a
+  # single-tenant port observes perfectly well. cleat#1177 is exactly that:
+  # successorOfRun issued its SELECT outside beginTxWithRLS, so every
+  # continue-as-new chain walk raised `cleat.tenant_id is not set` -- on a
+  # superuser connection, silently not.
+  #
+  # And the asymmetry makes this the wrong dialect to switch off. MySQL and SQL
+  # Server carry `AND tenant_id = ?` and never depended on RLS, so a defect of
+  # this shape is PostgreSQL-only. PostgreSQL is the dialect this harness runs.
+  #
+  # The split is the one docker-compose.cluster.yml ships: --db unprivileged,
+  # --migrate-db on the owner. CLEAT_PORTS_DSN stays the owner because
+  # migrations and -generate-api-key both need privileges cleat_app has not got.
+  ensure_app_role || exit 1
   start_fixture || exit 1
 
   # -driver as well as -db. The worker defaults to postgres and will hand a
@@ -521,10 +620,10 @@ JSON
   fi
 
   ( cd "$SRC" && exec "$ROOT/bin/cleat-worker" \
-      -db "$CLEAT_PORTS_DSN" \
+      -db "$CLEAT_PORTS_RUNTIME_DSN" \
+      -migrate-db "$CLEAT_PORTS_DSN" \
       -driver "$CLEAT_PORTS_DIALECT" \
       -api-addr "127.0.0.1:$API_PORT" \
-      -rls-check off \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
       -plugin-config "$PLUGIN_CONFIG" \
       -enable-admin-api \
