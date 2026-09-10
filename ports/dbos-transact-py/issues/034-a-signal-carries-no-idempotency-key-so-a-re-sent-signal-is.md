@@ -2,6 +2,12 @@
 
 **Class:** Missing capability
 
+**Status:** Open
+
+**Filed upstream as cleat#1121** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
+
 Upstream's `test_send_idempotency_key` sends with an explicit idempotency key
 and asserts a duplicate send is absorbed.
 

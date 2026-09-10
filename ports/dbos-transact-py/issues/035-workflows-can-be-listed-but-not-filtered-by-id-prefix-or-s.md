@@ -2,6 +2,12 @@
 
 **Class:** Missing capability
 
+**Status:** Open
+
+**Filed upstream as cleat#1122** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
+
 Upstream's `test_send_recv_temp_wf` spends most of its assertions on
 `DBOS.list_workflows(...)` with `workflow_id_prefix` and `start_time` filters,
 including that a `start_time` in the future returns nothing.

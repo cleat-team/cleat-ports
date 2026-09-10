@@ -4,6 +4,10 @@
 **Upstream test:** `tests/test_queue.py` — `test_queue_executor_id`
 **Status:** Open
 
+**Filed upstream as cleat#1118** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
+
 **What upstream asserts**
 
 `executor_id` is a durable property of a run. Upstream sets one, runs a

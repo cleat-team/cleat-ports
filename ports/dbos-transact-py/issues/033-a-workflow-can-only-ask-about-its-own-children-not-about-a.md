@@ -2,6 +2,12 @@
 
 **Class:** Missing capability
 
+**Status:** Open
+
+**Filed upstream as cleat#1120** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
+
 Upstream's `test_retrieve_workflow_in_workflow` calls `retrieve_workflow(id)`
 from **inside** a running workflow, for ids the caller did not spawn, and reads
 the status back.

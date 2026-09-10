@@ -5,6 +5,10 @@
 `test_timeout_queue_recovery`, `test_set_workflow_delay`
 **Status:** Open
 
+**Filed upstream as cleat#1117** (2026-09-09, session `cleat-5c2b`). The finding
+had never reached the engine repo; it exists there now as a question, since
+each of these is a plausible design position as well as a plausible gap.
+
 **What upstream asserts**
 
 A timeout is a property of a *run*, set at the call site and inherited by
