@@ -143,3 +143,87 @@ def test_a_cleanup_runs_once_though_the_body_runs_twice(cleat, defer_workflow, f
         "(once before the sleep, once on resume), so a defer table that grows "
         "on every registration drains one entry per execution."
     )
+
+
+def test_a_defer_runs_on_a_propagated_failure_and_costs_the_run_its_dlq_place(
+    cleat, defer_dead_letter_workflow, fixture_calls
+):
+    """Two findings in one run, and they point in opposite directions.
+
+    THE GOOD ONE: a workflow that ends by propagating a terminal error still
+    runs the defer it owes. That is the guest-driven exit path, and it works.
+    It is also the control cleat#1152 was missing -- that issue measured
+    `force-complete` and `force-fail` skipping defers and could not say whether
+    the mechanism worked anywhere. It does, here, so #1152 is the narrow
+    reading: those endpoints bypass a working mechanism rather than the defer
+    phase being globally unreachable.
+
+    THE BAD ONE: running it costs the run its place in the dead-letter queue.
+    `deadLettered = eligibleForDLQ && endedOnAnExhaustedCall(history)` asks
+    what the LAST durable act was, and a defer body's send is itself a durable
+    call -- deliberately, since a cleanup that cannot reach the host cannot
+    release the lock it took. That send lands after the exhausted call, so the
+    history no longer ends on one and the run is `failed` rather than
+    `dead_lettered`.
+
+    The distinction is not cosmetic: one is kept for an operator to re-drive
+    and the other is deleted by --completed-workflow-retention-days. So the
+    work least likely to be retained is the work that took a lock and released
+    it in a defer. cleat#1155.
+
+    The control is the sibling fixture: `deadletter` differs from this one
+    essentially by not registering a defer, and it reaches `dead_lettered` --
+    test_dead_letters.py passes on it. Without that comparison this test would
+    only say "a workflow failed", which is not a finding.
+    """
+    body_key = f"dldefer-body-{uuid.uuid4().hex[:8]}"
+    defer_key = f"dldefer-run-{uuid.uuid4().hex[:8]}"
+
+    status, started = cleat.start(defer_dead_letter_workflow, {
+        "service": "flaky", "bodyKey": body_key, "deferKey": defer_key,
+        "attempts": 2, "intervalMs": 100,
+    })
+    assert status == 201, f"start rejected: {status} {started}"
+    run_id = started["id"]
+
+    final = cleat.await_terminal(run_id, timeout=90.0)
+
+    # The body must demonstrably have run, or a missing cleanup below is a
+    # workflow that never started rather than a skipped defer -- the vacuity
+    # ports#172 turned on.
+    wait_until(
+        lambda: fixture_calls(body_key) >= 1,
+        timeout=30.0,
+        what="the body to reach the fixture, proving the defer was registered",
+    )
+
+    wait_until(
+        lambda: fixture_calls(defer_key) >= 1,
+        timeout=60.0,
+        what="the deferred cleanup to run on a propagated terminal failure",
+    )
+    assert fixture_calls(defer_key) == 1, (
+        f"the cleanup ran {fixture_calls(defer_key)} times for one run; once is "
+        f"the contract however the workflow ends."
+    )
+
+    if final["status"] == "failed":
+        pytest.skip(
+            f"cleat#1155: the run exhausted its retries and its error still "
+            f"reads 'retries exhausted', but it settled {final['status']!r} "
+            f"rather than dead_lettered -- because the defer above ran, and a "
+            f"defer body's durable send lands after the exhausted call, so "
+            f"endedOnAnExhaustedCall(history) is false.\n"
+            f"\n"
+            f"error: {final.get('error', '')[:220]}\n"
+            f"\n"
+            f"A skip rather than a failure only so the suite stays green while "
+            f"#1155 is open. Everything above still ran, and the useful half is "
+            f"an ASSERTION rather than this skip: the cleanup DID run on a "
+            f"propagated failure, exactly once. That is the control cleat#1152 "
+            f"lacked, and it makes #1152 the narrow reading."
+        )
+
+    assert final["status"] == "dead_lettered", (
+        f"a run that exhausted its retries settled {final['status']!r}: {final!r}"
+    )

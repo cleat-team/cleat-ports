@@ -1121,3 +1121,14 @@ def min_version_workflow(cleat: Cleat) -> str:
 def dead_letter_workflow(cleat: Cleat) -> str:
     """Deploy the workflow that exhausts its retries and propagates the error."""
     return _build_and_deploy("deadletter", "dead_letter")
+
+
+@pytest.fixture(scope="session")
+def defer_dead_letter_workflow(cleat: Cleat) -> str:
+    """Deploy the workflow that owes a defer AND reaches a non-normal end.
+
+    Every other defer fixture here ends the ordinary way, so none of them can
+    ask what a defer is worth when the workflow ends some other way -- which is
+    the open question in cleat#1152.
+    """
+    return _build_and_deploy("deferdeadletter", "defer_dead_letter")
