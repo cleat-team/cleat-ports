@@ -469,3 +469,81 @@ saying so is more useful than recording them as unportable, because they are
 neither absent nor covered. Anything routed that way should carry the property
 and the reason the port cannot hold it, or it will be re-derived by the next
 survey that reads the same file.
+
+
+---
+
+## The third filter, and it reverses how to read the second (2026-09-10)
+
+Written after finishing `uber/cadence` (132 cases → 10 issues) and judging
+`durabletask-go`'s `backend_test.go` case by case. Both gates above are sound
+and there is a third, which only became visible once a corpus was judged all the
+way through to *"can this suite assert it?"*.
+
+**The port's reach is the HTTP surface.** An upstream's yield here is bounded by
+how much of its subject that surface exposes — not by how close its subject is
+to cleat's. Measured:
+
+| corpus | engine assertions | reachable from an HTTP port |
+|---|---|---|
+| `test_client.py` (a client library) | 3 of 57 | all of them |
+| `backend_test.go` (a backend contract) | 7–8 of 10 | **4 of 10 are not** |
+
+Four of ten are satisfied by cleat and unassertable from here — two because the
+surface is a store method with no route (`ClaimWorkflow` returning `(nil, nil)`
+*is* upstream's `ErrNoWorkItems`), two because the property is a timing
+distinction smaller than the 500 ms poll interval whose mechanism, `pgNotify`,
+is PostgreSQL-only.
+
+**So the criterion is the intersection — engine-ness AND HTTP-observability —
+and the two pull against each other.**
+
+### What that does to the second filter
+
+§"The second filter" reads *"tests run without external infrastructure"* as a
+proxy for **assertions about an engine rather than about standing one up**. That
+proxy is sound and its sign is the opposite of what it looks like.
+
+`backend_test.go` needs no server precisely because it tests the backend
+**interface**, in process, below any API. That is what made 4 of its 10 cases
+unreachable. Conversely, a suite that **requires a server** is asserting through
+that server's API — which is the surface a port can drive.
+
+**A suite needing external infrastructure is evidence FOR portability here, not
+against it.** The table in that section should be read with its verdict column
+inverted:
+
+| candidate | its CI | second filter reads | **third filter reads** |
+|---|---|---|---|
+| `temporalio/sdk-go` | `integration-test -dev-server` | needs a server | **assertions go through the API** |
+| `temporalio/sdk-python` | `--workflow-environment time-skipping` | middle case | assertions go through the API |
+| `conductor-oss/conductor` | unexamined | unexamined | a server with a REST API |
+
+### Recommendation, and its uncertainty
+
+**`temporalio/sdk-go`'s integration suite**, on three grounds:
+
+1. **It drives a running server over a client API** — engine behaviour, observed
+   the way a port observes it.
+2. **Subject overlap is established, not assumed.** Temporal is Cadence's
+   descendant and this repo has just read 132 Cadence cases, so the areas that
+   produced residue — lifecycle, listing and filtering, cancellation semantics —
+   are known to map onto surfaces cleat exposes, and the areas that produced
+   none (shard range ids, history branch trees, cross-cluster version histories)
+   are known not to.
+3. MIT, and eligible in the table above.
+
+**What is not established:** I have not read the suite. The yield figure is
+unknown and should stay unknown until someone reads a sample — this document's
+own history is what happens when a count is published before it is enumerated.
+The right first step is one file, read case by case, with the four verdicts this
+repo now uses — *gap*, *already covered*, *not portable*, and **satisfied but
+unobservable from here** — and a fifth from the Cadence work when it applies:
+*present and broken*, which is the one no name-level triage can reach.
+
+A caution from the Cadence corpus that transfers directly: **the residue
+concentrated in two files of fourteen**, and file names did not predict which.
+`dbVisibilityPersistenceTest.go` was dismissed from its name by two sessions
+independently and was the second most productive file in the corpus. Triage by
+the API surface a case *body* exercises, and expect the internals files to yield
+nothing however carefully they are read.
