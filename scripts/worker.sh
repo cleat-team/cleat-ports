@@ -92,10 +92,17 @@ running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# Auth stays ON. --require-auth defaults true whenever --api-addr is set, and
-# leaving it on is the point: a port that starts workflows over an unauthenticated
-# API is exercising a configuration nobody deploys. Cheaper to mint one key here
-# than to have every port assert against a path production does not use.
+# Auth stays ON. --require-auth defaults true UNCONDITIONALLY -- not "whenever
+# --api-addr is set", as this comment said until 2026-09-10. The help text reads
+# "(default: true when --api-addr is set)", and that clause describes when auth is
+# APPLIED; it is not a condition on the flag's value, which is true with no API
+# served at all. The distinction is load-bearing further down this file, where
+# the RLS split is set up: see "the worker REFUSES rather than warns" there.
+#
+# Leaving auth on is the point on its own: a port that starts workflows over an
+# unauthenticated API is exercising a configuration nobody deploys. Cheaper to
+# mint one key here than to have every port assert against a path production
+# does not use.
 # Is the cached key known-good, known-bad, or unknowable?
 #
 #   0  it authenticates
@@ -598,6 +605,26 @@ start() {
   # The split is the one docker-compose.cluster.yml ships: --db unprivileged,
   # --migrate-db on the owner. CLEAT_PORTS_DSN stays the owner because
   # migrations and -generate-api-key both need privileges cleat_app has not got.
+  #
+  # ensure_app_role is therefore NOT optional, and that is stronger than it looks:
+  # with -rls-check=off gone, the worker REFUSES rather than warns. The refuse arm
+  # is `-rls-check=require || (auto && --require-auth)`, and --require-auth
+  # defaults true, so `auto` on a superuser connection exits 1. Measured
+  # 2026-09-10 against PostgreSQL 16.15, one DSN, one flag varied:
+  #
+  #   -db only (defaults)    ERROR "refusing to start: ... not subject to
+  #                          row-level security", exit 1
+  #   --require-auth=false   WARN, same text, worker continues
+  #   -rls-check=off         no RLS message at all, worker continues
+  #
+  # So a regression here does not quietly downgrade this harness to the old
+  # superuser configuration -- it stops the worker starting, and every port fails
+  # on connection refused. That is the failure mode to want. It is also not
+  # hypothetical: while #204 was being written, CLEAT_PORTS_RUNTIME_DSN was
+  # composed from CLEAT_PORTS_PG_PORT while CLEAT_PORTS_DSN was overridden
+  # wholesale, so the worker was pointed at a different database than the owner
+  # and 113 tests failed on connection refused. Loud, and diagnosed in minutes --
+  # which is the argument for a configuration that cannot silently fall back.
   ensure_app_role || exit 1
   start_fixture || exit 1
 
