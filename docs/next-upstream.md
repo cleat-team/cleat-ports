@@ -541,6 +541,21 @@ repo now uses — *gap*, *already covered*, *not portable*, and **satisfied but
 unobservable from here** — and a fifth from the Cadence work when it applies:
 *present and broken*, which is the one no name-level triage can reach.
 
+### The first step has been taken, for one cluster (2026-09-11)
+
+[`temporalio-sdk-go-schedules-survey.md`](temporalio-sdk-go-schedules-survey.md)
+reads the 20 `TestSchedule*` cases of `test/integration_test.go` at
+`902937accd7ac67cd8ed16e73b1db2b75cab48a7`. **That is 20 of the file's 256
+methods, and the file is one of twenty-four in `test/` — it is not a verdict on
+the upstream.**
+
+Yield from those 20: one defect filed (cleat#1297, three schedule verbs
+reporting success for a name that does not exist) and two novel portable
+assertions. Notably **zero** in the *satisfied but unobservable* bucket that
+`backend_test.go` filled 4 of 10 with — schedules are administered over HTTP by
+design, so the port's reach is the whole surface. That is evidence for the third
+filter above, from the first corpus picked using it.
+
 A caution from the Cadence corpus that transfers directly: **the residue
 concentrated in two files of fourteen**, and file names did not predict which.
 `dbVisibilityPersistenceTest.go` was dismissed from its name by two sessions
