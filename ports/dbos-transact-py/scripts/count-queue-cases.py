@@ -323,6 +323,13 @@ MAPPING = {
     # direction. Corrected in review before it shipped.
     "test_promise_wakes.py": (None, "cleat-specific: does the promise wake path "
                               "share cleat#953's defect"),
+    # None, and not by default. DBOS has no tenancy model at all, so there is
+    # no upstream file these cases could be credited against -- crediting them
+    # anywhere would inflate that file's Ported figure with work upstream never
+    # asked for. See cleat-ports#210.
+    "test_tenant_isolation.py": (None, "cleat-specific: one tenant cannot read "
+                                 "another's runs, which needs the second tenant "
+                                 "#210 provisions"),
     "test_signals.py": ("test_dbos.py", "`recv` with a timeout, and `send` between workflows"),
     "test_determinism.py": ("test_dbos.py", "stable IDs and randomness under recovery"),
     "test_continue_as_new.py": ("test_dbos.py", "bounded history via self-restart"),
