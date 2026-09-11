@@ -11,6 +11,58 @@
 #
 # `ensure` is idempotent: it starts a worker only if the pidfile's process is
 # gone or unhealthy, so N ports in one run share the first one started.
+#
+# ---------------------------------------------------------------------------
+# THE RULE FOR EVERY VERB IN THIS FILE, and the reason it is stated here rather
+# than on each function.
+#
+#   An operation that changes state must VERIFY THE STATE CHANGED. It must not
+#   report the exit code of the attempt.
+#
+# The only consumer of this script is conftest.py's worker fixture, and it
+# checks exactly one thing:
+#
+#     done = subprocess.run([script, action], ...)
+#     if done.returncode != 0: pytest.fail(...)
+#
+# So a verb that exits 0 having done nothing is INVISIBLE TO EVERY TEST, by
+# construction. There is no second line of defence; this comment is it.
+#
+# This repo has found and fixed that same shape four times, each time locally,
+# each time without a shared rule -- which is why it is written at the top of
+# the file someone edits to add a verb, rather than beside the functions that
+# already learned it:
+#
+#   * `crash` exited 0 after killing nothing (ports#172). Five recovery tests
+#     silently measured the UNCRASHED control and passed.
+#   * `ensure` adopted an untracked worker: the guard was
+#     `[ -f "$PIDFILE" ] && ! owned`, which fails OPEN -- with no pidfile the
+#     `&&` short-circuits and the refusal is skipped.
+#   * `start_fixture`/`stop_fixture` had no ownership check at all, which is
+#     worse than the worker cases: this service holds the per-key call counters
+#     that ~29% of the suite reads AS ITS ASSERTION, so a shared fixture
+#     corrupts the measuring instrument rather than the run (ports#175).
+#   * `mint_key` returned 0 for any non-empty file, so a key the database no
+#     longer knew surfaced later as `401 invalid or revoked API key` -- naming
+#     the one part of the system that was working.
+#
+# The positive example is `second_worker`: it runs `ensure` and then polls
+# /healthz to a deadline before yielding, because "a fixture that yields a URL
+# nothing listens on turns every assertion in the test into a connection error
+# attributed to the code under test."
+#
+# Concretely, per verb:
+#
+#   ensure         healthy AND owned -- refuse adoption when no pidfile exists
+#   crash / stop   identified a target, and the target is gone afterwards
+#   start_fixture  healthy AND ours
+#   stop_fixture   `! fixture_healthy` afterwards
+#   mint_key       the key AUTHENTICATES, not merely that the file is non-empty
+#
+# And when a guard cannot be sure, it must fail CLOSED. `owned()` carries the
+# note: "Caught by CI because the guard fails CLOSED -- had it failed open it
+# would have passed here and protected nothing."
+# ---------------------------------------------------------------------------
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

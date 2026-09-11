@@ -110,6 +110,28 @@ This repo is public and Apache-2.0, and a violation is a real licensing defect,
 not a style problem. Ports are cleat code written against an upstream's
 assertions — the upstream is a specification, not a source tree to copy from.
 
+## Changing the harness
+
+If you add or change a verb in `scripts/worker.sh`, read the block at the top of
+that file first. The rule in one line:
+
+> An operation that changes state must **verify the state changed**, not report
+> the exit code of the attempt.
+
+It is not a style preference. `conftest.py`'s worker fixture is the only caller,
+and it checks nothing but the return code — so a verb that exits 0 having done
+nothing is invisible to every test in the suite, by construction. This repo has
+found that same shape four separate times (ports#172, `ensure`'s adoption
+fall-through, the fixture service's missing ownership check, and `mint_key`
+accepting a revoked key). Each was fixed locally; none of the fixes stopped the
+next one.
+
+The fixture-service case is the one worth understanding even if you never touch
+the script, because it is not "a test broke": that service holds the per-key
+call counters that a large share of the suite reads **as its assertion**, so a
+fixture shared with another session corrupts the measuring instrument rather
+than the run, and the counts still look plausible.
+
 ## Conventions
 
 This repo follows the same DCO sign-off and branch-naming conventions as
