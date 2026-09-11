@@ -59,7 +59,14 @@ deps: ## Start the database for DIALECT (default postgres): make deps DIALECT=my
 	@# the file's NAME did not distinguish two databases; here its EXISTENCE
 	@# stands in for the key still being valid. Tying the key's lifetime to the
 	@# database's is what actually removes the class.
-	@rm -f .port-results/$${COMPOSE_PROJECT_NAME:-default}/api-key.$(DIALECT)
+	@# Both keys, and the tenant id beside them. An API key lives in the
+	@# database it was minted against, and so does the tenant it names -- so a
+	@# recreated database must invalidate all three together. Clearing only the
+	@# first leaves the second tenant's key and id pointing at rows that no
+	@# longer exist, which surfaces as a 401 on the cross-tenant tests alone.
+	@rm -f .port-results/$${COMPOSE_PROJECT_NAME:-default}/api-key.$(DIALECT) \
+	      .port-results/$${COMPOSE_PROJECT_NAME:-default}/api-key-b.$(DIALECT) \
+	      .port-results/$${COMPOSE_PROJECT_NAME:-default}/tenant-b.$(DIALECT)
 	@if [ "$(DIALECT)" = "mssql" ]; then \
 	  echo "==> ensuring the cleat_ports database exists on SQL Server"; \
 	  docker compose exec -T mssql /opt/mssql-tools18/bin/sqlcmd \

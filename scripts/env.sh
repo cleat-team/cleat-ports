@@ -82,9 +82,20 @@ esac
 : "${CLEAT_PORTS_API_PORT:=8099}"
 : "${CLEAT_PORTS_API:=http://127.0.0.1:${CLEAT_PORTS_API_PORT}}"
 
-# The default tenant every port runs as. Single-tenant by design -- see the
-# -rls-check note in worker.sh for what that costs.
+# The default tenant every port runs as, and the name of the SECOND one.
+#
+# "Single-tenant by design" is what this said, and it was the accurate
+# description of a harness that could not observe a cross-tenant leak. Two
+# changes removed that, in the two directions a policy can fail:
+# cleat-ports#198 put the worker on cleat_app with the RLS check on, which
+# makes a fail-CLOSED defect visible; #210 adds a second tenant, without which
+# a fail-OPEN one has no foreign row to return and so cannot be seen at all.
+#
+# The second tenant is PostgreSQL-only and provisioned by worker.sh, not here:
+# its id is whatever --create-tenant minted, so it cannot be a constant the way
+# the default tenant's all-zeros UUID is.
 : "${CLEAT_PORTS_TENANT:=00000000-0000-0000-0000-000000000000}"
+: "${CLEAT_PORTS_TENANT_B_NAME:=cleat-ports-tenant-b}"
 
 # Where this run keeps its pidfiles, logs, minted keys and built WASM.
 #
@@ -107,4 +118,4 @@ esac
 export CLEAT_PORTS_RESULTS_ROOT CLEAT_PORTS_RESULTS_DIR
 export CLEAT_PORTS_DIALECT CLEAT_PORTS_MYSQL_PORT CLEAT_PORTS_MSSQL_PORT
 export CLEAT_PORTS_FIXTURE_PORT CLEAT_PORTS_FIXTURE_URL
-export CLEAT_PORTS_TENANT CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API
+export CLEAT_PORTS_TENANT CLEAT_PORTS_TENANT_B_NAME CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API

@@ -6,6 +6,7 @@ dev compose uses, so a failure here is never explicable by a database version
 difference.
 """
 
+import base64
 import json
 import os
 import pathlib
@@ -174,6 +175,25 @@ class Cleat:
                 return exc.code, json.loads(raw) if raw else {}
             except json.JSONDecodeError:
                 return exc.code, {"body": raw.decode(errors="replace")[:200]}
+
+    def deploy_definition(self, name: str, wasm_path: str):
+        """Deploy a definition AS THIS CLIENT'S TENANT.
+
+        The only tenant-scoped deploy path cleat has. `deploy-workflow` and
+        `cleatctl` both open their store on the hardcoded default tenant, so
+        neither can put a definition anywhere else; this handler resolves the
+        tenant from the API key (handleCreateDefinition -> s.scopedStore).
+
+        It matters here beyond convenience: workflow_defs is keyed
+        (tenant_id, name, version) and workflow_instances references it by
+        (tenant_id, def_name, def_version), so a second tenant cannot start
+        anything until it owns a definition of its own. Sharing tenant A's is
+        not possible rather than merely untidy.
+        """
+        with open(wasm_path, "rb") as fh:
+            blob = base64.b64encode(fh.read()).decode()
+        return self._req("POST", "/api/definitions",
+                         {"name": name, "wasm_bytes_base64": blob})
 
     def start(self, name: str, payload, concurrency_key: str | None = None,
               idempotency_key: str | None = None, priority: int | None = None):
@@ -447,8 +467,46 @@ def cleat(api: str, api_key: str) -> Cleat:
     return Cleat(api, api_key)
 
 
-def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") -> str:
-    """Build one workflow package to WASM and deploy it under a stable name."""
+@pytest.fixture(scope="session")
+def api_key_b() -> str:
+    """The SECOND tenant's API key, or a skip.
+
+    A skip rather than a failure because the second tenant is PostgreSQL-only:
+    auth.CreateTenant refuses MySQL and SQL Server outright ("CreateTenant is
+    not implemented for mysql"), since RETURNING has no MySQL equivalent and
+    SQL Server spells it OUTPUT. worker.sh provisions it on postgres and
+    run-port.sh exports it only if that succeeded.
+
+    This is a genuine environmental precondition, which is the only kind of
+    skip cleat's CLAUDE.md allows -- not a crash or an incompatibility wearing
+    a skip's clothing.
+    """
+    value = os.environ.get("CLEAT_PORTS_API_KEY_B")
+    if not value:
+        pytest.skip(
+            "CLEAT_PORTS_API_KEY_B is unset: the second tenant is provisioned "
+            "on PostgreSQL only (auth.CreateTenant refuses the other dialects)."
+        )
+    return value
+
+
+@pytest.fixture(scope="session")
+def cleat_b(api: str, api_key_b: str) -> Cleat:
+    """A client authenticated as the second tenant."""
+    return Cleat(api, api_key_b)
+
+
+def _build(pkg_name: str, build_flags: str = "") -> str:
+    """Build one workflow package to WASM and return the path to the binary.
+
+    Split out of _build_and_deploy so a caller can deploy the SAME artifact
+    under a different tenant. The deploy half below goes through
+    `deploy-workflow`, which opens its store on the hardcoded default tenant
+    (cmd/deploy-workflow/main.go passes the all-zeros UUID for all three
+    dialects), so it can only ever write tenant A. `POST /api/definitions`
+    resolves the tenant from the API key instead, which is the only
+    tenant-scoped deploy path there is.
+    """
     root = pathlib.Path(__file__).resolve().parents[3]
     pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / pkg_name
     # Per-run, matching scripts/env.sh: several sessions share this checkout
@@ -497,6 +555,15 @@ def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") 
     if _warned:
         print(_warned)
 
+    return built.stdout.strip()
+
+
+def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") -> str:
+    """Build one workflow package to WASM and deploy it under a stable name."""
+    root = pathlib.Path(__file__).resolve().parents[3]
+    pkg = pathlib.Path(__file__).resolve().parents[1] / "workflows" / pkg_name
+    wasm_path = _build(pkg_name, build_flags)
+
     # deploy-workflow, not `cleat deploy`. The CLI's DB-touching subcommands are
     # PostgreSQL-only and refuse a MySQL or SQL Server DSN on purpose --
     # cmd/cleat/db.go's openPostgresDB says so and names this binary as the one
@@ -507,7 +574,7 @@ def _build_and_deploy(pkg_name: str, workflow_name: str, build_flags: str = "") 
         [str(root / "bin" / "deploy-workflow"),
          "-db", os.environ["CLEAT_PORTS_DSN"],
          "-driver", os.environ.get("CLEAT_PORTS_DIALECT", "postgres"),
-         workflow_name, built.stdout.strip()],
+         workflow_name, wasm_path],
         capture_output=True, text=True,
     )
     if deployed.returncode != 0:
