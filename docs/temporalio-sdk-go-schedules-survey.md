@@ -237,5 +237,20 @@ survey found portable:
 3. after cleat#1297, that enable/disable are idempotent on a schedule that
    exists **and** refuse one that does not.
 
-Deliberately not done in this PR: the survey is the work product, and a port
+Deliberately not done in that PR: the survey was its work product, and a port
 directory is a harness entry, a fixture set and a nightly matrix slot.
+
+**Done 2026-09-11: [`ports/temporalio-sdk-go/`](../ports/temporalio-sdk-go/)**
+carries assertions 1 and 2 as four collected cases, all passing on PostgreSQL
+through `make port PORT=temporalio-sdk-go` against cleat `develop@14bec5d`, and
+every assertion in it was sabotaged individually and observed to go red before
+the PR was opened — including one that a `t.Fatalf` above it had masked on the
+first attempt.
+
+Assertion 3 stays blocked on cleat#1297, for the reason given above: written
+today it would pass for the wrong reason.
+
+It needs **no `workflows/` directory**, which was not expected when this survey
+was written. Both assertions are about the schedule ROW, so a cron that cannot
+fire during a run and a `def_name` that need not exist are enough. The first
+case that needs a schedule to *start* something changes that.
