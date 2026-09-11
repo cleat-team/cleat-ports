@@ -193,7 +193,7 @@ evening.
 
 | case | what is missing |
 |---|---|
-| `Test_PurgeCompletedOrchestration` | there is no purge-a-run API. `PurgeWorkflowDef` purges a *definition*; a run's history goes only through the time-based retention sweep, which no caller invokes |
+| `Test_PurgeCompletedOrchestration` | there is no purge-a-**run** API. `PurgeWorkflowDef` purges a *definition*; a run goes only through the time-based retention sweep, which cannot name one. **The clause that used to end this row — "which no caller invokes" — was wrong**: `POST /api/admin/retention/sweep` invokes it, and ports#216 drives that route to port `Test_PurgeOrchestrationState`. The decline stands on *cannot name a run*, which is a different reason from the one recorded. Corrected 2026-09-11 |
 | `Test_PurgeOrchestration_Recursive` ×2 | same, plus recursion |
 | `Test_SuspendResumeOrchestration` | no operator-initiated suspend. cleat suspends on awaits; `cancel` is terminal by design and `resume` is deliberately rejected. Probes a decision cleat has made rather than a gap |
 | `Test_IsReplaying` | no is-replaying surface exists — not a host call, not a field. cleat's analyzer refuses non-deterministic constructs at build time instead of exposing replay state at run time |
@@ -225,7 +225,7 @@ the one this document warned about.
 |---|---|
 | `Test_EmptyOrchestration` | covered |
 | `Test_SingleTimer` | **split — the timestamp half was wrongly declined, see below** |
-| `Test_SingleActivity` | **split — the unicode half is UNCOVERED** |
+| `Test_SingleActivity` | **split, and the unicode half is now COVERED** — `test_results.py::test_a_non_ascii_result_survives_all_three_dialects`, whose docstring cites this row as what found it. Was UNCOVERED when this table was written; corrected 2026-09-11 |
 | `Test_ActivityChain` | covered |
 | `Test_ActivityRetries` | covered — `test_retries.py::test_a_retryable_failure_is_retried_with_backoff` |
 | `Test_ActivityFanOut` | covered — order *and* parallelism, see below |
@@ -262,6 +262,14 @@ real and is about the **fixture key channel** — keys travel in a URL path and
 body and is not affected. Different channel, and the existing note explicitly
 calls itself "a limit of the instrument rather than a judgement that unicode is
 uninteresting".
+
+**That gap is closed.** `test_a_non_ascii_result_survives_all_three_dialects`
+asserts a four-key result — CJK, an accented Latin character, an astral
+code point, and an embedded quote — round-trips through `JSONB` on Postgres,
+`JSON` on MySQL, and `NVARCHAR(MAX)` behind `CHECK (ISJSON(...))` on SQL
+Server. The paragraph above is left standing rather than rewritten, because how
+the gap was found — verifying a *coverage claim* rather than suspecting a bug —
+is the part worth keeping.
 
 **`Test_SingleTimer`'s timestamp half — I declined this and was wrong.**
 
