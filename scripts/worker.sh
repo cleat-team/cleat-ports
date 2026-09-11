@@ -37,6 +37,21 @@ FIXLOG="$CLEAT_PORTS_RESULTS_DIR/fixture.log"
 # starting it on another dialect reproduced the same failure -- which is what
 # makes this worth a suffix rather than a cleanup in stop.
 KEYFILE="$CLEAT_PORTS_RESULTS_DIR/api-key.$CLEAT_PORTS_DIALECT"
+
+# The SECOND tenant's id and key. Suffixed by dialect for the same reason the
+# first one is, and paired with it in `make deps` so both die with the database
+# they were minted against.
+#
+# A second tenant is what makes a LEAK observable. cleat-ports#198 put RLS in
+# force, which closed the fail-CLOSED direction -- a policy that raises, which a
+# single-tenant suite observes perfectly well. Fail-OPEN is the other half, and
+# with one tenant there are no foreign rows for a missing predicate to return:
+# a policy that matches nothing and a policy that is absent give the same empty
+# answer. See cleat-ports#210.
+TENANT_B_FILE="$CLEAT_PORTS_RESULTS_DIR/tenant-b.$CLEAT_PORTS_DIALECT"
+KEYFILE_B="$CLEAT_PORTS_RESULTS_DIR/api-key-b.$CLEAT_PORTS_DIALECT"
+TENANT_B_NAME="${CLEAT_PORTS_TENANT_B_NAME:-cleat-ports-tenant-b}"
+
 LOGFILE="$CLEAT_PORTS_RESULTS_DIR/worker.log"
 API_PORT="$CLEAT_PORTS_API_PORT"
 API_URL="$CLEAT_PORTS_API"
@@ -119,12 +134,18 @@ running() {
 # This is the same shape as the DSN note in cleat's CLAUDE.md: "A DSN that is
 # set but does not connect looks exactly like one that works. Setting the
 # variable is what stops a test skipping. Connecting is a separate question."
-key_state() {
-  [ -s "$KEYFILE" ] || return 1
+#
+# Takes the key file as an argument so the second tenant's key gets THIS
+# validation rather than a second copy of it. The three-way answer is the
+# subtle part, and a duplicate would drift away from it silently -- the same
+# reasoning pg_psql records for having one way to talk to postgres.
+key_state_of() {
+  local keyfile="$1"
+  [ -s "$keyfile" ] || return 1
   healthy || return 2
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 \
-      -H "Authorization: Bearer $(cat "$KEYFILE")" \
+      -H "Authorization: Bearer $(cat "$keyfile")" \
       "$API_URL/api/workflows" 2>/dev/null)" || return 2
   case "$code" in
     200) return 0 ;;
@@ -134,6 +155,8 @@ key_state() {
     *) return 2 ;;
   esac
 }
+
+key_state() { key_state_of "$KEYFILE"; }
 
 mint_key() {
   # `key_state` on a bare line would be fatal: this script runs under `set -e`,
@@ -167,6 +190,96 @@ mint_key() {
     echo "minted an API key that does not authenticate against $API_URL" >&2
     rm -f "$KEYFILE"
     exit 1
+  fi
+}
+
+# ensure_second_tenant provisions the tenant a cross-tenant assertion needs.
+#
+# PostgreSQL only, and it SKIPS rather than assumes on the other two.
+# auth.CreateTenant refuses outright -- "auth: CreateTenant is not implemented
+# for mysql" (auth/tenant_store.go) -- because RETURNING has no MySQL
+# equivalent and SQL Server spells it OUTPUT. That asymmetry points the same
+# way as the RLS one: PostgreSQL is the dialect where the mechanism matters and
+# the dialect this harness runs.
+#
+# Creation goes through `--create-tenant` (cleat#1193), not SQL. The LOOKUP
+# below is SQL because there is no other way to do it: the tenant lifecycle has
+# create and `cleatctl drop-tenant <id>`, and nothing that enumerates tenants or
+# resolves a name to an id. So a run that still has the tenant but has lost the
+# id file -- which `make deps` produces on every invocation, since it clears the
+# key files while the database persists -- could not recover without it.
+ensure_second_tenant() {
+  [ "$CLEAT_PORTS_DIALECT" = "postgres" ] || return 0
+
+  # A toolchain older than cleat#1193 has no --create-tenant, and that is an
+  # environmental precondition rather than a fault: CLEAT_REF is settable, so
+  # somebody bisecting an unrelated regression against an older cleat should
+  # get a skipped cross-tenant test, not a harness that refuses to start and
+  # takes all fifteen other ports down with it.
+  #
+  # Checked SEPARATELY from "creation failed", because collapsing the two is
+  # the skip-that-hides-a-crash this repo keeps finding: a database that is
+  # down would otherwise read as "old toolchain" and skip in silence. Below,
+  # an unsupported flag returns 0 with a message; a failure to create when the
+  # flag EXISTS returns 1.
+  if ! "$ROOT/bin/cleat-worker" -h 2>&1 | grep -q -- "-create-tenant"; then
+    echo "cleat-worker has no --create-tenant (cleat#1193); skipping the second tenant" >&2
+    return 0
+  fi
+
+  # Same three-way answer mint_key relies on, and for the same reason: a
+  # non-empty key file is not a working key. `|| state=$?` keeps set -e from
+  # firing on the ordinary "revoked" answer.
+  local state=0
+  key_state_of "$KEYFILE_B" || state=$?
+  case $state in
+    0) return 0 ;;
+    2) [ -s "$KEYFILE_B" ] && return 0 ;;
+  esac
+
+  local tid
+  tid=$(owner_psql -tAc \
+    "SELECT tenant_id FROM admin.tenants WHERE name = '$TENANT_B_NAME'" \
+    2>/dev/null | tr -d '[:space:]')
+
+  if [ -z "$tid" ]; then
+    tid=$( cd "$SRC" && "$ROOT/bin/cleat-worker" \
+        -db "$CLEAT_PORTS_DSN" \
+        -driver "$CLEAT_PORTS_DIALECT" \
+        -create-tenant "$TENANT_B_NAME" 2>/dev/null ) || true
+    tid=$(printf '%s' "$tid" | sed -n 's/^Tenant ID: *//p' | tr -d '[:space:]')
+  fi
+
+  if [ -z "$tid" ]; then
+    echo "could not create or find the second tenant '$TENANT_B_NAME'" >&2
+    return 1
+  fi
+  printf '%s\n' "$tid" > "$TENANT_B_FILE"
+
+  ( cd "$SRC" && "$ROOT/bin/cleat-worker" \
+      -db "$CLEAT_PORTS_DSN" \
+      -driver "$CLEAT_PORTS_DIALECT" \
+      -generate-api-key "$tid" 2>/dev/null ) \
+    | sed -n 's/^Key: *//p' | tr -d '[:space:]' > "$KEYFILE_B"
+
+  # Minting wrote a file; that is not the same as minting a key that works.
+  # mint_key learned this the expensive way and the note is there, not here.
+  local after=0
+  key_state_of "$KEYFILE_B" || after=$?
+  if [ "$after" -eq 1 ]; then
+    echo "minted a second-tenant key that does not authenticate against $API_URL" >&2
+    rm -f "$KEYFILE_B"
+    return 1
+  fi
+
+  # A CONTROL ON THE PROPERTY THE TENANT EXISTS FOR, not on the artifact.
+  # "Two keys authenticate" is satisfied by two keys for the SAME tenant --
+  # which is exactly what a mint against a stale id file would produce, and it
+  # would leave every cross-tenant assertion below passing vacuously against
+  # one tenant wearing two hats.
+  if [ "$(cat "$TENANT_B_FILE" 2>/dev/null)" = "$CLEAT_PORTS_TENANT" ]; then
+    echo "the second tenant resolved to the first ($CLEAT_PORTS_TENANT)" >&2
+    return 1
   fi
 }
 
@@ -483,21 +596,29 @@ pg_psql() {
   fi
 }
 
-ensure_app_role() {
-  [ "$CLEAT_PORTS_DIALECT" = "postgres" ] || return 0
-
-  # Every credential comes from the DSNs in force, not from defaults restated
-  # here: a second source for the same fact is what put the owner on one port
-  # and the worker on another.
+# owner_psql runs one psql invocation as the OWNER, parsing the credentials out
+# of the DSN in force. Same reasoning as pg_psql one level down: the owner
+# credentials were parsed in exactly one place, and adding a second caller that
+# re-parsed them is how the owner ends up on a different port from the worker --
+# the drift this file already paid for once.
+owner_psql() {
   local ocreds ouser opass ohost oport
   ocreds=${CLEAT_PORTS_DSN#*://}
   ouser=${ocreds%%:*}
   opass=${ocreds#*:}; opass=${opass%%@*}
   ohost=${ocreds#*@}; ohost=${ohost%%[:/]*}
   oport=${ocreds#*@}; oport=${oport#*:}; oport=${oport%%/*}
+  pg_psql "$ouser" "$opass" "$ohost" "${oport:-5432}" "$@"
+}
 
+ensure_app_role() {
+  [ "$CLEAT_PORTS_DIALECT" = "postgres" ] || return 0
+
+  # Every credential comes from the DSNs in force, not from defaults restated
+  # here: a second source for the same fact is what put the owner on one port
+  # and the worker on another. owner_psql is where that parsing lives.
   local pw="${CLEAT_PORTS_APP_PASSWORD:-cleat-app-ports-local}"
-  if ! pg_psql "$ouser" "$opass" "$ohost" "${oport:-5432}" -v ON_ERROR_STOP=1 -q -c "
+  if ! owner_psql -v ON_ERROR_STOP=1 -q -c "
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cleat_app') THEN
@@ -521,7 +642,7 @@ ALTER ROLE cleat_app LOGIN PASSWORD '${pw}';
   # up SUPERUSER or BYPASSRLS somewhere looks identical until a tenant
   # assertion silently passes.
   local attrs
-  attrs=$(pg_psql "$ouser" "$opass" "$ohost" "${oport:-5432}" -tAc \
+  attrs=$(owner_psql -tAc \
     "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'cleat_app'" \
     2>/dev/null | tr -d '\r')
   case "$attrs" in
@@ -728,7 +849,7 @@ JSON
   # nothing written".
   local waited=0 stalled=0 size=0 last_size=-1
   while [ "$waited" -lt 600 ]; do          # 300s absolute ceiling
-    healthy && { mint_key; echo "worker ready at $API_URL (pid $(cat "$PIDFILE"))"; return 0; }
+    healthy && { mint_key; ensure_second_tenant; echo "worker ready at $API_URL (pid $(cat "$PIDFILE"))"; return 0; }
     running || { echo "worker exited during startup; log follows:" >&2
                  tail -20 "$LOGFILE" >&2; rm -f "$PIDFILE"; exit 1; }
     size=$(wc -c <"$LOGFILE" 2>/dev/null | tr -d ' ')
@@ -804,6 +925,7 @@ MSG
       start_fixture || exit 1
       echo "worker already serving $API_URL${PIDFILE:+ (pid $(cat "$PIDFILE" 2>/dev/null || echo unknown))}"
       mint_key
+      ensure_second_tenant
     elif running; then
       echo "worker process is up but not serving; restarting"
       stop_worker

@@ -27,6 +27,18 @@ CLEAT_PORTS_API="$("$ROOT/scripts/worker.sh" url)"
 CLEAT_PORTS_API_KEY="$(cat "$CLEAT_PORTS_RESULTS_DIR/api-key.$CLEAT_PORTS_DIALECT")"
 export CLEAT_PORTS_API CLEAT_PORTS_API_KEY
 
+# The second tenant, when there is one. Exported only if worker.sh actually
+# provisioned it -- it is PostgreSQL-only (auth.CreateTenant refuses the other
+# two dialects), so on MySQL and SQL Server these stay unset and the tests that
+# need them skip. Unset rather than empty on purpose: a test that reads an
+# empty string would authenticate as nobody and get a 401, which names
+# authentication -- the one thing that would not be wrong.
+if [ -s "$CLEAT_PORTS_RESULTS_DIR/api-key-b.$CLEAT_PORTS_DIALECT" ]; then
+  CLEAT_PORTS_API_KEY_B="$(cat "$CLEAT_PORTS_RESULTS_DIR/api-key-b.$CLEAT_PORTS_DIALECT")"
+  CLEAT_PORTS_TENANT_B="$(cat "$CLEAT_PORTS_RESULTS_DIR/tenant-b.$CLEAT_PORTS_DIALECT")"
+  export CLEAT_PORTS_API_KEY_B CLEAT_PORTS_TENANT_B
+fi
+
 echo "--- $PORT: $(cat "$ROOT/bin/.cleat-build" 2>/dev/null | tr '\n' ' ')"
 set +e
 ( make -C "$DIR" setup && make -C "$DIR" test ) 2>&1 | tee "$LOG"
