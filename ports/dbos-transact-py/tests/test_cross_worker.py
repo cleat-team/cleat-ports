@@ -56,13 +56,27 @@ def test_a_held_key_is_refused_from_a_second_worker(
     assert status == 201, f"first start rejected: {status} {first}"
 
     status, body = other.start(holds_key_workflow, {"ms": 100}, concurrency_key=key)
-    assert status == 409, (
-        f"a key held through worker 1 was not refused through worker 2: got "
-        f"{status} {body!r}. Two workers share one `concurrency_keys` table, so "
-        f"a 201 here means the exclusion is process-local -- which would make "
-        f"every single-worker concurrency assertion in this suite true of the "
-        f"process and not of cleat."
+    assert status == 201, (
+        f"a start under a held key should be accepted and deferred since "
+        f"cleat#1186, got {status} {body!r}"
     )
+
+    # The exclusion, asserted where it now lives. Before cleat#1186 a blocked
+    # start was refused and the status code carried the whole assertion; the
+    # start is now accepted and the RUN is what waits, so the observable moved
+    # from the response to the row.
+    #
+    # Two workers share one `concurrency_keys` table, so a run that executes
+    # here means the exclusion is process-local -- which would make every
+    # single-worker concurrency assertion in this suite true of the process and
+    # not of cleat.
+    for _ in range(4):
+        row = other.get(body["id"])[1]
+        assert row.get("status") == "ready", (
+            f"a run started through worker 2 under a key held through worker 1 "
+            f"reached {row.get('status')!r} instead of waiting"
+        )
+        time.sleep(0.25)
 
 
 def test_distinct_keys_do_not_block_across_workers(
