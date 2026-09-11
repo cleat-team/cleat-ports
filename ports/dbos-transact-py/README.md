@@ -398,7 +398,7 @@ derive it, or do not write it.)
 
 | Skipped | Gap |
 |---|---|
-| `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit; a blocked start is rejected rather than deferred |
+| `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit for N>1. The deferral half closed in cleat#1186 -- a blocked start is now accepted and its run waits -- and is asserted by `test_a_second_start_under_the_same_key_waits_then_runs`. `concurrency_keys` is still one row per key, so a limit greater than one has nothing to map onto |
 | `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
 | `test_the_workflow_id_survives_the_transition` | continue-as-new starts an unlinked new run, so the caller cannot follow the chain to its result (cleat#826) |

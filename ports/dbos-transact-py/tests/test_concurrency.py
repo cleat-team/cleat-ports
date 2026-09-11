@@ -146,11 +146,13 @@ def test_distinct_keys_do_not_block_each_other(cleat, holds_key_workflow):
 
 
 @pytest.mark.skip(
-    reason="GAP: cleat has no queueing concurrency limit. DBOS defers a blocked "
-           "task and runs it when the limit frees; cleat rejects the start with "
-           "409 and it never runs. Porting upstream's assertion verbatim would "
-           "require deferral semantics that do not exist. Tracked in the "
-           "conformance gap matrix."
+    reason="GAP, NARROWED by cleat#1186: cleat still has no queueing "
+           "concurrency LIMIT -- concurrency_keys is one row per key, so "
+           "concurrency=N for N>1, worker_concurrency and the rate limiter have "
+           "nothing to map onto. The deferral half is no longer missing: a "
+           "blocked start is now accepted and its run waits, and that is "
+           "asserted by test_a_second_start_under_the_same_key_waits_then_runs "
+           "above. What remains unportable here is a limit greater than one."
 )
 def test_blocked_task_runs_after_the_holder_finishes():
     """Upstream test_one_at_a_time_with_worker_concurrency, second half.
@@ -158,6 +160,14 @@ def test_blocked_task_runs_after_the_holder_finishes():
     Left in place, skipped, rather than omitted: an absent test is
     indistinguishable from an untried one, and this is the assertion a reader
     comparing the two systems will look for first.
+
+    THE SKIP REASON WAS FALSE BEFORE IT WAS EDITED, and that is worth saying.
+    It read "cleat rejects the start with 409 and it never runs", which stopped
+    being true when cleat#1186 landed. A skip carries its justification in
+    prose that nothing executes, so it cannot go red when the world moves under
+    it -- it just keeps asserting a gap that has closed, to every reader who
+    trusts it. Checked against the code rather than the reason: the deferral
+    half now works and is covered above; the counter half does not exist.
     """
 
 
