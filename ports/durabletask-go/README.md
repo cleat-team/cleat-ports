@@ -10,12 +10,60 @@ assertions, re-expressed against cleat. Upstream source is not vendored; see
 |---|---:|---|
 | `orchestrations_test.go` | 2 | `tests/orchestrations_test.go` — an orchestration with no work completes; one whose only step is a durable timer resumes after it |
 | `reuse_id_test.go` | 2 | `tests/orchestrations_test.go` — `Test_SingleActivity_ReuseInstanceIDIgnore`: a deduplicated start keeps the first run's input and its `created_at` |
+| `purge_test.go` | 1 | `tests/backend_test.go` — `Test_PurgeOrchestrationState`: a purged run is gone from the read path, and repeating the purge is a clean no-op |
 
 **These two exist to establish the harness.** They are the simplest assertions
 upstream makes, chosen because a first port has to prove the whole path — build
 a WASM workflow, deploy it, start it, read its terminal row — before anything
 subtle is worth writing. The scoping below is the actual work product of this
 PR; the tests are its proof of life.
+
+### What `purge_test.go` could not port, and why that is written down
+
+Upstream's `Test_PurgeOrchestrationState` makes four assertions. Two port
+directly, one becomes a weaker true statement, and one cannot be expressed from
+outside cleat at all.
+
+| upstream assertion | here |
+|---|---|
+| purge succeeds | the sweep answers 200 |
+| metadata is `ErrInstanceNotFound` afterwards | the run reads 404 |
+| the runtime state holds **zero events** | **not portable — see below** |
+| purging again is `ErrInstanceNotFound` | a second sweep is a clean no-op, not an error |
+
+**The history assertion has nowhere to stand.** `/api/workflows/{id}/events` and
+`/api/instances/{id}/history` both answer 404 while the run plainly exists — the
+DBOS port recorded that before this one was written — and cleat deletes a
+done/failed run's `event_history` at **finalize** time in
+`finalize_workflow_status`, which `--retention-days`' own flag help states. So by
+the time a run is sweepable there is nothing for the sweep to remove and nothing
+outside the engine that could observe it either way.
+
+The first draft asserted a 404 on those paths after the sweep. Its precondition
+caught it: they 404 **before** the sweep too, so the assertion would have held
+with retention switched off entirely. That is recorded in the test rather than
+quietly deleted, because a check that passes for a reason unrelated to its
+subject is the failure this suite exists to find. The engine-side coverage for
+the history half is cleat#1265's test, which reads the tables directly.
+
+**cleat has no per-instance purge.** Upstream takes an instance id; cleat's
+equivalent is a retention sweep over everything past a window
+(`POST /api/admin/retention/sweep`), so the test asserts the same postconditions
+about one run without being able to name it in the request. That makes the sweep
+destructive of other completed runs in the same database — safe here only
+because this port declares no `t.Parallel()` and every test settles its own run
+before the next begins, which was checked rather than assumed.
+
+**Retention has to be switched on for any of this to be reachable.**
+`--completed-workflow-retention-days` defaults to 0, which disables the arm, and
+an `older_than` override deliberately does not enable an arm the configuration
+turned off. `scripts/env.sh` now sets it through
+`CLEAT_PORTS_WORKER_EXTRA_FLAGS`. One day is the smallest value that stays inert
+by accident: the periodic sweep runs on a 24h interval and reaches nothing a test
+creates, so only an explicit `older_than` touches a recent run. If a caller
+overrides that variable the arm goes back to disabled, and the test then fails
+naming the **configuration** rather than the engine — the sweep response reports
+skipped arms separately from zero counts precisely so that distinction survives.
 
 ## The constraint that decides what is portable here
 

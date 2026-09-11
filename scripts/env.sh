@@ -115,6 +115,28 @@ esac
 : "${CLEAT_PORTS_RESULTS_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.port-results}"
 : "${CLEAT_PORTS_RESULTS_DIR:=$CLEAT_PORTS_RESULTS_ROOT/${COMPOSE_PROJECT_NAME:-default}}"
 
+# Retention has to be switched ON for any port to reach it.
+#
+# --completed-workflow-retention-days defaults to 0, which DISABLES the arm that
+# deletes workflow_instances rows, and an older_than override deliberately does
+# not enable an arm the configuration turned off. So without this flag the sweep
+# endpoint answers 200 with the arm listed under "skipped", and retention
+# behaviour is unreachable from the suite no matter how a test is written --
+# which is why it had no coverage in any of the three ports.
+#
+# One day is the smallest value that is still inert by accident. The periodic
+# sweep runs on a 24h interval and only reaches runs completed more than a day
+# ago, so nothing a test creates is ever swept behind its back; the only way to
+# reach a recent run is an explicit older_than on the admin endpoint, which is
+# what the durabletask-go purge test uses.
+#
+# Set as a default rather than appended: a caller who exports their own
+# CLEAT_PORTS_WORKER_EXTRA_FLAGS replaces this entirely and the purge test then
+# fails naming the CONFIGURATION rather than the engine, because the sweep
+# response distinguishes "disabled" from "found nothing".
+: "${CLEAT_PORTS_WORKER_EXTRA_FLAGS:=-completed-workflow-retention-days 1}"
+
+export CLEAT_PORTS_WORKER_EXTRA_FLAGS
 export CLEAT_PORTS_RESULTS_ROOT CLEAT_PORTS_RESULTS_DIR
 export CLEAT_PORTS_DIALECT CLEAT_PORTS_MYSQL_PORT CLEAT_PORTS_MSSQL_PORT
 export CLEAT_PORTS_FIXTURE_PORT CLEAT_PORTS_FIXTURE_URL
