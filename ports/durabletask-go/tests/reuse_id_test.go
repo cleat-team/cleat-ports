@@ -60,29 +60,54 @@ func startWithKey(t *testing.T, name, key string, input map[string]any) response
 		map[string]any{"input": input}, map[string]string{"Idempotency-Key": key})
 }
 
-func TestADeduplicatedStartKeepsTheFirstRunsInput(t *testing.T) {
+// cleat DIVERGES from upstream here, deliberately, and these tests assert
+// cleat's contract rather than upstream's.
+//
+// Upstream's reuse policy is IGNORE: a second start under a live id is silently
+// dropped and the first run stands, whatever payload the second carried. cleat
+// (cleat#1170, merged 2026-09-11) refuses a reused key carrying a DIFFERENT
+// input with 409 `idempotency_key_input_mismatch` instead of replaying it.
+//
+// The decision was taken here on 2026-09-11 (cleat-ports#214): cleat is right.
+// A caller who changed the payload almost certainly did not mean to reuse the
+// token, and answering them with a different request's result is the failure
+// mode cleat#1167 and cleat#1255 were both about -- a retry handed someone
+// else's run, or a run that no longer exists.
+//
+// What upstream is actually protecting survives intact and is still asserted:
+// THE FIRST RUN IS NEVER DISTURBED. Upstream gets that by ignoring the second
+// start; cleat gets it by refusing. Either way a second payload cannot reach a
+// run that already exists, which is the property both suites care about.
+//
+// The same-input case still deduplicates on both sides, and is covered below --
+// without it, nothing here would show that cleat dedupes at all, only that it
+// refuses.
+
+func TestAReusedKeyWithADifferentInputIsRefused(t *testing.T) {
 	wf := reuseWorkflow(t)
 	idem := key(t)
 
 	first := startWithKey(t, wf, idem, map[string]any{"marker": "first", "n": 1})
 	firstID := startedRunID(t, first)
 
-	// A DIFFERENT payload, which is the entire point. Sending the same one --
-	// as the two existing dedup tests do -- makes this assertion unavailable,
-	// because a second run started with identical input is indistinguishable
-	// from the first being returned.
 	second := startWithKey(t, wf, idem, map[string]any{"marker": "second", "n": 2})
-	secondID := startedRunID(t, second)
-
-	if firstID != secondID {
-		t.Fatalf("the second start under the same Idempotency-Key produced a "+
-			"different run (%s vs %s), so cleat did not deduplicate at all and "+
-			"the input assertion below would be meaningless", firstID, secondID)
+	if second.Status != http.StatusConflict {
+		t.Fatalf("a reused Idempotency-Key carrying a DIFFERENT input answered %d, "+
+			"want 409. Upstream would ignore the second start; cleat refuses it "+
+			"(cleat#1170), and silently replaying it instead would hand the caller "+
+			"a run built from somebody else's payload: %s", second.Status, second.Raw)
+	}
+	if detail, _ := second.Body["detail"].(string); detail != "idempotency_key_input_mismatch" {
+		t.Errorf("the refusal reports detail %q, want \"idempotency_key_input_mismatch\". "+
+			"The code is what a client branches on; the prose is not: %s", detail, second.Raw)
 	}
 
+	// The property upstream's IGNORE policy exists to protect, asserted against
+	// cleat's refusal: the first run is untouched. This is the assertion that
+	// carries over unchanged, and it is the reason the test still belongs here.
 	final := awaitTerminal(t, firstID, 60*time.Second)
 	if got, _ := final["status"].(string); got != "done" {
-		t.Fatalf("the run did not finish: %#v", final)
+		t.Fatalf("the first run did not finish: %#v", final)
 	}
 
 	// One constant, used by both the condition and the message. Writing the
@@ -93,11 +118,9 @@ func TestADeduplicatedStartKeepsTheFirstRunsInput(t *testing.T) {
 
 	b := body(t, final)
 	if b["marker"] != wantMarker {
-		t.Errorf("the surviving run carries marker %q, not %q -- the SECOND "+
-			"start's input reached the run, so deduplication returned the first "+
-			"id while overwriting its payload. Every existing dedup test here "+
-			"sends identical input on both starts and cannot see this.",
-			b["marker"], wantMarker)
+		t.Errorf("the surviving run carries marker %q, not %q -- the REFUSED start's "+
+			"input reached the run anyway, so the refusal is not atomic with the "+
+			"payload check", b["marker"], wantMarker)
 	}
 	// n is checked as well as marker because they bind through different types.
 	// A binder that dropped only the integer would leave marker correct.
@@ -106,13 +129,32 @@ func TestADeduplicatedStartKeepsTheFirstRunsInput(t *testing.T) {
 	}
 }
 
-func TestADeduplicatedStartKeepsTheFirstRunsClock(t *testing.T) {
+func TestAReusedKeyWithTheSameInputReplaysTheFirstRun(t *testing.T) {
+	wf := reuseWorkflow(t)
+	idem := key(t)
+	input := map[string]any{"marker": "same", "n": 3}
+
+	firstID := startedRunID(t, startWithKey(t, wf, idem, input))
+	second := startWithKey(t, wf, idem, input)
+	secondID := startedRunID(t, second)
+
+	// This is upstream's dedup contract in the one shape cleat still honours,
+	// and it is why the refusal above is a narrowing rather than a removal.
+	// Without this case the suite would show only that cleat says no, never
+	// that it deduplicates.
+	if secondID != firstID {
+		t.Errorf("a reused key with the SAME input produced a different run "+
+			"(%s vs %s); cleat#1170 narrowed dedup to matching payloads, it did "+
+			"not remove it", secondID, firstID)
+	}
+}
+
+func TestARefusedReuseDoesNotMoveTheFirstRunsClock(t *testing.T) {
 	wf := reuseWorkflow(t)
 	idem := key(t)
 
-	first := startWithKey(t, wf, idem, map[string]any{"marker": "clock-first", "n": 1})
-	firstID := startedRunID(t, first)
-
+	firstID := startedRunID(t, startWithKey(t, wf, idem,
+		map[string]any{"marker": "clock-first", "n": 1}))
 	createdAfterFirst := createdAt(t, firstID)
 
 	// A gap the clock can resolve. Without it a pass could mean "created_at was
@@ -121,19 +163,15 @@ func TestADeduplicatedStartKeepsTheFirstRunsClock(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	second := startWithKey(t, wf, idem, map[string]any{"marker": "clock-second", "n": 2})
-	if secondID := startedRunID(t, second); secondID != firstID {
-		t.Fatalf("the second start produced a different run (%s vs %s); "+
-			"deduplication did not happen and there is no clock to compare",
-			secondID, firstID)
+	if second.Status != http.StatusConflict {
+		t.Fatalf("the second start answered %d, want 409; with no refusal there is "+
+			"nothing to prove about the first run's clock: %s", second.Status, second.Raw)
 	}
 
-	createdAfterSecond := createdAt(t, firstID)
-
-	if createdAfterFirst != createdAfterSecond {
-		t.Errorf("created_at moved from %q to %q when a duplicate start was "+
-			"deduplicated. The surviving run must report the FIRST start's "+
-			"clock; a dedup that rewrites the row and returns its id passes "+
-			"every other assertion in this repo and fails here.",
+	if createdAfterSecond := createdAt(t, firstID); createdAfterFirst != createdAfterSecond {
+		t.Errorf("created_at moved from %q to %q when a duplicate start was REFUSED. "+
+			"A refusal must leave the existing row alone; rewriting it and then "+
+			"returning 409 passes every other assertion in this repo and fails here.",
 			createdAfterFirst, createdAfterSecond)
 	}
 }
