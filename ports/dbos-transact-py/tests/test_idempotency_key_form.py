@@ -68,13 +68,38 @@ def run_id(body):
     return body.get("id") or body.get("workflow_id")
 
 
-def start_twice(cleat, workflow, key_a, key_b):
-    """Two starts with different payloads, returning (status, body) for each."""
+def start_twice(cleat, workflow, key_a, key_b, *, same_payload=False):
+    """Two starts, returning (status, body) for each.
+
+    The payloads DIFFER by default because that makes the default SAFE, not
+    because any caller needs it: a caller who expects deduplication and forgets
+    `same_payload=True` is refused loudly with a 409 rather than quietly
+    deduplicated into a passing test.
+
+    Specifically NOT because the blank-key cases require it. They assert 201,
+    201, two distinct run ids, and no `already_started` -- every one of which
+    holds with identical payloads, since a blank key is absent and an absent key
+    never deduplicates. Crediting them with needing distinct inputs would be
+    describing work the test is not doing. (WS-1 caught that; the first version
+    of this docstring said exactly that.)
+
+    Pass `same_payload=True` for any case that expects DEDUPLICATION. Since
+    cleat#1170 a reused key carrying a different input is refused with
+    `409 idempotency_key_input_mismatch` rather than replayed, so a dedup
+    assertion driven by differing payloads now measures the refusal instead of
+    the dedup -- and fails describing a missing `already_started` rather than
+    the mismatch that caused it.
+
+    A blank key is unaffected either way: no idempotency row is written, so
+    there is no stored digest to compare against.
+    """
     def payload(mark):
         return {"service": "flaky", "key": mark, "attempts": 1, "intervalMs": 50,
                 "failTimes": 0, "failStatus": 0}
-    first = cleat.start(workflow, payload(f"a-{uuid.uuid4().hex[:8]}"), idempotency_key=key_a)
-    second = cleat.start(workflow, payload(f"b-{uuid.uuid4().hex[:8]}"), idempotency_key=key_b)
+    mark_a = f"a-{uuid.uuid4().hex[:8]}"
+    mark_b = mark_a if same_payload else f"b-{uuid.uuid4().hex[:8]}"
+    first = cleat.start(workflow, payload(mark_a), idempotency_key=key_a)
+    second = cleat.start(workflow, payload(mark_b), idempotency_key=key_b)
     return first, second
 
 
@@ -137,8 +162,15 @@ def test_a_real_idempotency_key_still_deduplicates(cleat, retry_workflow):
     is here anyway: a control in another module is one someone can delete
     without seeing what it was holding up.
     """
+    # same_payload: a retry is the SAME call sent twice. Since cleat#1170 a
+    # reused key carrying a different input is refused with
+    # `409 idempotency_key_input_mismatch` rather than replayed, so driving a
+    # dedup assertion with differing payloads measures the refusal instead --
+    # and fails complaining that `already_started` is absent, which names the
+    # symptom and hides the cause.
     idem = f"idem-{uuid.uuid4().hex[:8]}"
-    (status_a, first), (status_b, second) = start_twice(cleat, retry_workflow, idem, idem)
+    (status_a, first), (status_b, second) = start_twice(
+        cleat, retry_workflow, idem, idem, same_payload=True)
 
     assert status_a == 201, f"first start rejected: {status_a} {first}"
     assert status_b == 200, (
@@ -169,9 +201,13 @@ def test_whitespace_around_a_key_is_not_part_of_it(cleat, retry_workflow):
     went away and the blank cases are being carried by something else, which is
     worth knowing before trusting them.
     """
+    # same_payload for the same reason as the dedup control above: this asserts
+    # the two keys ARE the same key, which is a dedup assertion, and cleat#1170
+    # refuses a reused key whose input differs before it ever gets to compare
+    # the keys.
     bare = f"pad-{uuid.uuid4().hex[:8]}"
     (status_a, first), (status_b, second) = start_twice(
-        cleat, retry_workflow, f"  {bare}  ", bare
+        cleat, retry_workflow, f"  {bare}  ", bare, same_payload=True
     )
 
     assert status_a == 201, f"first start rejected: {status_a} {first}"
@@ -204,19 +240,34 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
     sensible retry window. This is about what the response says about the run
     it names.
 
-    Cheaper to fix than it looks: `idempotency_keys` already has an `error_msg`
-    column, written on the failure path, so for the dead-lettered half the
-    information is already in the row the retry looks the key up in. The
-    success half is different -- cleat#1049 dropped `idempotency_keys.result`
-    and the success path deliberately writes no idempotency row -- so a
-    *result* would need storage that was removed on purpose, while a *status*
-    or the stored *error* would not. cleat#1151.
+    FIXED by cleat#1151, and this test now asserts the fix rather than reporting
+    the gap. A retry is told what became of the run: the response carries
+    `status`, and for a run that did not succeed it carries `error` and
+    `error_code` too. The outcome is read from the run row rather than from
+    `idempotency_keys.error_msg` -- two sources for one fact is cleat#1213, and
+    that column is written at start time while the run's error is written at
+    failure time.
+
+    The paragraph above is kept because it is the reasoning that made the fix
+    cheap: the dead-lettered half was always recoverable, while the success half
+    could not replay a *result* (cleat#1049 dropped `idempotency_keys.result`
+    and the success path writes no row at all) -- so a *status* was the
+    answerable question and a result was not.
     """
+    # THE RETRY SENDS THE SAME PAYLOAD, and that is now load-bearing.
+    #
+    # This used to send `"key": "ignored"` on the retry -- a field name encoding
+    # the old premise that a duplicate's payload does not matter. cleat#1170
+    # retired that premise: a reused key carrying a different input is refused
+    # with `409 idempotency_key_input_mismatch` rather than replayed. So the
+    # payload is bound once and reused, which is what a caller retrying a lost
+    # response actually sends.
     ok_key = f"idem-ok-{uuid.uuid4().hex[:8]}"
-    status, started = cleat.start(retry_workflow, {
+    ok_payload = {
         "service": "flaky", "key": f"idem-ok-{uuid.uuid4().hex[:8]}",
         "attempts": 1, "intervalMs": 100, "failTimes": 0, "failStatus": 0,
-    }, idempotency_key=ok_key)
+    }
+    status, started = cleat.start(retry_workflow, ok_payload, idempotency_key=ok_key)
     assert status == 201, f"start rejected: {status} {started}"
     settled = cleat.await_terminal(started["id"], timeout=60.0)
     assert settled["status"] == "done", (
@@ -224,16 +275,14 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
         f"comparison below would be between two failures rather than between a "
         f"success and a failure: {settled!r}"
     )
-    _, after_success = cleat.start(retry_workflow, {
-        "service": "flaky", "key": "ignored", "attempts": 1, "intervalMs": 100,
-        "failTimes": 0, "failStatus": 0,
-    }, idempotency_key=ok_key)
+    _, after_success = cleat.start(retry_workflow, ok_payload, idempotency_key=ok_key)
 
     dl_key = f"idem-dl-{uuid.uuid4().hex[:8]}"
-    status, dl_started = cleat.start(dead_letter_workflow, {
+    dl_payload = {
         "service": "flaky", "key": f"idem-dl-{uuid.uuid4().hex[:8]}",
         "attempts": 2, "intervalMs": 100,
-    }, idempotency_key=dl_key)
+    }
+    status, dl_started = cleat.start(dead_letter_workflow, dl_payload, idempotency_key=dl_key)
     assert status == 201, f"start rejected: {status} {dl_started}"
 
     deadline = time.time() + 90.0
@@ -248,9 +297,7 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
         f"the failing run settled as {dl_status!r}; this test needs a run that "
         f"did NOT succeed for the comparison to mean anything"
     )
-    _, after_failure = cleat.start(dead_letter_workflow, {
-        "service": "flaky", "key": "ignored", "attempts": 2, "intervalMs": 100,
-    }, idempotency_key=dl_key)
+    _, after_failure = cleat.start(dead_letter_workflow, dl_payload, idempotency_key=dl_key)
 
     # Both retries must at least name the run they joined -- that half works.
     for label, resp in (("success", after_success), ("failure", after_failure)):
@@ -261,23 +308,43 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
             f"the {label} retry named no run: {resp!r}"
         )
 
-    same_shape = set(after_success) == set(after_failure)
-    if same_shape:
-        pytest.skip(
-            f"cleat#1151: a retry is told the same thing whichever way the run "
-            f"went. After a run that reached 'done' the response carried "
-            f"{sorted(after_success)}; after one that reached {dl_status!r} it "
-            f"carried {sorted(after_failure)} -- the same fields, so the caller "
-            f"cannot tell a completed run from a dead-lettered one without a "
-            f"second request.\n"
-            f"\n"
-            f"A skip rather than a failure while #1151 is open, and every "
-            f"assertion above still ran: both retries deduplicated, both named "
-            f"a run, and the two runs genuinely reached different terminal "
-            f"states -- which is what makes the identical response a finding "
-            f"rather than a coincidence."
-        )
+    # THE `pytest.skip` THAT STOOD HERE IS GONE, and its absence is the point.
+    #
+    # It fired while cleat#1151 was open, when both retries carried identical
+    # fields and a caller could not tell a completed run from a dead-lettered
+    # one. #1151 landed: the dead-lettered retry now carries `status`, `error`
+    # and `error_code`, so the two responses differ and the branch could never
+    # be taken again.
+    #
+    # A skip that can no longer fire is a stale guard -- it reads as coverage
+    # while asserting nothing, and nobody re-derives a green. Removed rather
+    # than left, and recorded here so the next reader sees a contract that moved
+    # rather than a test that drifted.
 
+    # Asserting the CONTRACT, not merely that the two shapes differ. "The key
+    # sets are unequal" was the right assertion while the question was whether a
+    # caller could distinguish the two at all; now that cleat#1151 has landed,
+    # differing-by-anything would be satisfied by an incidental field and would
+    # not notice the outcome disappearing.
+    assert after_success.get("status") == "done", (
+        f"a retry after a successful run did not report its outcome: "
+        f"{after_success!r}"
+    )
+    assert after_failure.get("status") == dl_status, (
+        f"a retry after a run that reached {dl_status!r} reported "
+        f"{after_failure.get('status')!r}: the retry must name what became of "
+        f"the run, which is the whole of cleat#1151"
+    )
+    assert after_failure.get("error"), (
+        f"a retry after a failed run carried no error: {after_failure!r}. A "
+        f"client that treats already_started as success would report a "
+        f"dead-lettered workflow as succeeded, which is the consequence this "
+        f"test exists to prevent"
+    )
+    assert after_failure.get("error_code"), (
+        f"a retry after a failed run carried no error_code: {after_failure!r}. "
+        f"The code is what a caller branches on; the prose is not"
+    )
     assert set(after_success) != set(after_failure), (
         f"the responses are indistinguishable: {after_success!r} vs "
         f"{after_failure!r}"

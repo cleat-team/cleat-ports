@@ -9,13 +9,45 @@ assertions, re-expressed against cleat. Upstream source is not vendored; see
 | test module | cases | answering |
 |---|---:|---|
 | `orchestrations_test.go` | 2 | `tests/orchestrations_test.go` — an orchestration with no work completes; one whose only step is a durable timer resumes after it |
-| `reuse_id_test.go` | 2 | `tests/orchestrations_test.go` — `Test_SingleActivity_ReuseInstanceIDIgnore`: a deduplicated start keeps the first run's input and its `created_at` |
+| `reuse_id_test.go` | 3 | `tests/orchestrations_test.go` — `Test_SingleActivity_ReuseInstanceIDIgnore`, **asserting cleat's divergence**: a reused key with a different input is refused, with the same input replays, and a refusal leaves the first run's `created_at` alone |
 
 **These two exist to establish the harness.** They are the simplest assertions
 upstream makes, chosen because a first port has to prove the whole path — build
 a WASM workflow, deploy it, start it, read its terminal row — before anything
 subtle is worth writing. The scoping below is the actual work product of this
 PR; the tests are its proof of life.
+
+### `reuse_id_test.go` asserts cleat's contract, not upstream's
+
+Upstream's reuse policy is **IGNORE**: a second start under a live id is
+silently dropped and the first run stands, whatever payload the second carried.
+cleat refuses a reused key carrying a **different** input with
+`409 idempotency_key_input_mismatch` (cleat#1170, merged 2026-09-11).
+
+Decided here in cleat-ports#214: **cleat is right and this port changed.** A
+caller who altered the payload almost certainly did not mean to reuse the token,
+and answering them with a different request's result is the failure mode
+cleat#1167 and cleat#1255 were both about — a retry handed someone else's run,
+or one that no longer exists.
+
+What upstream's policy actually protects survives and is still asserted: **the
+first run is never disturbed.** Upstream achieves that by ignoring the second
+start, cleat by refusing it. Either way a second payload cannot reach a run that
+already exists.
+
+The same-input case still deduplicates on both sides and has its own test —
+without it this file would show only that cleat says no, never that it
+deduplicates at all. cleat#1170 narrowed dedup to matching payloads; it did not
+remove it.
+
+**How this was found is the part worth keeping.** The cleat change merged at
+07:47Z; the nightly had last run at 05:09Z; these tests went red in between and
+nothing would have reported it for roughly thirteen hours. A port that tracks
+`develop` cannot distinguish "cleat changed" from "the port broke", and finds
+out once a day. That is the cost of tracking develop rather than a pin, and it
+is the right trade — a pin would hide exactly the signal this suite exists to
+produce — but it means a cleat merge can put the ports red overnight with nobody
+attributing it.
 
 ## The constraint that decides what is portable here
 
