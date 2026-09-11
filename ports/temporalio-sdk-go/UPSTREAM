@@ -1,0 +1,20 @@
+project:  Temporal Go SDK
+url:      https://github.com/temporalio/sdk-go
+license:  MIT
+commit:   902937accd7ac67cd8ed16e73b1db2b75cab48a7
+derived:  2026-09-11
+
+# Upstream source is not vendored. This port re-expresses upstream's assertions
+# against cleat's own surface. See ../../docs/licensing.md.
+#
+# Licence verified two ways on 2026-09-11, and the reason both were run is next
+# door: ports/samples-go/UPSTREAM records an upstream whose LICENSE is a
+# short-form Apache NOTICE, which GitHub's classifier answers `NOASSERTION` for
+# and this repo's own table once recorded as MIT. Three answers, one file.
+#
+#   gh api repos/temporalio/sdk-go/license --jq .license.spdx_id   -> MIT
+#   LICENSE in the checkout                                         -> the
+#     21-line MIT text, "Copyright (c) 2020 Temporal Technologies, Inc."
+#
+# The two agree. That is only evidence because the file was read; the API
+# answer alone would have looked identical either way.
