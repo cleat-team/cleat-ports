@@ -140,3 +140,108 @@ replay state machine directly, and whether cleat's event history exposes an
 equivalent seam is not something this survey establishes.
 
 Anyone quoting a portable figure from this file should not.
+
+
+---
+
+## The portability judgement, made 2026-09-10
+
+The section above is explicit that it establishes *"this case asserts something
+about an engine"* — a claim about **durabletask-go** — and that whether cleat can
+express each one is a separate judgement it does not make. This is that
+judgement, for all ten of `backend_test.go`.
+
+| case | verdict |
+|---|---|
+| `Test_AbandonOrchestrationWorkItem` | satisfied by construction; **not portable to this suite** — corrected, see below |
+| `Test_AbandonActivityWorkItem` | same |
+| `Test_ScheduleActivityTasks` | satisfied by construction; not portable to this suite |
+| `Test_ScheduleTimerTasks` | same |
+| `Test_NewOrchestrationWorkItem_Single` | already covered |
+| `Test_NewOrchestrationWorkItem_Multiple` | already covered |
+| `Test_CompleteOrchestration` | already covered |
+| `Test_PurgeOrchestrationState` | not portable — scoped above |
+| `Test_UninitializedBackend` | not an engine assertion — scoped above |
+| `Test_GetNonExistingMetadata` | already covered — scoped above |
+
+### The two I first called work, and why they are not
+
+Upstream takes a work item, **abandons** it rather than completing it, and
+asserts it is immediately refetchable. cleat expresses this:
+
+```go
+ReleaseWorkflow(ctx, workflowID, workerID, generation, nextWakeAt)
+```
+
+`store_lifecycle.go:730` clears `assigned_to`, restores `ready` (or
+`terminating` when a terminal outcome is already recorded), sets
+`next_wake_at`, and calls `pgNotify` so a waiting worker wakes. Passing
+`nextWakeAt = now()` **is** abandon-and-refetch, and the fence
+`WHERE id = $1 AND assigned_to = $2 AND generation = $4` is what stops a worker
+releasing work it no longer holds.
+
+Nothing in `cleat-ports` drives it. Searching for `abandon` finds only cleat's
+`ABANDON` **parent-close policy** — a different concept wearing the same word,
+the fourth such homonym this porting effort has hit.
+
+**And that is as far as "cleat expresses it" gets you.** I first recorded these
+as *portable, unported* on exactly that basis, went to write the test, and
+checked feasibility first:
+
+```
+cmd/cleat-worker/config.go:69   -poll  default 500ms   "Poll interval when no work"
+engine/mysql_store.go:70        // MySQL has no LISTEN/NOTIFY; empty = disabled
+engine/mssql_store.go:181       // MSSQL has no LISTEN/NOTIFY; empty = disabled
+```
+
+The **novel** half of the upstream case is *immediately* refetchable. Over HTTP
+the only observable is elapsed time, and the gap between a `pgNotify`-driven
+wake and a poll-driven one is at most **500ms** — inside this suite's noise. Worse,
+`pgNotify` is **PostgreSQL-only**, so the same test would measure a different
+mechanism on each dialect while appearing to measure one property.
+
+The *correctness* half — abandon, refetch, complete — is already asserted by
+every await and sleep test here, since suspending is what calls
+`ReleaseWorkflow` in normal operation.
+
+So `backend_test.go` is **0 portable and unported**, not 2.
+
+**The mistake is the one this survey's own disclaimer names.** *cleat has
+`ReleaseWorkflow`* is a claim about the API; *this harness can observe the
+property* is a different claim needing different evidence. I merged them in one
+sentence two paragraphs after quoting the disclaimer approvingly.
+
+**And reading it produced cleat#1175's third site.** `ReleaseWorkflow` does not
+bump `generation` either, so what stops the releasing worker's own stale writes
+is `SET assigned_to = NULL` — the same unnamed mechanism as in `ContinueAsNew`
+and in the finalize path CLAUDE.md §3.112 records. Three lifecycle paths now
+depend on it, which widens the risk that approved decision 4 (worker
+attribution, most cheaply implemented by *not* discarding `assigned_to`) is
+carrying.
+
+### The two empty-queue cases, and why "satisfied" is not "portable"
+
+Upstream asserts `ErrNoWorkItems` on an empty queue — *a caller can tell
+"nothing to do" from "something went wrong"*. cleat draws the same line with a
+different convention:
+
+```go
+if len(wfs) == 0 {
+    return nil, nil          // claimWorkflowImpl, store_lifecycle.go:26
+}
+```
+
+Nil instance, nil error. The distinction exists and is unambiguous. But
+`ClaimWorkflow` is a **store method with no HTTP surface**, and this suite drives
+cleat over HTTP by design — so the property is satisfied and this port cannot
+assert it. That is a statement about the harness, not about cleat, and it
+belongs in the cleat repo's Go tests if anywhere.
+
+Noted while reading it, because it bears on cleat#1180: the claim path's own
+comment says *"PostgreSQL carries no explicit `tenant_id` predicate here because
+the application role is genuinely subject to RLS. Adding one would not be
+harmless."* That is a **documented, deliberate** reliance on RLS as the sole
+scoping mechanism — which supports #1180's framing rather than contradicting it.
+The concern there is not that the reliance is accidental; it is that it is
+total, and that a configuration removing RLS removes scoping from 89 statements
+at once.
