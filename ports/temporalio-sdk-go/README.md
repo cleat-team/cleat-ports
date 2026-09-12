@@ -15,13 +15,14 @@ the ones that survived.
 |---|---:|---|
 | `schedules_test.go` | 4 | `test/integration_test.go` — `TestScheduleCreateDuplicate`, and the server-side half of `TestScheduleUpdate` |
 | `pause_test.go` | 4 | `test/integration_test.go` — the portable half of `TestSchedulePause` |
+| `duplicate_start_test.go` | 3 | `test/integration_test.go` — the portable half of the `TestWorkflowIDReuse*` cluster |
 
-Eight **collected** cases from three test functions. Several of the subtests are
+Eleven **collected** cases from six test functions. Several of the subtests are
 controls or discriminators rather than the assertion itself (below). `go test
-./tests/ -list '.*'` prints three function names, which is the number that looks
+./tests/ -list '.*'` prints six function names, which is the number that looks
 right and is not the one to quote.
 
-## The two assertions
+## The two schedule assertions
 
 **A create under an existing name is refused, and the first schedule is
 untouched.** Upstream asserts the refusal (`ErrScheduleAlreadyRunning`); cleat
@@ -38,6 +39,33 @@ protected is *the first schedule is never disturbed*, the same property
 cleat *has*, not the one the field name suggests: read plainly, `0` means
 "never catch up", and an operator who sends it is answered
 `201 {"status":"created"}` with no indication that 60 was stored instead.
+
+## The duplicate-start cases
+
+Upstream's `TestWorkflowIDReuse*` cluster walks five reuse and conflict
+policies. cleat has one policy and no knob, so the policy selection does not
+port — what ports is the observation every one of those cases turns on: **the
+second start is answered with what became of the first run.** Upstream reads it
+out of a typed error whose message begins "Workflow execution already
+*finished*"; cleat carries it in the duplicate response's `status`, with `error`
+and `error_code` when the winner failed (cleat#1151).
+
+So the three cases are that distinction in the fields cleat has: a caller
+retrying a start it is not sure landed must be able to tell *poll this* from
+*fetch the result* from *this will never succeed*.
+
+**Why this is not already covered.** cleat core covers all four arms in
+`cmd/cleat-worker/duplicate_start_reports_the_outcome_test.go`. Those are
+handler tests over a mock store, and the mock decides both facts under test: it
+hands the handler a winner it invented (`&engine.WorkflowInstance{Status:
+"failed", Error: "downstream refused", ErrorCode: "E_DOWNSTREAM"}`) and a stub
+decides that the second start was a duplicate at all. That is the right shape
+for a handler test and it cannot say whether a real key still resolves after the
+run it names has reached each of those states.
+
+Two findings came out of running it for real, both in [`ISSUES.md`](ISSUES.md):
+the status vocabulary the response actually uses (cleat#1325) and a retention
+defect that leaves a key pointing at a deleted run (cleat#1324).
 
 ## What this port deliberately skips, and why
 
@@ -69,13 +97,18 @@ function rather than two.
 What still does not port from that case is the operator **note** attached to a
 pause or unpause; cleat's enable/disable carry no note field.
 
-## Why there is no `workflows/` directory
+## The `workflows/` directory
 
-Neither assertion requires a schedule ever to fire, so both use a cron that
-cannot fire during a run (`0 3 1 1 *`) and a `def_name` that need not exist.
-That is a property of these two cases, not a design: the first case that needs
-a schedule to *start* something will need a workflow package and
-`scripts/build-workflow.sh`, the way the other Go ports do.
+One package, `idreuse`, built by `scripts/build-workflow.sh` and deployed as
+`tsg_id_reuse`. It waits, then either succeeds or fails on the caller's
+instruction, and all three duplicate-start cases share it — the arms differ only
+in what the winner is *doing* when the duplicate arrives, and three definitions
+would leave "the answer differed because the workflow differed" open.
+
+**The schedule cases still start nothing.** Neither requires a schedule ever to
+fire, so both use a cron that cannot fire during a run (`0 3 1 1 *`) and a
+`def_name` that need not exist. That is a property of those cases rather than a
+stage this port has outgrown.
 
 This is not an assertion that accepting a schedule pointing at a definition
 which does not exist is good. cleat accepts it; that is a separate question and
