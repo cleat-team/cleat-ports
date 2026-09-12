@@ -10,7 +10,7 @@ regression test, or gets classified as a design difference and stays here — se
 
 **Class:** Bug
 **Upstream test:** `test/integration_test.go::TestScheduleCreate` (the delete half)
-**Status:** Open (cleat-team/cleat#1297, filed 2026-09-11)
+**Status:** Fixed (cleat-team/cleat#1297, closed 2026-09-12 by cleat#1302) — pinned by `tests/pause_test.go`
 
 **What upstream asserts**
 
@@ -43,7 +43,21 @@ Bug, and the operator case is the argument: `disable` is what someone reaches
 for during an incident, and a mistyped name is answered `{"status":"disabled"}`
 while the schedule keeps firing. The cross-tenant case answers the same 200.
 
-It also blocks a correct behaviour from being tested at all — see the
+**Resolved.** cleat#1302 consulted row existence rather than `RowsAffected` — an
+existence check in the same statement path, which avoids the MySQL split below.
+A missing name is now `404 {"detail":"schedule_not_found"}`, and
+`tests/pause_test.go` pins both halves: the repeat stays 200, the missing name
+is 404.
+
+One thing the fix turned up that this entry did not predict: **workflow replay
+idempotence was resting on the defect.** `DeleteCron`'s call site documented its
+dependency on the stores reporting no error for zero rows, because an
+at-least-once replayed delete of an already-deleted schedule must not fail the
+workflow. The resolution was to have the store report what happened and each
+caller decide what it means — 404 for the API, success for a replayed
+`DeleteCron`, non-zero exit for the CLI.
+
+It also blocked a correct behaviour from being tested at all — see the
 `TestSchedulePause` note in README.md. A peer session measured the fix's trap:
 a no-op `UPDATE` on an existing row reports **0** affected on MySQL against
 **1** on PostgreSQL and SQL Server, and cleat sets `clientFoundRows` nowhere,

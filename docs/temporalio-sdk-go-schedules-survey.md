@@ -247,8 +247,17 @@ every assertion in it was sabotaged individually and observed to go red before
 the PR was opened — including one that a `t.Fatalf` above it had masked on the
 first attempt.
 
-Assertion 3 stays blocked on cleat#1297, for the reason given above: written
-today it would pass for the wrong reason.
+**Assertion 3 is now ported too (2026-09-12).** cleat#1297 was fixed by
+cleat#1302 — a missing schedule name answers `404 {"detail":
+"schedule_not_found"}` — so the idempotence half of `TestSchedulePause` can be
+asserted for the right reason. `tests/pause_test.go` ports it as a **pair** in
+one function: the repeated disable must stay 200, and the same verb on a name
+that never existed must be 404. Split into two functions, a later edit could
+delete the discriminator and leave the idempotence assertion looking fine.
+
+The caveat section above stands as written and is what made the deferral
+correct — worth keeping rather than deleting, because the reasoning is what
+generalises, not the outcome.
 
 It needs **no `workflows/` directory**, which was not expected when this survey
 was written. Both assertions are about the schedule ROW, so a cron that cannot

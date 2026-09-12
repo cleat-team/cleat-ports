@@ -193,3 +193,12 @@ func cleanupSchedule(t *testing.T, name string) {
 	t.Helper()
 	t.Cleanup(func() { deleteSchedule(t, name) })
 }
+
+func setScheduleEnabled(t *testing.T, name string, enabled bool) response {
+	t.Helper()
+	verb := "disable"
+	if enabled {
+		verb = "enable"
+	}
+	return call(t, http.MethodPost, "/api/schedules/"+name+"/"+verb, nil)
+}
