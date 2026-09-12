@@ -675,3 +675,95 @@ and one parsing pass — a few minutes, against the several hours a file-by-file
 read would take to reach the same conclusion about `workflow_test.go` alone.
 Doing it before the next cluster rather than after is the only part worth
 remembering.
+
+### Correcting that map: both candidates were wrong, and the reason is the method (2026-09-12)
+
+Same day, a few hours later. The section above recommends
+`external_storage_test.go` and `payload_limits_test.go` as the two files worth
+reading outside `integration_test.go`. **I then read them, and neither is
+portable.** Correcting it here rather than quietly, because a recommendation
+document that is not corrected is worse than no recommendation.
+
+**`external_storage_test.go` — 32 cases, 0 portable.** Seventeen are
+`TestTargetContext_*`, asserting that a storage driver is told *which API call*
+triggered a store. The other fifteen assert on counters inside a Go object the
+test registered itself:
+
+```go
+s.client, _ = s.newDefaultClient(func(o *client.Options) {
+    o.ExternalStorage = &converter.ExternalStorageOptions{
+        Drivers:              []converter.StorageDriver{s.driver},
+        PayloadSizeThreshold: extStoreThreshold,
+    }
+})
+...
+storeCount, retrieveCount := s.driver.getStoreCounts()
+s.Equal(0, storeCount, "small payloads should never be stored")
+```
+
+`converter.StorageDriver` is an **in-process Go interface registered into the
+client**, and the assertions read its call counts. A port driving HTTP can
+neither register a driver nor read those counters. The model is also different
+in kind from cleat's: upstream offloads at the *client* boundary before the
+payload reaches the server; cleat's blobstore is a *server-side* plugin. They
+are not the same feature seen from two angles.
+
+**`payload_limits_test.go` — 18 cases, none portable as written.** The
+distribution, which the name does not give away:
+
+| what the case is about | count |
+|---|---:|
+| a payload produced INSIDE the workflow exceeding an error limit — workflow result, update result, query result, child input, activity input/result, heartbeat | 10 |
+| a payload exceeding a WARNING limit, asserted by reading the client's logger | 7 |
+| a bypass case | 1 |
+
+All three need something cleat does not have: configurable `limit.blobSize.warn`
+/ `.error` dynamic config, outbound payload checks, and an in-process logger the
+test can read (`ts.assertLogContains(logger, payloadErrorMessage)`). The four
+cases whose *names* sound inbound — `TestPayloadSizeWarningSignalInput`,
+`...UpdateInput`, `...QueryInput`, `...SignalWithStartInput` — are in the
+warning group and assert a **log line**, not a refusal.
+
+My earlier sentence, "the *shape* ports even though the limits are configured
+differently", was too generous by the whole file.
+
+### What the mistake teaches, which is worth more than the map
+
+**The client-call histogram says how a case is DRIVEN, not what it is ABOUT.**
+
+That is the flaw, stated precisely. `external_storage_test.go` shows
+`ExecuteWorkflow:25`, which is what made it look like "drives ordinary workflows
+over the client API" — and it does, as *setup*. The subject is a driver
+interface. `payload_limits_test.go` shows `ExecuteWorkflow:17, CancelWorkflow:6`
+for the same reason.
+
+The updates cluster was a good pick because the two coincided: the cases are
+driven by `UpdateWorkflow` and are *about* updates. That coincidence is common
+inside `integration_test.go`, whose cases are mostly end-to-end behaviour, and
+rare in the specialised files, whose cases drive a workflow in order to observe
+something else.
+
+**So the histogram is a first pass and not a verdict.** The cheap second pass,
+which would have caught both of these in a minute each, is to read what the
+ASSERTIONS touch:
+
+```bash
+grep -nE 'ts\.(Equal|True|Error|NoError|Contains)' <file> | head -40
+```
+
+If the assertions name client objects, drivers, loggers or counters the test
+constructed, the case is about an in-process interface and no HTTP port can
+reach it — however ordinary the calls that set it up look. If they name
+workflow results, statuses, or server responses, it is reachable.
+
+**The map's other conclusions stand**, and the negative one is unaffected and
+still the most useful line in it: `workflow_test.go` is the second-largest file
+in the directory and contains zero test cases.
+
+**Revised recommendation: stay inside `integration_test.go`.** Its 210 unread
+methods (257 minus the 47 surveyed) are the corpus. The two clusters read so far
+yielded **10 gaps** — 3 from schedules, 7 from updates — and **three defects**:
+cleat#1297 and cleat#1330 from the cases, and cleat#1331 from the probe the
+cases needed. The within-file bucketing has now been right twice and wrong zero
+times, because inside that file how a case is driven and what it is about are
+usually the same thing.
