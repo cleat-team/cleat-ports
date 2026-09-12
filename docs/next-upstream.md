@@ -843,3 +843,73 @@ call it, **17 assert on run outcomes and only 8 on history contents**. History i
 those cases' *setup*, not their subject, which is the driven-versus-about
 distinction one level down. There is no history cluster to port; the eight real
 ones assert on Temporal event types.
+
+### Where the residue actually is, and the check every estimate so far has been missing (2026-09-12)
+
+The section above names the remaining yield as clustering around "continue-as-new,
+cancellation and signal delivery", from a **sample of eight**. Bucketing all 87
+candidates by subject says two of those three are wrong, and the reason is a
+blind spot that applies to every yield figure in this document.
+
+| subject | candidates | verdict |
+|---|---:|---|
+| *other* (panics, deadlock detection, heartbeats, determinism) | **39** | unexamined — the fallback bucket again |
+| cancellation | **15** | the largest real cluster |
+| child workflows | 10 | overlaps `samples-go`'s child tests |
+| query | 5 | cleat removed query handlers; mostly not portable |
+| signals | 4 | two need search attributes or signal-with-start |
+| side effects | 4 | worth a look |
+| **continue-as-new** | **3** | **yields approximately zero** — see below |
+| memo / search attributes | 3 | cleat has neither |
+| retry, terminate, await, selector | 1 each | |
+
+**Continue-as-new was the clearest of my three named clusters and is the emptiest.**
+Read case by case:
+
+- `TestContinueAsNew` — every iteration runs, result is 999. **Already asserted
+  twice**: `ports/dbos-transact-py/tests/test_continue_as_new.py::test_a_workflow_can_continue_as_new_and_every_iteration_runs`
+  and `ports/samples-go/tests/child_continue_as_new_test.go::TestEveryIterationOfAContinuedChildRuns`.
+- `TestContinueAsNewCarryOver` — Memo, SearchAttributes and RetryPolicy carried
+  across the boundary. cleat has none of the three.
+- `TestContinueAsNewOmitsUnsetSearchAttributes`, `TestContinueAsNewWithRetryPolicy` —
+  same, plus `ts.activities.invoked()`, which is in-process.
+
+### The blind spot: nothing here can see that two ports assert the same property
+
+Ported tests in this repo name their upstream case in a docstring, and a
+mechanical check exploits that. Run against the 87 candidates, **3 are named
+verbatim in an existing port test** — all three from the `TestWorkflowIDReuse*`
+work, ported from the same upstream.
+
+That number is worthless as a duplication estimate, and the reason is structural:
+**each port cites ITS OWN upstream's case names.**
+`test_a_workflow_can_continue_as_new_and_every_iteration_runs` asserts exactly
+what `TestContinueAsNew` asserts and shares not one identifier with it. Four
+ports, four vocabularies, one property.
+
+So every yield figure this document has carried — 33, 18, 2–4, 87, 30–40 — has
+counted *upstream cases not yet ported from that upstream*, never *properties
+not yet asserted anywhere*. The two differ by however much the four upstreams
+overlap, and on the one cluster measured by hand they differ by the whole
+cluster.
+
+**The check that works is by subject and it is manual.** Bucket the candidates,
+then for each bucket read what the existing ports already assert — `grep -rli
+<concept> ports/*/tests/` takes a second and gives the files to read. It is the
+step between "cleat has this surface" and "this case is worth porting", and it
+has been missing from every survey here including both of mine.
+
+### Revised, and stated as a lower bound this time
+
+**Cancellation (15) and the 39-case *other* bucket are where the remaining yield
+is**, and neither has been read. Cancellation in particular needs the
+cross-port check before anyone starts: `grep -rli cancel ports/*/tests/` returns
+**fourteen files** across all four ports, so the overlap there is likely to be
+larger than for continue-as-new, not smaller.
+
+No new number is offered. The honest statement is that **30–40 was an upper
+bound that ignored cross-port overlap**, the one cluster measured against that
+overlap lost all of it, and the next person should read the cancellation bucket
+against `ports/dbos-transact-py/tests/test_cancellation.py`,
+`test_cancel_propagation.py`, `test_bulk_cancel.py` and
+`ports/samples-go/tests/terminal_statuses_test.go` before writing anything.
