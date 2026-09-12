@@ -921,3 +921,35 @@ different upstreams and **a name-based duplication check reports zero overlap
 among them** — the prediction above, confirmed on the first cluster it was
 applied to. The cross-port check cost about ten minutes and turned a cluster of
 fifteen into two cases worth acting on.
+
+### The 39-case "other" bucket, triaged (2026-09-12)
+
+The bucketing above left *other* as the largest unread group. Read by name and
+then cross-checked, it is mostly not portable and contains **one** clean case:
+
+| what they are about | count | verdict |
+|---|---:|---|
+| the `TestWorkflowIDReuse*` / conflict-policy cluster | 6 | already surveyed with the updates cluster |
+| OpenTelemetry / OpenTracing tracing and baggage | 6 | not portable — in-process tracers |
+| activities and local activities | 7 | not portable — cleat has durable calls, not activities |
+| worker internals: pollers, slot suppliers, fatal-error-on-start, task-queue priority | 5 | not portable |
+| SDK internals: context propagators, `RawValue`, arity errors, client run-following | 4 | not portable |
+| non-determinism detection | 3 | covered — `samples-go/tests/nondeterminism_test.go`, `dbos-transact-py/tests/test_determinism.py` |
+| reset, versioning loop, root workflow, cancel details, deadlock detection | 5 | not portable — cleat has no reset, no root-workflow id, no cancel details, and **no workflow deadlock detector** (the only `deadlock` hits in `engine/` are database retry predicates) |
+| update ordering, failure metrics | 2 | overlaps the update port / needs an in-process metrics handler |
+| **`TestPanicFailWorkflow`** | **1** | **gap, ported** |
+
+**The cross-port check is what made the panic case visible, and it is a single
+grep: `grep -rli panic ports/*/tests/` returns NOTHING.** A guest panic is about
+as fundamental as engine behaviour gets — it is what happens when workflow code
+is simply wrong — and across four ports and roughly two hundred cases, no test
+asserted anything about it.
+
+Measured before porting: cleat answers `status: "failed"` and carries the panic's
+own text through to `error`. So it passes upstream's assertion, and
+`ports/temporalio-sdk-go/tests/panic_test.go` pins it.
+
+**Running total for `integration_test.go`:** 47 surveyed in the first two
+clusters, 15 in cancellation, 39 here — **101 of 257**. The remaining clusters
+this table has not reached are child workflows (10), query (5), signals (4) and
+side effects (4), plus the methods the reachability pass excluded.
