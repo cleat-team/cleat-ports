@@ -43,7 +43,7 @@ terminal status**, so every upstream case whose assertion is
 | 6 | `TestCancelChildWorkflowAndParentWorkflow` | covered — `test_a_live_request_cancel_child_observes_the_cancellation` |
 | 7 | `TestAdvancedPostCancellationChildWithDone` | covered — combination of 2 and 5 |
 | 8 | **`TestCancellationWithOptions`** | **gap → filed, not ported** — cleat#1351 |
-| 9 | `TestCantStartChildAfterBeingCancelled` | **gap, portable** — see below |
+| 9 | `TestCantStartChildAfterBeingCancelled` | **design difference, ported** — see below; filed as a gap first and corrected |
 | 10 | `TestCancelChildWorkflowUnusualTransitions` | not portable — needs `QueryWorkflow` to learn the child id; cleat has `SetQueryState` only |
 | 11 | `TestCancelTimerAfterActivity` | not portable — cancels a timer *handle* inside the workflow; cleat has no cancellable timer |
 | 12 | `TestCancelTimerViaDeferAfterWFTFailure` | not portable — needs worker options making a panic fail the task |
@@ -51,7 +51,7 @@ terminal status**, so every upstream case whose assertion is
 | 14 | `TestReturnCancelError` | not portable — activity cancel-error taxonomy |
 | 15 | `TestMultipleUpdateOrderingCancel` | not portable — update ordering with in-workflow cancellation |
 
-**7 covered elsewhere, 1 gap filed, 1 gap portable, 6 not portable.**
+**7 covered elsewhere, 1 gap filed, 1 design difference ported, 6 not portable.**
 
 ### The number this cluster is really about
 
@@ -79,18 +79,38 @@ path can show.
 `TestSchedulePause`: a test written today would assert today's answer and be
 rewritten by the fix.
 
-## The one portable gap: no new work after cancellation
+## The one portable case — and it is a design difference, not a gap
 
-`TestCantStartChildAfterBeingCancelled` asserts that a workflow which observes
-cancellation and then tries to start a child does not get one. cleat has the
-analogous machinery — `stopBeforeNewWork()` gates fresh awaits and updates in a
-segment that has decided to end (`engine/signaller.go`, `engine/updater.go`) —
-and **no port asserts it**: the existing cancellation tests all stop at "the
-workflow observed the request".
+**Correcting this section's first version, which was wrong in the way this
+document warns about twice.** It said `TestCantStartChildAfterBeingCancelled`
+was a gap because "cleat has the analogous machinery in `stopBeforeNewWork()`".
 
-It needs one workflow package: poll cancellation, then attempt a
-`ChildWorkflow` call, and report what came back. That is the natural next port
-from this cluster and the only one in it.
+It does not. That gate is `deferPhase && !inDeferDrain`
+(`engine/durablecalls.go:50`) — the **terminate** defer phase. Termination and
+cancellation are different operations, and nothing in cleat refuses work after a
+cancel. Naming a mechanism that exists is not the same as checking it is on the
+path the case is about; that is the third time in this document that a
+classification was accurate about one axis and silent about another.
+
+Measured instead of reasoned: a workflow that observes cancellation through
+`PollCancellation()`, then calls `ChildWorkflow`, **gets the child**, the child
+id reads back `200`, and the parent ends `done`.
+
+So upstream refuses it and cleat permits it, deliberately, because cancellation
+here is cooperative. **Ported as a design difference** in
+`ports/temporalio-sdk-go/tests/cancellation_test.go`, so that making
+cancellation pre-emptive later shows up as a failing port test rather than as a
+silent change.
+
+**Why it is not a fourth copy of the existing coverage.** dbos's
+`test_cancellation_is_cooperative_and_a_workflow_may_ignore_it` asserts a
+cancelled workflow may keep running. This asserts something strictly stronger:
+it may commit a **new durable side effect** — a child run that outlives the
+decision to stop it. Continuing and spawning are different claims, and only the
+second was untested.
+
+**Revised totals: 7 covered elsewhere, 1 gap filed (cleat#1351), 1 design
+difference ported, 6 not portable. Zero unfixed gaps remain in this cluster.**
 
 ## Method note
 

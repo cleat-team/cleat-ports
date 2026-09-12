@@ -17,10 +17,11 @@ the ones that survived.
 | `pause_test.go` | 4 | `test/integration_test.go` — the portable half of `TestSchedulePause` |
 | `duplicate_start_test.go` | 3 | `test/integration_test.go` — the portable half of the `TestWorkflowIDReuse*` cluster |
 | `updates_test.go` | 9 | `test/integration_test.go` — the seven gaps in the `TestUpdate*` cluster |
+| `cancellation_test.go` | 1 | `test/integration_test.go` — the only case in the `TestCancel*` cluster no other port reaches |
 
-Twenty **collected** cases from thirteen test functions. Several of the
+Twenty-one **collected** cases from fourteen test functions. Several of the
 subtests are controls or discriminators rather than the assertion itself
-(below). `go test ./tests/ -list '.*'` prints thirteen function names, which is
+(below). `go test ./tests/ -list '.*'` prints fourteen function names, which is
 the number that looks right and is not the one to quote — checked by running it,
 because the arithmetic and the listing disagreed once while this file was being
 written.

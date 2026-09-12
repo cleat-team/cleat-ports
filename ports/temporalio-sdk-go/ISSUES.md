@@ -320,3 +320,84 @@ library code.
 **Pinned indirectly.** `workflows/updates` says `500*time.Millisecond` with a
 comment explaining why, so the next person copying from this port copies the
 correct form.
+
+---
+
+## 7. Cancellation is invisible from outside
+
+**Class:** Bug
+**Upstream test:** `test/integration_test.go::TestCancellationWithOptions`
+**Status:** Open (cleat-team/cleat#1351, filed 2026-09-12)
+
+**What upstream asserts**
+
+A workflow is cancelled with a reason, and the reason appears in its history —
+the request and its justification are externally auditable.
+
+**What cleat does**
+
+Stores both and returns neither. `RequestCancellation` writes
+`cancellation_requested` and `cancellation_reason` on all three dialects, and
+the reason reaches the guest through `PollCancellation()`. Measured against six
+read paths — the run, its history, `/terminal`, `/promises`,
+`/api/instances/:id/state` and the listing — none carries either field:
+
+```
+database:  cancellation_requested = t,  cancellation_reason = "INCIDENT-4242 ..."
+every API: status "ready", fifteen fields, no cancellation field among them
+```
+
+**Assessment**
+
+Bug, and worse here than the same shape would be elsewhere, for a reason the
+sibling ports supply: cleat's cancellation is **cooperative** —
+`ports/dbos-transact-py/tests/test_cancellation.py::test_cancellation_is_cooperative_and_a_workflow_may_ignore_it`.
+So "cancelled but still running" is a normal and possibly permanent state, and
+it is the one state no read path can show. An operator cannot distinguish "my
+request did not land" from "it landed and the workflow is ignoring it".
+
+**Half of it is pinned rather than filed.** `tests/cancellation_test.go` asserts
+that the reason **does** reach the guest, which keeps the issue's scope honest:
+the reason is not lost, it is unreadable from outside. The unreadable half is
+not pinned, for the reason `TestSchedulePause` was deferred — a test asserting
+today's answer would be rewritten by the fix.
+
+---
+
+## 8. A cancelled workflow may still start a child
+
+**Class:** Design difference
+**Upstream test:** `test/integration_test.go::TestCantStartChildAfterBeingCancelled`
+**Status:** Open — pinned by `tests/cancellation_test.go`, not filed
+
+**What upstream asserts**
+
+A cancelled workflow that tries to start a child does not get one, and the run
+ends `CanceledError`. Temporal enforces cancellation server-side.
+
+**What cleat does**
+
+Starts the child. Measured: the workflow observes cancellation through
+`PollCancellation()`, calls `ChildWorkflow`, receives a run id that reads back
+`200`, and the parent ends **`done`**.
+
+**Assessment**
+
+Deliberate difference, and pinned rather than filed because cleat's cancellation
+is cooperative by design: the guest is told and decides. Nothing in the engine
+refuses work after a cancel.
+
+**Filed as a gap first, and the correction is the part worth keeping.**
+`../../docs/temporalio-sdk-go-cancellation-survey.md` claimed cleat had "the
+analogous machinery" in `stopBeforeNewWork()`. It does not — that gate is
+`deferPhase && !inDeferDrain` (`engine/durablecalls.go:50`), which is the
+**terminate** defer phase, and termination is a different operation from
+cancellation. Naming a mechanism that exists is not the same as checking it is
+on the path the case is about.
+
+**Why this is not a fourth copy of an existing test.** The dbos port already
+asserts a workflow may ignore cancellation and still report `done` — that is
+"it keeps running". This asserts something strictly stronger and untested
+anywhere: a cancelled workflow may commit a **new durable side effect**, a child
+run that outlives the decision to stop it. Pinned so that making cancellation
+pre-emptive shows up as a failing port test rather than as a silent change.
