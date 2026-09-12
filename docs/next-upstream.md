@@ -913,3 +913,11 @@ overlap lost all of it, and the next person should read the cancellation bucket
 against `ports/dbos-transact-py/tests/test_cancellation.py`,
 `test_cancel_propagation.py`, `test_bulk_cancel.py` and
 `ports/samples-go/tests/terminal_statuses_test.go` before writing anything.
+
+**Done, in [`temporalio-sdk-go-cancellation-survey.md`](temporalio-sdk-go-cancellation-survey.md).**
+Fifteen cases: **7 already asserted elsewhere, 1 gap filed (cleat#1351), 1 gap
+portable, 6 not portable.** The seven were covered by two ports from two
+different upstreams and **a name-based duplication check reports zero overlap
+among them** — the prediction above, confirmed on the first cluster it was
+applied to. The cross-port check cost about ten minutes and turned a cluster of
+fifteen into two cases worth acting on.
