@@ -767,3 +767,79 @@ cleat#1297 and cleat#1330 from the cases, and cleat#1331 from the probe the
 cases needed. The within-file bucketing has now been right twice and wrong zero
 times, because inside that file how a case is driven and what it is about are
 usually the same thing.
+
+### What is actually left in `integration_test.go`, with the sampling error stated (2026-09-12)
+
+The section above ends "stay inside `integration_test.go`; 210 unread methods".
+That is a count of what has not been read, not of what is worth reading. This
+narrows it, using the assertion-level check the correction above proposed — and
+the honest headline is that **the check is better than call-counting and still
+needs a sample.**
+
+Two passes over the 209 unread methods:
+
+| pass | what it matched | "reachable" |
+|---|---|---|
+| assertion arguments only | text inside `ts.Equal(...)` etc. | 144 |
+| **whole body** | any marker anywhere in the case | **87** |
+
+The first pass is wrong by 57 cases and wrong in the flattering direction, for a
+reason worth naming: a case that **constructs a worker** (`worker.New(...)` with
+options, `ts.worker.Stop()`, `RegisterWorkflowWithOptions`) asserts on perfectly
+ordinary run outcomes, so its assertions look portable while its *setup* is
+unreachable. That is 52 of the 57. Reading assertions is necessary and not
+sufficient; the unreachable machinery can be anywhere in the body.
+
+Whole-body result:
+
+| bucket | count |
+|---|---:|
+| reachable from an HTTP port | **87** |
+| constructs or steers a worker | 52 |
+| in-process activity log / tracer / metrics assertions | 35 |
+| local activities | 14 |
+| history event internals | 8 |
+| raw gRPC (`WorkflowService()`, `OperatorService()`) | 6 |
+| nexus | 5 |
+| interceptors | 2 |
+
+### And 87 is still an over-count — here is the sample that says so
+
+"Reachable" is the **fallback** bucket: a case lands there by matching no
+exclusion marker, which is exactly the shape that accumulates false positives.
+A random sample of eight, read individually:
+
+| case | verdict |
+|---|---|
+| `TestContinueAsNewCarryOver` | portable |
+| `TestCancellationWithOptions` | portable |
+| `TestWorkflowIDReuseIgnoreDuplicateWhileRunning` | portable (and partly covered by `duplicate_start_test.go`) |
+| `TestSelectorNoBlock` | maybe — `workflow.Selector` has a cleat analogue in `cleat/selector.go` |
+| `TestStackTraceQuery` | no — `QueryTypeStackTrace`, and cleat removed query handlers |
+| `TestContextPropagator` | no — SDK context propagation |
+| `TestSlotSuppliersWithSessionAndOneConcurrentMax` | no — worker tuner and sessions |
+| `TestSignalWithStartWorkflowTypedSearchAttributes` | no — cleat has neither half |
+
+Three clearly portable, one uncertain, four not. **So the defensible estimate is
+30–40 portable cases remaining, not 87** — and that figure is from a sample of
+eight, which is enough to say the fallback bucket is inflated and not enough to
+put a decimal on it.
+
+Stating it this way rather than quoting 87 because this document's own history
+is what happens when a count is published before it is enumerated, and because
+the last two numbers it carried were both corrected within hours.
+
+### Where the remaining yield is concentrated
+
+From the sample and the bucket names, the portable residue clusters around
+**continue-as-new**, **cancellation semantics** and **signal delivery** — cleat
+surfaces that exist, have HTTP routes, and whose upstream cases assert on run
+outcomes rather than on worker internals. That matches where the first two
+surveys found their gaps.
+
+**Not** worth a cluster of its own: `GetWorkflowHistory`. It looks like one — 34
+call sites, the fourth-largest surface in the file — and of the 25 cases that
+call it, **17 assert on run outcomes and only 8 on history contents**. History is
+those cases' *setup*, not their subject, which is the driven-versus-about
+distinction one level down. There is no history cluster to port; the eight real
+ones assert on Temporal event types.
