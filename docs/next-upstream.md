@@ -953,3 +953,233 @@ own text through to `error`. So it passes upstream's assertion, and
 clusters, 15 in cancellation, 39 here — **101 of 257**. The remaining clusters
 this table has not reached are child workflows (10), query (5), signals (4) and
 side effects (4), plus the methods the reachability pass excluded.
+
+### The last buckets, the enumeration closes, and the corpus is 256 not 257 (2026-09-12)
+
+`child workflows (10)`, `query (5)`, `signals (4)`, `side effects (4)` and the
+table's final row — `retry, terminate, await, selector (1 each)` — were the
+buckets still marked unread. All are now read, with the cross-port check applied
+first as the cancellation survey established. **The four named clusters yield
+nothing. The residual row, which looked like the least promising of the five,
+yields two.**
+
+**First, a correction to this document's own arithmetic.** Every section above
+says the corpus is **257**. It is **256**:
+
+```
+$ grep -cE '^func \(ts \*IntegrationTestSuite\) Test' test/integration_test.go
+256
+$ grep -cE '^func (\([^)]*\) )?Test' test/integration_test.go
+257
+```
+
+The 257th is `func TestIntegrationSuite(t *testing.T)` at line 98 — the go-test
+entry point that runs the suite, not a case in it. Off by one, in the direction
+that flatters the corpus, and it has been carried through four sections. It
+changes no verdict here; it is recorded because this document's history is
+largely a history of published counts being wrong, and the fix is to state how
+the count was taken.
+
+**A denominator note, because the bucket counts are not the population.** The
+counts (10 / 5 / 4 / 4) were candidates — already filtered for "cleat has this
+surface". I read the wider population: every case whose *name* contains `Child`,
+`Query`, `Signal` or `SideEffect`, which is 20 / 9 / 8 / 8 = **45**. Reading the
+superset costs nothing and means "nothing portable" does not rest on a filter I
+did not re-derive. That population is itself lossy — it is a name match, so a
+child-workflow case not spelled `Child` is invisible to it. The verdicts are
+sound for what they cover and are not a proof that the file holds nothing else
+on these subjects.
+
+#### child workflows — 20 cases, 0 portable
+
+| upstream cases | verdict | where |
+|---|---|---|
+| `TestChildWFWithParentClosePolicyAbandon`, `…Terminate` | already asserted | `samples-go/tests/child_workflow_test.go` — abandon, terminate and request-cancel, plus `TestAMisCasedPolicyIsRefused` and `TestTheThreeLegalPoliciesAreStillAccepted`; `durabletask-go/workflows/terminateroot` exercises terminate from a third upstream |
+| `TestCancelChildWorkflow`, `…AndParentWorkflow`, `…UnusualTransitions` | already asserted | `dbos-transact-py/tests/test_cancel_propagation.py` — all three of its cases |
+| `TestCantStartChildAfterBeingCancelled` | **ported, and cleat answers the other way** | `temporalio-sdk-go/tests/cancellation_test.go::TestACancelledWorkflowMayStillStartAChild` (ports#233) |
+| `TestContinueAsNewWithWithChildWF` | already asserted | `samples-go/tests/child_continue_as_new_test.go` — three cases |
+| `TestChildWFRetryOnError`, `…OnTimeout`, `TestChildWFWithRetryPolicy_ShortLived`, `…_LongRunning`, `…_LongRunningWithCustomRetry` | **not portable** | `cleat.ChildWorkflowOptions` is `{Version, ParentClosePolicy, Priority}` (`cleat/runtime_children.go:14-26`). There is no per-child retry policy; `RetryPolicy` exists only on durable-call options |
+| `TestChildWFWithMemoAndSearchAttributes`, `TestChildWorkflowTypedSearchAttributes` | not portable | cleat has neither memo nor search attributes |
+| `TestResetWorkflowExecutionWithChildren` | not portable | cleat has no reset |
+| `TestCancelChildAndExecuteActivityRace`, `TestAdvancedPostCancellationChildWithDone`, `TestChildWorkflowDuplicateGetExecutionStuck_Regression`, `TestChildWorkflowDuplicatePanic_Regression` | not portable | SDK-internal: activity races and dispatcher regressions, asserted through in-process worker state |
+| `TestWorkflowIDReuseRejectDuplicateNoChildWorkflow` | already ported | the `TestWorkflowIDReuse*` cluster, ports#225 |
+
+The bucket table predicted this one — "overlaps `samples-go`'s child tests" —
+and it is the strongest case yet for the cross-port check. Counting the files
+that already carry child-workflow cases — `samples-go`'s `child_workflow_test.go`
+(6) and `child_continue_as_new_test.go` (3), `dbos-transact-py`'s
+`test_children.py` (5), `test_cancel_propagation.py` (3) and `test_detached.py`
+(3), `temporalio-sdk-go`'s `cancellation_test.go` (1), and `durabletask-go`'s
+`suborchestration_test.go` and `terminate_recursive_test.go` (1 each) — **23 test
+functions across all four ports**, from four different upstreams, already assert
+the child-workflow properties that are portable at all. A name-based duplication
+check sees none of that overlap, because not one of those 23 shares an
+identifier with the 20 upstream cases above.
+
+#### query — 9 cases, 0 portable
+
+`RegisterQueryHandler` was removed from cleat on 2026-08-09 and the removal is
+deliberate and documented — `cleat/runtime.go:365`, `engine/imports.go:119`, and
+the reasoning under "Why there is no `RegisterQueryHandler`" in
+`docs/determinism.md` (§154 on develop; I checked the heading is still there
+before citing it). The import is retained for ABI compatibility and records a
+name that nothing reads.
+
+So every case in the cluster — `TestConsistentQuery`, `TestMutatingQuery`,
+`TestStackTraceQuery`, `TestQueryWorkflowRejectNotOpen`, `…NotCompleteCleanly`,
+`TestQueryOnlyCoroutineUsage`, `TestLargeQueryResultError`,
+`TestLegacyQueryTaskFailureReportedToCaller`, `TestRawValueQueryMetadata` — is
+testing a surface cleat does not have. Not a gap; a design difference already
+settled.
+
+What cleat *does* have under a similar name is `query_state`, a key-value map
+read back over HTTP, and it is covered twice over, by two ports that divide the
+work explicitly: `dbos-transact-py/tests/test_query_state.py` asserts the push
+model works, and `samples-go/tests/query_test.go` picks up with the cases where
+the two models disagree — "cleat's query state is PUBLISHED (push); Temporal's is
+COMPUTED by a registered handler when the query arrives (pull)", per its own
+header. The name collision is the whole reason this bucket looked bigger than it
+is.
+
+#### signals — 8 cases, 0 portable
+
+| upstream cases | verdict |
+|---|---|
+| `TestSignalWithStartIdConflictPolicy`, `TestSignalWithStartWorkflowTypedSearchAttributes`, `TestStartDelaySignalWithStart`, `TestInterceptorStartWithSignal` | **not portable** — signal-with-start does not exist in cleat. `grep -rniE 'signalwithstart\|signal_with_start'` over the whole tree returns nothing; a signal addresses an existing run |
+| `TestSignalWorkflow` | already asserted — `dbos-transact-py/tests/test_signals.py`, and `samples-go` asserts it three more ways: `signal_counter_test.go`, `await_signals_test.go`, `quorum_test.go` |
+| `TestSignalWorkflowWithInterceptorError`, `TestSignalWorkflowWithStubbornGrpcError`, `TestTemporalPrefixSignal` | not portable — SDK interceptors, gRPC transport faults, and a reserved `__temporal_` name prefix cleat does not have |
+
+The two "needs search attributes or signal-with-start" the bucket predicted turn
+out to be four.
+
+#### side effects — 8 cases, 0 portable, and the reason is the interesting part
+
+This is the one the bucket table marked "worth a look", and it is worth recording
+why it is not a gap.
+
+**cleat has `SideEffect`, and it does not mean what Temporal's means.** Temporal
+caches the first computed value and never re-runs the closure. cleat's
+*validates*: on replay it recomputes and fails the run if the value differs. That
+is asserted end-to-end already, from a different upstream, and the port says so
+in its own words:
+
+- `dbos-transact-py/workflows/determinism/main.go:14` — "SideEffect does not
+  cache, it VALIDATES: on replay it recomputes the closure"
+- `dbos-transact-py/tests/test_replay.py` — a run that captures `h.Now()` in a
+  `SideEffect`, suspends and completes, with the divergence error quoted in the
+  docstring
+
+So `TestMutatingSideEffect` and `TestWorkflowWithParallelSideEffects` assert the
+caching semantic, which cleat deliberately does not have, and the opposite
+semantic is already under test. Porting them would either fail by design or have
+to be inverted into a test that already exists.
+
+`TestMutableSideEffects`, `TestMutatingMutableSideEffect`,
+`TestWorkflowWithParallelMutableSideEffects`, `TestMutableSideEffectSummary`:
+**cleat has no `MutableSideEffect` at all** — the identifier does not appear
+anywhere in the repository. `TestSideEffectSummary` and `…UsingReplay` assert on
+Temporal's event-history summary fields and the SDK's replayer.
+
+#### retry / terminate / await / selector — 5 cases, and **2 are portable**
+
+The bucket table's last row, one case each, listed without comment. It is the
+only one of the five that yields anything, which is worth noting on its own: the
+buckets that got a predictive note attached ("worth a look", "overlaps
+samples-go's child tests") were all wrong in the same direction, and the row
+nobody annotated was the one with cases in it.
+
+**retry and terminate are empty rows, and that is checkable.** All 15 cases whose
+name contains `Retry` belong to other buckets — 3 local-activity, 6 activity,
+1 continue-as-new (`TestContinueAsNewWithRetryPolicy`), 5 child-workflow (in the
+table above). The single `Terminate` case is
+`TestChildWFWithParentClosePolicyTerminate`, also in the table above and already
+asserted from two upstreams. Nothing is left in either.
+
+That leaves four `Await*` cases and one `Selector` case:
+
+| case | verdict |
+|---|---|
+| `TestAwaitWithTimeoutCancelTimerOnCondition` | not portable — and **skipped upstream**: its first statement is `ts.T().Skip("SDKFlagCancelAwaitTimerOnCondition is disabled by default")`. It also asserts on `TimerStarted`/`TimerCanceled` history events |
+| `TestAwaitWithTimeoutTimerNotCancelledByDefault` | not portable — asserts on history timer events and on SDK flags in the history |
+| `TestAwaitWithOptionsTimeout` | not portable — finds a timer by its `UserMetadata` Summary; cleat has no timer metadata |
+| **`TestAwaitWithTimeoutConditionAlreadyTrue`** | **candidate gap** — see below |
+| **`TestSelectorNoBlock`** | **candidate gap** — see below |
+
+**`TestSelectorNoBlock` is the stronger of the two, and it was found the same way
+the panic case was.** cleat has a selector: `cleat/selector.go` defines
+`NewSelector`, `AddSignal`, `AddChildWorkflow`, `AddTimer`, `Select` and `Err`,
+with futures for all three sources. The upstream case is as portable as a case
+gets — execute a workflow that selects over a signal, assert the result is
+`"HELLO"`, no history reads, no worker steering.
+
+And **`grep -rli selector ports/*/tests/` returns nothing.** Across four ports and
+roughly two hundred cases, not one test mentions a selector. A guest API with
+three future types, a timer path and an error path, and no port asserts any of
+it. That is the same shape as the panic finding in ports#234, found by the same
+one-second command, and it is the second time the cross-port grep has returned
+empty on a surface that plainly exists.
+
+**`TestAwaitWithTimeoutConditionAlreadyTrue` needs its cleat analogue named
+carefully.** cleat has no `workflow.Await`; the nearest surfaces are
+`Promise.Await(timeout)` / `AwaitPromise` (`cleat/runtime_promises.go:27,63`) and
+the `AwaitCondition` path exercised in cleat's own unit tests. The property the
+upstream case asserts is ordering: *the condition is already true when Await is
+called, so it returns without waiting.* `dbos-transact-py/tests/test_promises.py`
+has three cases — resolved-by-another-workflow, rejected, and unsettled-times-out
+— and `test_promise_wakes.py` two more, and **none of them resolves the promise
+before the waiter calls Await.** Every one of them has the waiter arrive first.
+So the already-settled ordering is untested, which is exactly the branch where an
+implementation is most likely to install a timer it does not need.
+
+I am recording this one as a *candidate* rather than a gap because it needs a
+decision the survey cannot make: whether `Promise.Await` on an already-resolved
+promise is the same property upstream is asserting, or a different one wearing a
+similar name. That is the `query_state` trap from the cluster above, and the
+honest thing is to flag the resemblance rather than assume it.
+
+#### What this closes
+
+`test/integration_test.go` is read by subject end to end for everything the
+whole-body reachability pass called reachable: **87 cases, nine buckets, all now
+triaged** — 39 *other*, 15 cancellation, 10 child, 5 query, 4 signals, 4 side
+effects, 3 continue-as-new, 3 memo/search-attributes, 4 in the final row.
+(39+15+10+5+4+4+3+3+4 = 87.)
+
+The 122 cases the reachability pass put in its exclusion buckets — worker
+steering 52, in-process tracer/metrics 35, local activities 14, history internals
+8, raw gRPC 6, nexus 5, interceptors 2 — remain excluded **by that pass, not by
+reading**. Nobody has read them case by case, and the pass that excluded them is
+the same kind of mechanical filter that this document has twice caught being
+wrong in the flattering direction. They are not known to be barren; they are
+unexamined. 87 + 122 = 209 unread, plus the 47 surveyed in the first two
+clusters, is 256.
+
+**The portable total from this upstream**, after all of it: the cancellation
+cluster (2 cases — ports#233 and cleat#1351), one panic case (ports#234), and the
+two candidates above. Every yield figure this document has carried — 33, 18,
+30–40, 87 — was an over-count, and each correction moved in the same direction,
+but the floor is not zero.
+
+#### The one thing this turned up from cleat's side
+
+`cleat/runtime_children.go:22-25` documents a contract in a comment:
+
+> Priority controls scheduling order. 0 = highest priority; lower numbers are
+> scheduled first. **Children do NOT inherit the parent's priority.**
+
+The code agrees with the comment and says something sharper than it does.
+`engine/children.go:16` — the no-options `ChildWorkflow` path — passes `priority`
+as a literal `0`, and every claim query orders `priority ASC`
+(`migrations/postgres/023`, `040`, `055`, and both SQL Server paths in
+`engine/mssql_lifecycle.go`). So a child started the ordinary way does not merely
+fail to inherit its parent's priority: it gets the **highest** priority there is,
+and a low-priority parent's children jump ahead of the parent's own peers.
+
+`dbos-transact-py/tests/test_priority_order.py` asserts that priority orders
+dispatch for top-level runs — carefully, with a simulated sample size chosen
+because three earlier thresholds had been fudged. **Nothing sets
+`ChildWorkflowOptions.Priority` anywhere in any port**, and nothing asserts the
+default, so both halves of that behaviour are a documented promise with no test
+behind it. That is a candidate found by reading cleat, not by reading an
+upstream, and it is the kind the four-upstream method cannot produce: no upstream
+has a case for it, because no upstream has this rule.
