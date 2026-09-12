@@ -93,3 +93,121 @@ was stored. The separate control for "never catch up" is the misfire policy.
 Pinned rather than filed, so that a later decision to honour `0` surfaces as a
 failing port test rather than as a silent behaviour change for every schedule
 created with an explicit zero.
+
+---
+
+## 3. Dead-letter retention leaves the idempotency key behind, and the key then locks the token permanently
+
+**Class:** Bug
+**Upstream test:** `test/integration_test.go::TestWorkflowIDReuse*` (reached while porting the cluster)
+**Status:** Open (cleat-team/cleat#1324, filed 2026-09-12)
+
+**What cleat does**
+
+`DeleteDeadLetteredWorkflows` deletes `event_history` and `workflow_instances`
+and not `idempotency_keys`, on PostgreSQL and MySQL. This is cleat#1255 —
+already fixed for the *completed* sweep — surviving in the sibling method.
+
+Measured against PostgreSQL at `develop@6ca1670`, with a run driven into the
+DLQ genuinely (retries exhausted, via `ports/dbos-transact-py/workflows/
+deadletter`) and the worker started `-dead-letter-retention-days 1`:
+
+```
+idempotency_keys for that run, before sweep: 1
+sweep -> {"dead_lettered_workflows_deleted":1}
+GET /api/workflows/<id>                    -> 404
+idempotency_keys for that run, after sweep: 1        <-- leaked
+POST .../start  (same Idempotency-Key)
+  -> 200 {"already_started":"true","status":"unknown","workflow_id":"<the 404 id>"}
+```
+
+Positive control, same worker and same sweep call: a *completed* run's key is
+deleted and the retry correctly starts a new run (`201 {"id": ...}`). So both
+the sweep and the retry path work; the difference is entirely which of the two
+delete methods ran.
+
+**Assessment**
+
+Bug, and worse than #1255 in one specific way: the key is a permanent lock.
+`already_started` is returned for as long as the key row lives — 30 days on the
+row measured, 7 by schema default — while the run it names is gone, and there is
+no request the caller can make to get the work done under that token.
+
+SQL Server is correct here, for a structural reason worth copying: cleat#1265
+made both arms call one `deleteWorkflowsBatch` over one child-table list, so the
+set cannot diverge between them.
+
+**Not pinned by a test here.** The `status: "unknown"` arm is reachable only
+through this defect, so a case asserting today's answer would have to be
+rewritten by the fix. The three cases in `tests/duplicate_start_test.go` cover
+the other three arms.
+
+---
+
+## 4. The duplicate-start contract names `running` where a sleeping winner is `ready`
+
+**Class:** Bug (documentation and contract)
+**Upstream test:** `test/integration_test.go::TestWorkflowIDReuseIgnoreDuplicateWhileRunning`
+**Status:** Open (cleat-team/cleat#1325, filed 2026-09-12)
+
+**What upstream asserts**
+
+A second start while the first is still going gets back the first run.
+
+**What cleat does**
+
+The same, and reports the winner's state in `status`. `cmd/cleat-worker/
+server.go` states the contract as a three-way table — `running` → poll,
+`done` → fetch, `failed` → surface — and then copies `wf.Status` verbatim, a
+column with at least seven values.
+
+A workflow parked in a durable sleep is `ready`, not `running`:
+`migrations/postgres/003_procedures.sql` sets `status = 'ready'` with a
+`next_wake_at` when a segment suspends. Polled every 500 ms across an 8-second
+sleep, twenty consecutive samples read `ready` and none read `running`.
+
+**Assessment**
+
+The case the retry mechanism exists for — a client that did not hear the first
+answer, retrying while the work is outstanding — most often lands on the one
+non-terminal value that contract does not name.
+
+**And the contract is wrong rather than merely thin**, which took a correction
+to see. `docs/reference/workflow-lifecycle.md` enumerates all seven statuses and
+says in bold that *a sleeping workflow is `ready`, not `suspended`*, with the
+`ready` row reading "covers both 'never started' and 'sleeping until
+`next_wake_at`'". So the reference document and the handler comment disagree,
+and the handler comment is the only place the duplicate response's meaning is
+written down — `grep -rn already_started docs/` returns nothing.
+
+The first version of this entry said the vocabulary was undocumented. That grep
+answers about the FIELD NAME; I read it as an answer about the STATUS SET, which
+I had not grepped for. Recorded because the port's own assertion had the same
+defect one layer down, below.
+
+Core cannot disagree about any of this: its test supplies the winner it expects
+(`&engine.WorkflowInstance{Status: "running"}`), so the arm a real retry usually
+hits has no coverage anywhere.
+
+`tests/duplicate_start_test.go` asserts a **closed set** —
+`ready`/`running`/`terminating` — rather than `running`. That is still a real
+assertion: `done`, `failed`, a missing field or an unseen status all fail it.
+
+**What the sabotage pass found, and why it is recorded here.** Written without a
+guard on the run row, mis-casing the input key `sleepMs` to `sleepms` — which
+unbinds the parameter and leaves the zero value — left **all three cases
+green**. cleat's `ready` covers "parked in a durable sleep" and "not claimed by
+a worker yet" alike, so a run that finished in 50 ms was indistinguishable from
+one sleeping for twenty seconds. The arm now POLLS the run row until
+`next_wake_at - started_at` clears half the requested sleep, failing at once if
+`completed_at` appears instead, and the same sabotage fails it in under a second
+naming the measured `completed_at`. A status vocabulary that conflates two states
+costs a test its discriminating power as well as a client its branch.
+
+**Polling rather than one read, and that was a second bug in the same guard.**
+`started_at` is written when a worker CLAIMS the run; `next_wake_at` only moves
+when the segment SUSPENDS. A single read taken between those two moments sees a
+claimed run that has not parked yet and fails. Green in isolation and on repeat,
+red once in a full-suite run right after a redeploy — when the first module load
+widens that window. Found by running the suite six times rather than once, which
+is the habit the first bug in this guard earned.
