@@ -594,3 +594,84 @@ ask about turned out correct; cleat#1331 is in the scaffolding those cases
 needed, and no amount of reading `engine/updater.go` would have produced it.
 Which is the argument for porting over surveying, stated as a measurement
 rather than as a preference.
+
+## The whole of `temporalio/sdk-go`'s `test/`, bucketed (2026-09-12)
+
+Both surveys so far read clusters of one file. This maps the other twenty-five,
+by the same method and for the same reason: the cheapest way to avoid reading
+the wrong thing carefully.
+
+Counted at `902937accd7ac67cd8ed16e73b1db2b75cab48a7` by parsing every file for
+suite methods (`func (x *Suite) TestX()`), plain tests (`func TestX(t
+*testing.T)`) and `.Run(` subtests, and tallying the client calls each file's
+bodies make.
+
+| file | lines | cases | top client calls | read? |
+|---|---:|---:|---|---|
+| `integration_test.go` | 11,171 | **257** | ExecuteWorkflow 141, SignalWorkflow 47, UpdateWorkflow 45, GetWorkflowHistory 34 | 47 of 257 |
+| `nexus_test.go` | 4,239 | 32 | ExecuteOperation 14 | no — Nexus |
+| `external_storage_test.go` | 1,610 | 32 | ExecuteWorkflow 25, SignalWorkflow 7, QueryWorkflow 4 | **no — candidate** |
+| `payload_limits_test.go` | 1,027 | 19 | ExecuteWorkflow 17, CancelWorkflow 6, SignalWorkflow 4 | **no — candidate** |
+| `worker_deployment_test.go` | 1,704 | 18 | WorkerDeploymentClient 19 | no |
+| `worker_versioning_test.go` | 1,153 | 17 | UpdateWorkerVersioningRules 23 | no |
+| `worker_heartbeat_test.go` | 1,165 | 16 | ExecuteWorkflow 10 | no |
+| `workflow_random_test.go` | 252 | 6 | ResetWorkflowExecution 2 | no |
+| `worker_tuner_test.go` | 157 | 6 | — | no |
+| everything else (17 files) | | 26 between them | | no |
+
+429 test functions in the directory, counted the same way in every file.
+Subtests are **not** folded in here — `integration_test.go` alone carries 41
+`.Run(` calls — so these are functions, which is a lower bound on collected
+cases and the only figure that is comparable across files without reading them.
+
+**`workflow_test.go` is the second-largest file in the directory — 4,702 lines —
+and contains ZERO test cases.** It is the workflow *definitions* the other files
+execute. A reader ranking by size, or by a name that sounds like the heart of
+the suite, would spend a long session there and find nothing to port. That is
+this document's "file names did not predict yield" caution, in the same
+repository it was written about, at the top of the list.
+
+### What the map says
+
+**`integration_test.go` is the corpus, not a file in it.** 257 of the **429**
+test functions in the whole directory — 60% — and the only file where the ratio of engine
+behaviour to Temporal-specific machinery is high. Reading it cluster by cluster
+is the right shape and the two surveys should continue that way; the
+within-file bucketing table lives in
+[the updates survey](temporalio-sdk-go-updates-survey.md).
+
+**Two files outside it are worth reading, and both for the same reason:** they
+drive ordinary workflows over the client API and assert on limits and
+offloading, which are cleat surfaces that exist and have no port coverage.
+
+- **`external_storage_test.go`** (32 cases). Large payloads offloaded to
+  external storage. cleat has a blobstore plugin and `workflow_blob_refs`;
+  nothing in any port exercises it.
+- **`payload_limits_test.go`** (19 cases). What happens when a payload exceeds
+  the limit — at start, at signal, at child start, at completion. cleat has
+  `signalMaxBodySize` and a 413 path (the update handler returns one), so the
+  *shape* ports even though the limits are configured differently: upstream
+  sets `limit.blobSize.error` as dev-server dynamic config, cleat has a
+  compiled-in constant.
+
+**Three files are Temporal-shaped and should be skipped rather than read:**
+`nexus_test.go` (Nexus has no cleat analogue), `worker_deployment_test.go` and
+`worker_versioning_test.go` (19 and 23 calls respectively into
+`WorkerDeploymentClient` / `UpdateWorkerVersioningRules`, APIs cleat does not
+have — its versioning is `workflow_defs` plus routing rules, a different model
+rather than a subset).
+
+**`worker_heartbeat_test.go`** (16 cases) is the uncertain one. cleat
+heartbeats, and the reaper that reclaims a stalled worker is real engine
+behaviour with real defects filed against it — but upstream's cases assert on a
+`WorkerHeartbeat` RPC and a worker-status API cleat has no route for, so the
+verdicts may land mostly in *satisfied but unobservable*. Worth a cheap look
+before a careful one.
+
+### Cost
+
+The whole map was one `curl` of the directory listing, twenty-six raw fetches
+and one parsing pass — a few minutes, against the several hours a file-by-file
+read would take to reach the same conclusion about `workflow_test.go` alone.
+Doing it before the next cluster rather than after is the only part worth
+remembering.
