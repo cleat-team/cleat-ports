@@ -14,11 +14,12 @@ the ones that survived.
 | test module | cases | answering |
 |---|---:|---|
 | `schedules_test.go` | 4 | `test/integration_test.go` — `TestScheduleCreateDuplicate`, and the server-side half of `TestScheduleUpdate` |
+| `pause_test.go` | 4 | `test/integration_test.go` — the portable half of `TestSchedulePause` |
 
-Four **collected** cases from two test functions: the second is three subtests,
-and two of those three are controls rather than the assertion (below). `go test
-./tests/ -list '.*'` prints the two function names, which is the number that
-looks right and is not the one to quote.
+Eight **collected** cases from three test functions. Several of the subtests are
+controls or discriminators rather than the assertion itself (below). `go test
+./tests/ -list '.*'` prints three function names, which is the number that looks
+right and is not the one to quote.
 
 ## The two assertions
 
@@ -54,12 +55,19 @@ expression is normalised into a structured calendar spec on read
 stores and returns the expression verbatim, so there is no normalisation to
 assert.
 
-**And one is blocked rather than declined.** `TestSchedulePause` asserts that
+**One case was blocked and is now ported.** `TestSchedulePause` asserts that
 pausing an already-paused schedule succeeds as a no-op. That is correct
-behaviour and cleat has it, but cleat currently returns the same `200` whether
-the row was enabled, already disabled, or **absent** (cleat#1297) — so a test
-written today would pass for the wrong reason and would keep passing if
-idempotence broke. It becomes portable when #1297 lands.
+behaviour and cleat has it — but until cleat#1297 cleat returned the same `200`
+whether the row was enabled, already disabled, or **absent**, so a test written
+then would have passed for the wrong reason and kept passing if idempotence
+broke. cleat#1302 landed the fix (a missing name is now
+`404 {"detail":"schedule_not_found"}`) and `pause_test.go` ports it as a **pair**:
+the repeat must stay 200, and the same verb on a name that never existed must be
+404. Neither half means anything without the other, which is why they are one
+function rather than two.
+
+What still does not port from that case is the operator **note** attached to a
+pause or unpause; cleat's enable/disable carry no note field.
 
 ## Why there is no `workflows/` directory
 
