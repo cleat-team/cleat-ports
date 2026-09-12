@@ -579,8 +579,30 @@ stop_worker() {
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    # WAIT AFTER SIGKILL BEFORE ASKING. `kill -9` returns as soon as the signal
+    # is queued, not when the process is gone, and `kill -0` succeeds until the
+    # kernel has torn it down -- so checking on the next line reports "survived"
+    # for a process that is about to die and does.
+    #
+    # Measured on macOS, 2026-09-12: `kill -9` immediately followed by `kill -0`
+    # succeeded 200/200 for a child of the same shell (where it also lingers as
+    # an unreaped zombie) AND 100/100 for a DETACHED process this shell never
+    # parented -- which is the case here, since the worker is started by an
+    # earlier `ensure`. So this was not a rare race: every stop that reached
+    # SIGKILL reported failure, and exited 1 from a fixture, for a worker that
+    # had in fact stopped.
+    #
+    # Observed in the wild the same day: "worker 93058 survived SIGTERM then
+    # SIGKILL; not reporting a stop", with `ps -p 93058` empty immediately
+    # afterwards and the next `ensure` binding the port without contest.
+    #
+    # crash_worker above already does this -- SIGKILL, then a bounded wait, then
+    # the check. The two functions differed by exactly the line that decides
+    # whether the verb tells the truth, and the one that had been through
+    # ports#172 is the one that is right.
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
     if kill -0 "$pid" 2>/dev/null; then
-      echo "worker $pid survived SIGTERM then SIGKILL; not reporting a stop" >&2
+      echo "worker $pid survived SIGTERM then SIGKILL after 10s; not reporting a stop" >&2
       rm -f "$PIDFILE"
       exit 1
     fi
