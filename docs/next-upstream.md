@@ -562,3 +562,35 @@ concentrated in two files of fourteen**, and file names did not predict which.
 independently and was the second most productive file in the corpus. Triage by
 the API surface a case *body* exercises, and expect the internals files to yield
 nothing however carefully they are read.
+
+### A second cluster, and a cheaper way to choose the next one (2026-09-12)
+
+[`temporalio-sdk-go-updates-survey.md`](temporalio-sdk-go-updates-survey.md)
+reads the 27 `UpdateWorkflow` cases of the same file — **37 collected cases**
+once the twelve subtests inside two of them are counted.
+
+Yield: **7 gaps**, **1 present-and-broken** (cleat#1330, an update name is
+single-use per workflow and the three dialects disagree about the second
+request), 5 design differences, 1 capability gap, 1 satisfied-but-unobservable,
+12 not portable. Plus one defect the cases did not ask about and the *probe*
+found: cleat#1331, a sub-millisecond `AwaitSignals` timeout livelocks the
+workflow forever.
+
+**The cluster was chosen by bucketing all 256 methods by the client call their
+BODIES make**, which took one pass and is the operational form of this
+document's own caution that file names do not predict yield. Updates were the
+largest cleat surface with zero coverage in any port; the same table shows what
+is left.
+
+Two things that generalise:
+
+**The *satisfied but unobservable* bucket stayed near zero again** — 0 of 20 for
+schedules, 1 of 27 for updates, against 4 of 10 for `backend_test.go`. That is
+the third filter's prediction holding twice, from two different clusters: a
+suite that drives a server is one a port can drive.
+
+**The probe found more than the cases did.** Every update behaviour the cases
+ask about turned out correct; cleat#1331 is in the scaffolding those cases
+needed, and no amount of reading `engine/updater.go` would have produced it.
+Which is the argument for porting over surveying, stated as a measurement
+rather than as a preference.
