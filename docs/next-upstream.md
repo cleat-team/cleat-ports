@@ -569,10 +569,10 @@ nothing however carefully they are read.
 reads the 27 `UpdateWorkflow` cases of the same file — **37 collected cases**
 once the twelve subtests inside two of them are counted.
 
-Yield: **7 gaps**, **1 present-and-broken** (cleat#1330, an update name is
-single-use per workflow and the three dialects disagree about the second
-request), 5 design differences, 1 capability gap, 1 satisfied-but-unobservable,
-12 not portable. Plus one defect the cases did not ask about and the *probe*
+Yield: **7 gaps — all now ported**, **1 present-and-broken** (cleat#1330, an
+update name is single-use per workflow and the three dialects disagree about the
+second request), 5 design differences, 1 capability gap, 1
+satisfied-but-unobservable, 12 not portable. Plus one defect the cases did not ask about and the *probe*
 found: cleat#1331, a sub-millisecond `AwaitSignals` timeout livelocks the
 workflow forever.
 

@@ -9,7 +9,7 @@ upstream test *cases* re-expressed, not files touched — see
 | [`dbos-transact-py`](dbos-transact-py/) | [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | MIT | queues, recovery, failures, concurrency, workflow management | **79 cases, 76 passing, 3 skipped** (2026-09-08) — 23 findings, 18 fixed |
 | [`samples-go`](samples-go/) | [temporalio/samples-go](https://github.com/temporalio/samples-go) | **Apache-2.0** | a different engine's assumptions: signals, queries, timers, child workflows, saga compensation | **41 cases, 39 passing, 2 skipped** (2026-09-08) — 12 findings |
 | [`durabletask-go`](durabletask-go/) | [microsoft/durabletask-go](https://github.com/microsoft/durabletask-go) | **Apache-2.0** (verified by reading LICENSE, not by the API) | the backend contract and orchestration lifecycle — the layer no other port here touches | **4 cases, 3 passing, 1 skipped** (2026-09-09) — 2 findings, 1 filed as cleat#1115 |
-| [`temporalio-sdk-go`](temporalio-sdk-go/) | [temporalio/sdk-go](https://github.com/temporalio/sdk-go) | MIT | schedule administration, and what a duplicate start says about the run that won | **11 cases, 11 passing, 0 skipped** (2026-09-12) — 4 findings, 3 filed as cleat#1297 (fixed in cleat#1302), cleat#1324 and cleat#1325 |
+| [`temporalio-sdk-go`](temporalio-sdk-go/) | [temporalio/sdk-go](https://github.com/temporalio/sdk-go) | MIT | schedules, what a duplicate start says about the run that won, and workflow updates | **20 cases, 20 passing, 0 skipped** (2026-09-12) — 6 findings, 5 filed as cleat#1297 (fixed in cleat#1302), cleat#1324, cleat#1325, cleat#1330 and cleat#1331 |
 
 ## Planned
 

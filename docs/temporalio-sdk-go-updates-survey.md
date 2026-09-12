@@ -320,15 +320,23 @@ matters: the duplicate-start status vocabulary reads as `running` in
 
 ## Next step
 
-The seven gaps are worth porting and are the natural follow-on to
-`ports/temporalio-sdk-go/tests/duplicate_start_test.go`. They need one workflow
-package with a handler, a validator and a failing handler — the `probe-update`
-shape — plus a `promises` reader in the harness.
+**The seven gaps are ported**, as
+`ports/temporalio-sdk-go/tests/updates_test.go` — nine collected cases over one
+workflow package (`workflows/updates`) and a `promises` reader in the harness.
 
-`TestUpdateRejectedDuplicated` should be ported **only once cleat#1330 is
+One thing the falsification pass found and the survey did not: the
+validator-refusal case asserted `applied == 0` after a refusal, and that is
+equally satisfied by a handler which records nothing. Deleting the recording
+line from `guarded`'s handler left the whole file **green**. It is now a pair —
+refused changes nothing, accepted does — differing in one input byte, and the
+same sabotage reddens it.
+
+`TestUpdateRejectedDuplicated` is still **deferred until cleat#1330 is
 decided**, for the reason the schedules survey gave for deferring
 `TestSchedulePause`: written today it would pin a `500` carrying a driver
-string, and a test asserting today's answer has to be rewritten by the fix.
+string, and a test asserting today's answer has to be rewritten by the fix. Its
+shadow is in the port anyway — `workflows/updates` registers `apply_one` and
+`apply_two` rather than sending one name twice, because it cannot.
 
 Unread and unbucketed: 202 of this file's 256 methods, and 23 of the 24 files in
 `test/`. The bucketing table at the top is the cheapest way to pick the next

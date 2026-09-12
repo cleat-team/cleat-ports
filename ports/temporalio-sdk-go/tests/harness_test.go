@@ -362,3 +362,110 @@ func tail(s string, n int) string {
 	}
 	return "..." + s[len(s)-n:]
 }
+
+// ---- updates ----
+
+// sendUpdate posts an update and returns the raw response.
+//
+// Not a wrapper that fails on a non-2xx: three of the cases below are ABOUT
+// the status (404 for a missing run, 409 for a terminal one, and the 500
+// cleat#1330 produces), so a client that treated those as errors would make the
+// interesting cases the awkward ones to write.
+func sendUpdate(t *testing.T, runID, updateName string, payload map[string]any) response {
+	t.Helper()
+	return call(t, http.MethodPost, "/api/workflows/"+runID+"/update/"+updateName, payload, nil)
+}
+
+// updatePromiseID pulls the promise id out of an accepted update.
+//
+// cleat answers an accepted update `202 {"promise_id":"upd-..."}` and settles
+// that promise later; there is no synchronous result. The id is the only handle
+// the caller gets, so a response without one is fatal rather than a nil return.
+func updatePromiseID(t *testing.T, r response) string {
+	t.Helper()
+	if r.Status != http.StatusAccepted && r.Status != http.StatusOK {
+		t.Fatalf("update answered %d, want 202: %s", r.Status, r.Raw)
+	}
+	id, _ := r.Body["promise_id"].(string)
+	if id == "" {
+		t.Fatalf("update answered %d with no promise_id: %s", r.Status, r.Raw)
+	}
+	return id
+}
+
+// promise is one row of GET /api/workflows/:id/promises.
+type promise struct {
+	ID       string `json:"promise_id"`
+	Name     string `json:"promise_name"`
+	Status   string `json:"status"`
+	Result   string `json:"result"`
+	ErrorMsg string `json:"error_msg"`
+}
+
+// awaitPromise polls until the named promise settles, and returns it.
+//
+// THE ARGUMENT IS THE PROMISE ID, NOT THE UPDATE NAME, even though the row
+// carries `promise_name: "update:<name>"` and matching on that would read more
+// naturally. The id is what the POST returned, so matching on it is the only
+// way to be sure the row answering is the request this test sent -- and cleat
+// deliberately keeps the binding after the run finishes, so a name match could
+// find a row from an earlier case in the same run.
+//
+// "Settled" is `resolved` or `rejected`, listed rather than "not pending": a
+// status this port has not seen should hang and report what it is stuck on,
+// not be waved through by a negation.
+func awaitPromise(t *testing.T, runID, promiseID string, timeout time.Duration) promise {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		for _, p := range listPromises(t, runID) {
+			if p.ID != promiseID {
+				continue
+			}
+			last = p.Status
+			if p.Status == "resolved" || p.Status == "rejected" {
+				return p
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("promise %s on run %s did not settle within %s; last status %q",
+		promiseID, runID, timeout, last)
+	return promise{}
+}
+
+func listPromises(t *testing.T, runID string) []promise {
+	t.Helper()
+	r := call(t, http.MethodGet, "/api/workflows/"+runID+"/promises", nil, nil)
+	if r.Status != http.StatusOK {
+		t.Fatalf("reading promises for %s answered %d: %s", runID, r.Status, r.Raw)
+	}
+	var out []promise
+	if err := json.Unmarshal([]byte(r.Raw), &out); err != nil {
+		t.Fatalf("decoding promises for %s: %v\n%s", runID, err, r.Raw)
+	}
+	return out
+}
+
+// workflowResult decodes a finished run's `result` field.
+//
+// Separate from awaitTerminal because several update cases assert on the
+// WORKFLOW's own view of what happened -- how many handlers ran, and in which
+// order -- which is the half a promise cannot show.
+func workflowResult(t *testing.T, row map[string]any) map[string]any {
+	t.Helper()
+	switch v := row["result"].(type) {
+	case map[string]any:
+		return v
+	case string:
+		var out map[string]any
+		if err := json.Unmarshal([]byte(v), &out); err != nil {
+			t.Fatalf("decoding workflow result %q: %v", v, err)
+		}
+		return out
+	default:
+		t.Fatalf("run has no usable result: %#v", row)
+		return nil
+	}
+}
