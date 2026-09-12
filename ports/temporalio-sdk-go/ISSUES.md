@@ -211,3 +211,112 @@ claimed run that has not parked yet and fails. Green in isolation and on repeat,
 red once in a full-suite run right after a redeploy — when the first module load
 widens that window. Found by running the suite six times rather than once, which
 is the habit the first bug in this guard earned.
+
+---
+
+## 5. An update name is single-use per workflow, and the three dialects disagree about the second request
+
+**Class:** Bug
+**Upstream test:** `test/integration_test.go::TestUpdateRejectedDuplicated`
+**Status:** Open (cleat-team/cleat#1330, filed 2026-09-12)
+
+**What upstream asserts**
+
+That a rejected update's id can be reused. Its own comment:
+
+> Same update ID should be allowed to be reused after the first attempt is
+> rejected
+
+and the rest of the cluster treats an update name as a method name invoked
+repeatedly — `TestSpeculativeUpdate` sends `"update"` **twelve** times to one
+workflow, `TestUpdateOrdering` twice and asserts the result is 2.
+
+**What cleat does**
+
+`workflow_update_requests` is keyed `PRIMARY KEY (workflow_id, update_name)` on
+all three dialects and completion is an `UPDATE … SET status = 'completed'`, not
+a delete, so the name is consumed permanently. Measured against one healthy
+`running` workflow:
+
+```
+POST .../update/boom            -> 202 {"promise_id":"upd-0955193e…"}
+POST .../update/boom  (pending) -> 409 {"error":"update already pending with name: boom"}
+POST .../update/boom  (done)    -> 500
+  {"error":"pq: duplicate key value violates unique constraint
+            \"workflow_update_requests_pkey\" (23505)"}
+```
+
+The `409` guard reads `GetPendingUpdateRequests`, which filters
+`status = 'pending'`, so it covers only the brief window before dispatch. The
+common case — a caller resending after the first finished — falls through to the
+primary key.
+
+On MySQL `engine/mysql_ops.go:147` uses `INSERT IGNORE` and discards the result,
+so the duplicate is dropped silently, `CreateUpdateRequest` returns `nil`, and
+the handler answers `202` with a promise id for a row that does not exist.
+Measured on MySQL 8 against the same key, on a table created for the question:
+second `INSERT IGNORE` → `ROW_COUNT() = 0`, no error, first payload surviving.
+
+**Assessment**
+
+Bug. Nothing documents the constraint: `docs/reference/sdk-api.md` describes an
+update as "a request/reply call into a running workflow", and cleat's own
+fixture handler is called `bump` and increments a counter — a shape that can be
+invoked exactly once.
+
+**How it shapes this port.** `workflows/updates` registers `apply_one` and
+`apply_two` rather than sending one name twice, and the validator case uses two
+separate runs. The divergence is stated in both files rather than worked around
+silently.
+
+**Not pinned by a test.** A case asserting today's answer would pin a `500`
+carrying a driver string, and the fix will rewrite it — the same reason
+`TestSchedulePause` was deferred until cleat#1297 landed.
+
+---
+
+## 6. A sub-millisecond `AwaitSignals` timeout livelocks the workflow
+
+**Class:** Bug
+**Upstream test:** none — found by the probe, not by a case
+**Status:** Open (cleat-team/cleat#1331, filed 2026-09-12)
+
+**What cleat does**
+
+`cleat/runtime_signals.go:220` guards `timeout <= 0` with a clear error and then
+converts with `.Milliseconds()`, which truncates. Every value in `(0, 1ms)`
+reaches the host as `timeoutMs = 0` — the value the guard exists to reject — and
+`engine/signaller.go:275` then suspends with a deadline of *now*. The run is
+immediately re-claimable, replays to the same step, and suspends again.
+
+| timeout | 3 slices | elapsed | generation |
+|---|---|---|---|
+| 1 µs | never completes | >26 s | 48 and climbing |
+| 100 µs | never completes | >26 s | 368 and climbing |
+| 1 ms | done | 1 s | 4 |
+| 50 ms | done | 2 s | 4 |
+
+One instance reached **generation 4995 in six minutes** — about 14 claims a
+second — with `event_history` constant at 10 rows. `reclaim_count` stays 0, so
+no stall detector sees it, and nothing is logged.
+
+`DurableSleep` truncates identically and is fine: a 0 ms sleep is "don't wait".
+This is specific to the signal wait, where a 0 ms wait has no exit.
+
+**Assessment**
+
+Bug, and the reason it is recorded in a port's findings rather than only
+upstream: **the probe hit it, no case did.** Every update behaviour the cluster
+asks about turned out correct. The bug was in the scaffolding those cases
+needed — the probe copied `h.AwaitSignals([]string{"never"}, 1000)` from
+`testdata/updatedispatch/main.go`, a compile-only fixture whose doc comment
+calls it "the shape a real workflow takes … which is why it is the shape worth
+pinning".
+
+`AwaitCondition` passes its public `pollInterval` straight through with no
+validation, so a sub-millisecond poll interval livelocks a workflow from inside
+library code.
+
+**Pinned indirectly.** `workflows/updates` says `500*time.Millisecond` with a
+comment explaining why, so the next person copying from this port copies the
+correct form.

@@ -16,11 +16,14 @@ the ones that survived.
 | `schedules_test.go` | 4 | `test/integration_test.go` — `TestScheduleCreateDuplicate`, and the server-side half of `TestScheduleUpdate` |
 | `pause_test.go` | 4 | `test/integration_test.go` — the portable half of `TestSchedulePause` |
 | `duplicate_start_test.go` | 3 | `test/integration_test.go` — the portable half of the `TestWorkflowIDReuse*` cluster |
+| `updates_test.go` | 9 | `test/integration_test.go` — the seven gaps in the `TestUpdate*` cluster |
 
-Eleven **collected** cases from six test functions. Several of the subtests are
-controls or discriminators rather than the assertion itself (below). `go test
-./tests/ -list '.*'` prints six function names, which is the number that looks
-right and is not the one to quote.
+Twenty **collected** cases from thirteen test functions. Several of the
+subtests are controls or discriminators rather than the assertion itself
+(below). `go test ./tests/ -list '.*'` prints thirteen function names, which is
+the number that looks right and is not the one to quote — checked by running it,
+because the arithmetic and the listing disagreed once while this file was being
+written.
 
 ## The two schedule assertions
 
@@ -67,6 +70,30 @@ Two findings came out of running it for real, both in [`ISSUES.md`](ISSUES.md):
 the status vocabulary the response actually uses (cleat#1325) and a retention
 defect that leaves a key pointing at a deleted run (cleat#1324).
 
+## The update cases
+
+Seven gaps from the `TestUpdate*` cluster, scoped case by case in
+[`../../docs/temporalio-sdk-go-updates-survey.md`](../../docs/temporalio-sdk-go-updates-survey.md),
+which gives all 27 upstream methods a verdict. **Before this file,
+`POST /api/workflows/:id/update/:name` had never been called from any test in
+this repository**, across three ports — which is why the cluster was picked.
+
+Two structural differences decide which cases survived, and both make a case
+here smaller than its upstream original:
+
+- **There is no wait stage.** Upstream's `WaitForStage: Accepted | Completed` is
+  what half the cluster turns on. cleat answers `202` with a `promise_id` and
+  settles it later, so *accepted* and *completed* are not distinguishable to a
+  caller — only pending and settled.
+- **There is no update id.** Upstream addresses a request independently of its
+  name and hands that id to the handler. cleat keys a request by
+  `(workflow_id, update_name)` and gives the handler the payload alone.
+
+Two findings came out of running it, both in [`ISSUES.md`](ISSUES.md): an update
+name is single-use per workflow (cleat#1330), and a sub-millisecond
+`AwaitSignals` timeout livelocks the workflow (cleat#1331) — the second found by
+the probe rather than by any case.
+
 ## What this port deliberately skips, and why
 
 13 of the 20 upstream schedule cases are not portable, and the survey gives each
@@ -99,8 +126,15 @@ pause or unpause; cleat's enable/disable carry no note field.
 
 ## The `workflows/` directory
 
-One package, `idreuse`, built by `scripts/build-workflow.sh` and deployed as
-`tsg_id_reuse`. It waits, then either succeeds or fails on the caller's
+Two packages, built by `scripts/build-workflow.sh`.
+
+`updates` deploys as `tsg_updates` and registers the handlers the update cases
+need — two that record, one that echoes its payload, one behind a validator, one
+that fails. Its waits are `500*time.Millisecond` and **not** a bare `1000`,
+because a bare integer is 1000 *nanoseconds* and cleat#1331 makes that a
+livelock rather than an error.
+
+`idreuse` deploys as `tsg_id_reuse`. It waits, then either succeeds or fails on the caller's
 instruction, and all three duplicate-start cases share it — the arms differ only
 in what the winner is *doing* when the duplicate arrives, and three definitions
 would leave "the answer differed because the workflow differed" open.
