@@ -127,6 +127,6 @@ index, so an entry missing from it is an entry nobody finds.
 | 30 | [A run records when it was created and when it finished, never when it started](issues/030-a-run-records-when-it-was-created-and-when-it-finished-nev.md) |
 | 31 | [A caller cannot enqueue a workflow inside its own database transaction](issues/031-a-caller-cannot-enqueue-a-workflow-inside-its-own-database.md) |
 | 32 | [A worker lost mid-backoff resumes its retry early, discarding the remaining wait](issues/032-a-worker-lost-mid-backoff-resumes-its-retry-early-discardi.md) |
-| 33 | [A workflow can only ask about its own children, not about an arbitrary workflow](issues/033-a-workflow-can-only-ask-about-its-own-children-not-about-a.md) |
+| 33 | [A workflow can only ask about its own children, not about an arbitrary workflow — WITHDRAWN, poll_child is not children-only](issues/033-a-workflow-can-only-ask-about-its-own-children-not-about-a.md) |
 | 34 | [A signal carries no idempotency key, so a re-sent signal is a second signal](issues/034-a-signal-carries-no-idempotency-key-so-a-re-sent-signal-is.md) |
 | 35 | [Workflows can be listed but not filtered by id prefix or start time](issues/035-workflows-can-be-listed-but-not-filtered-by-id-prefix-or-s.md) |
