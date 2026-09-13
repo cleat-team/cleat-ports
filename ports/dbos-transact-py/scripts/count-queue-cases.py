@@ -280,6 +280,9 @@ MAPPING = {
     "test_run_clock.py": ("test_queue.py", "upstream test_simple_queue's dequeued_at >= created_at, unblocked by cleat#1094 and #1106"),
     "test_locks.py": ("test_queue.py", "serialising work through a held key"),
     "test_priority_order.py": ("test_queue.py", "priority is a queue control"),
+    "test_child_priority.py": ("test_queue.py",
+                               "priority is a queue control one level down: what a CHILD is "
+                               "given, which upstream has no case for because it has no such rule"),
     "test_run_metadata.py": ("test_dbos.py",
                              "a repeat start is deduplication rather than recovery, "
                              "and the run's own clock is ordered"),

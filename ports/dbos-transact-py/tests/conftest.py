@@ -775,6 +775,13 @@ def abandon_variant_workflow(cleat: Cleat) -> str:
 
 
 @pytest.fixture(scope="session")
+def child_priority_workflow(cleat: Cleat) -> str:
+    """A parent that spawns one child with no options and one with an explicit Priority."""
+    _build_and_deploy("childleaf", "child_leaf")
+    return _build_and_deploy("childpriority", "child_priority")
+
+
+@pytest.fixture(scope="session")
 def replay_identity_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("replay", "replay_identity")
 
