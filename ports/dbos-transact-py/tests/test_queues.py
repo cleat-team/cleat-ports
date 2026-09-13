@@ -56,17 +56,30 @@ def test_the_same_idempotency_key_starts_one_run(cleat, retry_workflow, fixture_
         idempotency_key=idem,
     )
 
-    assert second.get("workflow_id") == first["id"], (
+    # `id`, not `workflow_id`, and 201 rather than 200: cleat#1169 made a
+    # duplicate return the ORIGINAL response plus a standard flag, so the
+    # identifier keeps one name and the status stops carrying "this was a
+    # retry". Reading `id` now works on both responses, which is the point --
+    # before, a caller reading only `id` got nothing from a deduplicated
+    # response and concluded its retry had started a second run.
+    assert second.get("id") == first["id"], (
         f"the second start created a different run: first={first['id']!r} "
         f"second={second!r}. Deduplication is keyed on the Idempotency-Key header."
     )
-    assert status_b == 200, (
-        f"a deduplicated start answered {status_b}, not 200. 201 would mean "
-        f"'created', which is exactly what did not happen: {second!r}"
+    assert status_b == status_a, (
+        f"a deduplicated start answered {status_b} and the first answered {status_a}. "
+        f"A replay returns the original STATUS as well as the original body: {second!r}"
     )
-    assert second.get("already_started") == "true", (
-        f"the response does not say the run already existed, so a caller cannot "
-        f"tell a fresh start from a deduplicated one: {second!r}"
+    # A bool, not the string "true" -- `already_started` was a string because the
+    # response was a string map.
+    assert second.get("idempotent_replay") is True, (
+        f"the response does not say it was a replay, so a caller cannot tell a "
+        f"fresh start from a deduplicated one: {second!r}"
+    )
+    assert first.get("idempotent_replay") is False, (
+        f"the FIRST start does not carry the flag. It is present on the original "
+        f"too, so a caller can read it unconditionally rather than inferring "
+        f"'original' from an absent field: {first!r}"
     )
 
     cleat.await_terminal(first["id"], timeout=60.0)
