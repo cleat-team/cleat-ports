@@ -286,6 +286,10 @@ MAPPING = {
     "test_run_metadata.py": ("test_dbos.py",
                              "a repeat start is deduplication rather than recovery, "
                              "and the run's own clock is ordered"),
+    "test_observe_arbitrary_run.py": ("test_dbos.py",
+                                      "upstream test_retrieve_workflow_in_workflow -- reading a run "
+                                      "you did not spawn, which poll_child has always allowed "
+                                      "despite its name (ISSUES 33 withdrawn, cleat#1120)"),
     "test_retries.py": ("test_failures.py", ""),
     "test_recovery.py": ("test_failures.py", "recovery counts after a crash"),
     "test_dead_letters.py": ("test_failures.py", "retries exhausted, and what is retained"),
