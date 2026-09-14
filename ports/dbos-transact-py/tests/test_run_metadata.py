@@ -56,7 +56,20 @@ def test_a_repeated_start_is_not_counted_as_a_recovery(cleat, retry_workflow):
     # without making the claim stronger.
     for i in range(2):
         code, again = cleat.start(retry_workflow, payload, idempotency_key=idem)
-        assert code == 200, f"repeat {i + 1} answered {code}, not 200: {again!r}"
+        # Parity with the first start, plus the flag. Since cleat#1169 a replay
+        # repeats the ORIGINAL response, so the old `code == 200` here asserted
+        # a policy that no longer exists -- and would have failed on a perfectly
+        # deduplicated repeat, which is the case this test needs to hold.
+        assert code == status, (
+            f"repeat {i + 1} answered {code}, not the first start's {status}: {again!r}"
+        )
+        assert again.get("idempotent_replay") is True, (
+            f"repeat {i + 1} was not marked a replay: {again!r}. If it was a fresh "
+            f"start, reclaim_count below is measuring a different run."
+        )
+        assert again.get("id") == run_id, (
+            f"repeat {i + 1} named run {again.get('id')!r}, not {run_id!r}: {again!r}"
+        )
 
     final = cleat.await_terminal(run_id, timeout=90.0)
     assert final["status"] == "done", f"the run did not complete: {final!r}"

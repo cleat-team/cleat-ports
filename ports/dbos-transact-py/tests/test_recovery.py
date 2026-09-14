@@ -159,15 +159,22 @@ def test_an_idempotency_key_survives_the_loss_of_its_worker(
         recovery_workflow, {"key": key, "sleepMs": SLEEP_MS}, idempotency_key=idem
     )
 
-    assert retried.get("workflow_id") == run_id, (
+    assert retried.get("id") == run_id, (
         f"the retry created a different run: original={run_id!r} retry={retried!r}.\n"
         f"The idempotency key did not survive the loss of the worker, so a client "
         f"that retried after a timeout has started the job a second time. The "
         f"durable call in front of the crash will now run twice."
     )
-    assert status_retry == 200, (
-        f"the retry answered {status_retry}, not 200. 201 would mean 'created', "
-        f"which is the failure above: {retried!r}"
+    # THE STATUS NO LONGER CARRIES THIS, and the old assertion here inverted
+    # once cleat#1169 landed: it read `status_retry == 200`, reasoning that
+    # "201 would mean created, which is the failure above". A replay now repeats
+    # the original 201, so that assertion failed on a key that HAD survived --
+    # the precise opposite of what it was written to detect. The id match above
+    # is what proves survival, and the flag is what says the engine knows it.
+    assert retried.get("idempotent_replay") is True, (
+        f"the retry answered {status_retry} {retried!r} without marking itself a "
+        f"replay, so the engine did not recognise the key as one it had seen. "
+        f"201 alone is now ambiguous -- it is what a fresh start answers too."
     )
 
     final = cleat.await_terminal(run_id, timeout=RECOVERY_TIMEOUT)
