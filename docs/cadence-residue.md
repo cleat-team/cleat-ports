@@ -65,6 +65,19 @@ re-start, winner still RUNNING     -> {"already_started":"true","workflow_id":"d
 re-start, winner status = "done"   -> {"already_started":"true","workflow_id":"d1134808-…"}
 ```
 
+> **Superseded, 2026-09-13.** The transcript above is left as measured, because
+> the reasoning that follows it is about what the two answers had in common and
+> that reasoning still reads correctly against it. But **both halves of the
+> complaint have since been fixed, by two separate changes**, and a reader
+> arriving at this section should not conclude either is open:
+>
+> - cleat#1151 gave the duplicate response the winner's `status` (and `error` /
+>   `error_code` when it did not succeed), so the two lines above are no longer
+>   byte-identical and a caller *can* tell a live run from a finished one.
+> - cleat#1169 replaced the shape outright. A duplicate now replays the
+>   ORIGINAL response — same status, same `id` — plus `idempotent_replay: true`.
+>   There is no `already_started`, and no `workflow_id`.
+
 Byte-identical, HTTP 200 both times, with the run confirmed `done` in between.
 So a caller retrying a start cannot tell whether it joined a live run or a
 finished one, and the right next action differs — wait, or fetch the result.
@@ -103,10 +116,19 @@ that is already running).
 
 Measured on a live worker, cleat draws the same line with status codes:
 
-| condition | cleat |
-|---|---|
-| same `Idempotency-Key` — your own retry | **200** `{"already_started":"true","workflow_id":…}` |
-| same `Cleat-Concurrency-Key`, different request | **409** `workflow already running with key …` |
+| condition | cleat, as measured for this survey | cleat today (2026-09-13) |
+|---|---|---|
+| same `Idempotency-Key` — your own retry | **200** `{"already_started":"true","workflow_id":…}` | **201** `{"id":…,"idempotent_replay":true,"status":…}` (cleat#1169) |
+| same `Cleat-Concurrency-Key`, different request | **409** `workflow already running with key …` | **201**, and the start WAITS for the key (cleat#1238) |
+
+**Both rows moved after this survey was written, and the second moved further
+than the first.** The retry row is a rename: the distinction the survey relies
+on still exists, it is just carried by `idempotent_replay` rather than by the
+status code. The concurrency row is a behaviour change — a blocked start is no
+longer refused at all — so the paragraph below, which reads the 200/409 split as
+"the two situations are separable by status", **is no longer true as stated**.
+They remain separable; the discriminator is now the flag plus which run the
+response names, not the code. Re-derive before citing this table.
 
 Those are the two situations that matter to a caller and they are already
 separable: one means *your work is running*, the other means *someone else's is*.

@@ -56,16 +56,19 @@ import uuid
 import pytest
 
 
-def run_id(body):
-    """The run id, whichever of the two shapes the response used.
-
-    A fresh start answers `{"id": ...}` and a deduplicated one answers
-    `{"already_started": "true", "workflow_id": ...}`. Reading only `id` makes
-    every deduplicated response look like a *different* run, which inverts the
-    result of every test in this file -- measured, while probing this case,
-    against a control that was known to deduplicate.
-    """
-    return body.get("id") or body.get("workflow_id")
+# The `run_id(body)` shim that stood here is GONE, and its deletion is the
+# reason this file changed.
+#
+# It read the id out of whichever of two shapes a response used: a fresh start
+# answered `{"id": ...}` and a deduplicated one `{"already_started": "true",
+# "workflow_id": ...}`. Reading only `id` made every deduplicated response look
+# like a DIFFERENT run, which inverted the result of every test in this file --
+# measured at the time against a control known to deduplicate, not reasoned out.
+#
+# cleat#1169 made a replay return the original response, so there is one shape
+# and `body["id"]` is always the id. The shim is not merely unnecessary now: it
+# would be harmful, because `.get("id") or .get("workflow_id")` silently papers
+# over a regression that reintroduced the rename.
 
 
 def start_twice(cleat, workflow, key_a, key_b, *, same_payload=False):
@@ -77,7 +80,7 @@ def start_twice(cleat, workflow, key_a, key_b, *, same_payload=False):
     deduplicated into a passing test.
 
     Specifically NOT because the blank-key cases require it. They assert 201,
-    201, two distinct run ids, and no `already_started` -- every one of which
+    201, two distinct run ids, and `idempotent_replay: false` -- every one of which
     holds with identical payloads, since a blank key is absent and an absent key
     never deduplicates. Crediting them with needing distinct inputs would be
     describing work the test is not doing. (WS-1 caught that; the first version
@@ -87,7 +90,7 @@ def start_twice(cleat, workflow, key_a, key_b, *, same_payload=False):
     cleat#1170 a reused key carrying a different input is refused with
     `409 idempotency_key_input_mismatch` rather than replayed, so a dedup
     assertion driven by differing payloads now measures the refusal instead of
-    the dedup -- and fails describing a missing `already_started` rather than
+    the dedup -- and fails describing a missing `idempotent_replay` rather than
     the mismatch that caused it.
 
     A blank key is unaffected either way: no idempotency row is written, so
@@ -138,13 +141,17 @@ def test_a_blank_idempotency_key_does_not_deduplicate(cleat, retry_workflow, bla
         "identifier became a real one, so two unrelated requests that both failed "
         "to set the header now share a run."
     )
-    assert run_id(second) != run_id(first), (
-        f"both starts returned run {run_id(first)!r} for a blank key {blank!r}. "
+    assert second["id"] != first["id"], (
+        f"both starts returned run {first['id']!r} for a blank key {blank!r}. "
         "The second caller was handed the first caller's workflow."
     )
-    assert second.get("already_started") is None, (
-        f"the second start reports already_started={second.get('already_started')!r}, "
-        f"so cleat considered {blank!r} a key it had seen before"
+    assert second.get("idempotent_replay") is False, (
+        f"the second start reports idempotent_replay="
+        f"{second.get('idempotent_replay')!r}, so cleat considered {blank!r} a key "
+        f"it had seen before. Asserted as `is False` rather than as absent: since "
+        f"cleat#1169 the flag is on every keyed response including the original, "
+        f"so absence would mean the endpoint stopped sending it -- a different "
+        f"defect that must not read as this one passing."
     )
 
 
@@ -166,21 +173,26 @@ def test_a_real_idempotency_key_still_deduplicates(cleat, retry_workflow):
     # reused key carrying a different input is refused with
     # `409 idempotency_key_input_mismatch` rather than replayed, so driving a
     # dedup assertion with differing payloads measures the refusal instead --
-    # and fails complaining that `already_started` is absent, which names the
-    # symptom and hides the cause.
+    # and fails complaining that `idempotent_replay` is not true, which names
+    # the symptom and hides the cause.
     idem = f"idem-{uuid.uuid4().hex[:8]}"
     (status_a, first), (status_b, second) = start_twice(
         cleat, retry_workflow, idem, idem, same_payload=True)
 
     assert status_a == 201, f"first start rejected: {status_a} {first}"
-    assert status_b == 200, (
-        f"a repeated start with a real key answered {status_b}, not 200: {second!r}. "
+    assert second.get("idempotent_replay") is True, (
+        f"a repeated start with a real key was not marked a replay: {second!r}. "
         "Deduplication is not working at all, which would make every other "
-        "assertion in this file vacuous."
+        "assertion in this file vacuous. (This is the assertion that moved off "
+        "the status code: cleat#1169 replays the original 201, so `status_b == "
+        "200` would now fail against a working engine.)"
     )
-    assert run_id(second) == run_id(first), (
-        f"a repeated real key started a different run: {run_id(first)!r} then "
-        f"{run_id(second)!r}"
+    assert status_b == status_a, (
+        f"the replay answered {status_b}, not the first call's {status_a}: {second!r}"
+    )
+    assert second["id"] == first["id"], (
+        f"a repeated real key started a different run: {first['id']!r} then "
+        f"{second['id']!r}"
     )
 
 
@@ -211,7 +223,7 @@ def test_whitespace_around_a_key_is_not_part_of_it(cleat, retry_workflow):
     )
 
     assert status_a == 201, f"first start rejected: {status_a} {first}"
-    assert status_b == 200 and run_id(second) == run_id(first), (
+    assert second["id"] == first["id"], (
         f"`'  {bare}  '` and `'{bare}'` started different runs "
         f"({status_b}, {second!r}), so header values are no longer being trimmed "
         "on the way in. The blank-key cases in this file pass BECAUSE of that "
@@ -230,10 +242,15 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
     dead-lettered. Three outcomes, three different next actions for the caller,
     one response.
 
-    The consequence worth stating: **a client that treats `already_started` as
-    success reports a dead-lettered workflow as succeeded.** Nothing in the
+    The consequence worth stating: **a client that treats a replayed response
+    as success reports a dead-lettered workflow as succeeded.** Nothing in the
     response contradicts that reading, and the caller has to make a second
     request to find out otherwise.
+
+    cleat#1169 renamed the marker this paragraph used to name -- it was
+    `already_started: "true"` and is now `idempotent_replay: true` -- and the
+    hazard is unchanged by the rename, because it was never about the field's
+    spelling. Reading "this is a replay" as "the work succeeded" is the error.
 
     Not a claim that the dedup is wrong. It returns the right id -- the sibling
     test above pins that -- and the key row carries a 7-day expiry, which is a
@@ -301,10 +318,10 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
 
     # Both retries must at least name the run they joined -- that half works.
     for label, resp in (("success", after_success), ("failure", after_failure)):
-        assert resp.get("already_started") == "true", (
-            f"the {label} retry did not report already_started: {resp!r}"
+        assert resp.get("idempotent_replay") is True, (
+            f"the {label} retry did not report idempotent_replay: {resp!r}"
         )
-        assert resp.get("workflow_id"), (
+        assert resp.get("id"), (
             f"the {label} retry named no run: {resp!r}"
         )
 
@@ -337,7 +354,7 @@ def test_a_retry_is_told_the_same_thing_whatever_became_of_the_run(
     )
     assert after_failure.get("error"), (
         f"a retry after a failed run carried no error: {after_failure!r}. A "
-        f"client that treats already_started as success would report a "
+        f"client that treats idempotent_replay as success would report a "
         f"dead-lettered workflow as succeeded, which is the consequence this "
         f"test exists to prevent"
     )
