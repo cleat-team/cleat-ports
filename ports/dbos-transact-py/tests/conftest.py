@@ -544,8 +544,8 @@ def _build(pkg_name: str, build_flags: str = "") -> str:
     # failing test, which puts the prediction in front of whoever is reading the
     # failure it predicted.
     # built.stderr alone is complete, and that is the WRAPPER's doing, not
-    # cleat's: scripts/build-workflow.sh line 76 runs the whole `cleat build`
-    # with `) >&2`, merging cleat's two streams here while its own stdout carries
+    # cleat's: scripts/build-workflow.sh runs the whole `cleat build` invocation
+    # inside `( ... ) >&2`, merging cleat's two streams here while its stdout carries
     # only the .wasm path. cleat itself splits warnings across both streams under
     # the identical "  Warning: " prefix -- analyzer warnings including W003 on
     # stdout, orphaned-import warnings on stderr -- so a consumer calling the CLI
