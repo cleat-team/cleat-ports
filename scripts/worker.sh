@@ -872,6 +872,32 @@ start() {
     exit 2
   fi
 
+  # BOTH halves of cleat#1565, and the second one is why this PR was wrong once.
+  #
+  # --plugin-egress-allow-private (below) gets the plugin past the FLOOR, which
+  # refuses every private address regardless of configuration. It does not get
+  # it past the TENANT allowlist: a plugin host-function call is made on behalf
+  # of a tenant, and an absent list permits nothing by design ("absence of a
+  # policy is not permission").
+  #
+  # So the fixture host has to be on this suite's tenant list as well. There is
+  # no worker flag for it -- a tenant's list is a tenant's, written as rows in
+  # admin.tenant_egress_allow, and cleatctl is the only thing that writes them.
+  #
+  # HOW THIS WAS MISSED, recorded because the failure mode is the trap not the
+  # fix: it passed locally and failed in CI, because a `cleatctl egress-allow
+  # add` run by hand hours earlier was still in the local database. The local
+  # environment had state CI did not, and the flag alone looked sufficient.
+  if [ -x "$ROOT/bin/cleatctl" ]; then
+    "$ROOT/bin/cleatctl" -db "$CLEAT_PORTS_DSN" \
+      egress-allow add "$CLEAT_PORTS_TENANT" "$FIXTURE_HOST" >/dev/null 2>&1 || {
+        echo "could not put $FIXTURE_HOST on tenant $CLEAT_PORTS_TENANT's egress allowlist" >&2
+        exit 2; }
+  else
+    echo "bin/cleatctl missing -- run: make install-cleat" >&2
+    exit 2
+  fi
+
   PLUGIN_CONFIG="$CLEAT_PORTS_RESULTS_DIR/plugin-config.json"
   mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   cat > "$PLUGIN_CONFIG" <<JSON
