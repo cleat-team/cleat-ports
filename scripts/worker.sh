@@ -844,6 +844,34 @@ start() {
   # Written every start rather than once: the fixture port comes from env.sh
   # and a stale file would point a later run at the wrong port, which surfaces
   # as a connection refused inside the plugin rather than as a config problem.
+  # The fixture is on loopback, and since cleat#1601 put plugin egress behind
+  # the same guard as guest egress the floor refuses it -- cleat's own words,
+  # "loopback: the worker's own API and admin surface". That is not a
+  # misconfiguration on either side: the floor is right to refuse loopback by
+  # default, and this harness is right to run its fake model server locally.
+  #
+  # cleat#1627 is the seam. --plugin-egress-allow-private names a host a PLUGIN
+  # may reach in private address space; it does not touch guest fetches or the
+  # embedded runner, so a workflow in this suite still cannot reach the
+  # deployment's own network. cleat#1630 shipped it. cleat-ports#243 is the
+  # failure it fixes: the same two test_plugins.py cases red on all three
+  # dialects since 2026-09-15.
+  #
+  # DERIVED from the fixture URL rather than written as 127.0.0.1, for two
+  # reasons. CLEAT_PORTS_FIXTURE_URL is overridable and every agent sandbox
+  # overrides it; and the flag matches on the HOST as the endpoint URL writes
+  # it, so "localhost" and "127.0.0.1" are different entries and a hardcoded
+  # one would silently stop matching the moment someone changed the URL.
+  FIXTURE_HOST="${CLEAT_PORTS_FIXTURE_URL#*://}"
+  FIXTURE_HOST="${FIXTURE_HOST%%/*}"
+  FIXTURE_HOST="${FIXTURE_HOST%%:*}"
+  if [ -z "$FIXTURE_HOST" ]; then
+    # Not a warning. The plugin tests would fail later with an egress refusal
+    # that names the floor and says nothing about this line.
+    echo "could not derive a host from CLEAT_PORTS_FIXTURE_URL=$CLEAT_PORTS_FIXTURE_URL" >&2
+    exit 2
+  fi
+
   PLUGIN_CONFIG="$CLEAT_PORTS_RESULTS_DIR/plugin-config.json"
   mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   cat > "$PLUGIN_CONFIG" <<JSON
@@ -883,6 +911,7 @@ JSON
       -api-addr "127.0.0.1:$API_PORT" \
       -bench-svc-url "$CLEAT_PORTS_FIXTURE_URL" \
       -plugin-config "$PLUGIN_CONFIG" \
+      -plugin-egress-allow-private "$FIXTURE_HOST" \
       -enable-admin-api \
       ${extra[@]+"${extra[@]}"} \
       >"$LOGFILE" 2>&1 ) &
