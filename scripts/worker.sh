@@ -245,6 +245,42 @@ mint_key() {
   fi
 }
 
+# allow_fixture_egress puts the fixture host on this suite's tenant egress
+# allowlist, which is the SECOND permission a plugin call needs.
+#
+# --plugin-egress-allow-private (on the worker command line) gets the plugin past
+# the FLOOR, which refuses every private address regardless of configuration. It
+# does not get it past the tenant allowlist: a plugin host-function call is made
+# on behalf of a tenant, and an absent list permits nothing by design.
+#
+# CALLED AFTER READINESS, NOT BEFORE THE WORKER STARTS, and that ordering is the
+# whole reason this function exists separately. admin.tenant_egress_allow is
+# created by migration 071, and the worker applies migrations at startup -- so
+# the first version of this ran before the table existed and failed every port
+# with "relation admin.tenant_egress_allow does not exist". It passed locally
+# because the local database had been migrated by an earlier run; a fresh CI
+# database had not.
+allow_fixture_egress() {
+  # Derives the host itself rather than reading a variable the start block set.
+  # `ensure` reaches readiness by two routes -- it started the worker, or one was
+  # already running and it only verified it -- and on the second route the start
+  # block never ran, so a variable from it would be empty here and the entry
+  # would be added for the host "".
+  local host="${CLEAT_PORTS_FIXTURE_URL#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  [ -n "$host" ] || {
+    echo "could not derive a host from CLEAT_PORTS_FIXTURE_URL=$CLEAT_PORTS_FIXTURE_URL" >&2
+    exit 2; }
+
+  [ -x "$ROOT/bin/cleatctl" ] || {
+    echo "bin/cleatctl missing -- run: make install-cleat" >&2; exit 2; }
+  "$ROOT/bin/cleatctl" -db "$CLEAT_PORTS_DSN" \
+    egress-allow add "$CLEAT_PORTS_TENANT" "$host" >/dev/null || {
+      echo "could not put $host on tenant $CLEAT_PORTS_TENANT's egress allowlist" >&2
+      exit 2; }
+}
+
 # ensure_second_tenant provisions the tenant a cross-tenant assertion needs.
 #
 # PostgreSQL only, and it SKIPS rather than assumes on the other two.
@@ -872,32 +908,6 @@ start() {
     exit 2
   fi
 
-  # BOTH halves of cleat#1565, and the second one is why this PR was wrong once.
-  #
-  # --plugin-egress-allow-private (below) gets the plugin past the FLOOR, which
-  # refuses every private address regardless of configuration. It does not get
-  # it past the TENANT allowlist: a plugin host-function call is made on behalf
-  # of a tenant, and an absent list permits nothing by design ("absence of a
-  # policy is not permission").
-  #
-  # So the fixture host has to be on this suite's tenant list as well. There is
-  # no worker flag for it -- a tenant's list is a tenant's, written as rows in
-  # admin.tenant_egress_allow, and cleatctl is the only thing that writes them.
-  #
-  # HOW THIS WAS MISSED, recorded because the failure mode is the trap not the
-  # fix: it passed locally and failed in CI, because a `cleatctl egress-allow
-  # add` run by hand hours earlier was still in the local database. The local
-  # environment had state CI did not, and the flag alone looked sufficient.
-  if [ -x "$ROOT/bin/cleatctl" ]; then
-    "$ROOT/bin/cleatctl" -db "$CLEAT_PORTS_DSN" \
-      egress-allow add "$CLEAT_PORTS_TENANT" "$FIXTURE_HOST" >/dev/null 2>&1 || {
-        echo "could not put $FIXTURE_HOST on tenant $CLEAT_PORTS_TENANT's egress allowlist" >&2
-        exit 2; }
-  else
-    echo "bin/cleatctl missing -- run: make install-cleat" >&2
-    exit 2
-  fi
-
   PLUGIN_CONFIG="$CLEAT_PORTS_RESULTS_DIR/plugin-config.json"
   mkdir -p "$CLEAT_PORTS_RESULTS_DIR"
   cat > "$PLUGIN_CONFIG" <<JSON
@@ -978,7 +988,7 @@ JSON
   # nothing written".
   local waited=0 stalled=0 size=0 last_size=-1
   while [ "$waited" -lt 600 ]; do          # 300s absolute ceiling
-    healthy && { mint_key; ensure_second_tenant; echo "worker ready at $API_URL (pid $(cat "$PIDFILE"))"; return 0; }
+    healthy && { mint_key; ensure_second_tenant; allow_fixture_egress; echo "worker ready at $API_URL (pid $(cat "$PIDFILE"))"; return 0; }
     running || { echo "worker exited during startup; log follows:" >&2
                  tail -20 "$LOGFILE" >&2; rm -f "$PIDFILE"; exit 1; }
     size=$(wc -c <"$LOGFILE" 2>/dev/null | tr -d ' ')
