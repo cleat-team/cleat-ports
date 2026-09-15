@@ -367,6 +367,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
 | `test_notify_fallback.py` | 2 | `test_failures.py` — upstream test_notification_errors -- the polling safety net behind pg_notify |
+| `test_observe_arbitrary_run.py` | 2 | `test_dbos.py` — upstream test_retrieve_workflow_in_workflow -- reading a run you did not spawn, which poll_child has always allowed despite its name (ISSUES 33 withdrawn, cleat#1120) |
 | `test_parallelism.py` | 3 | `test_async.py` — the one portable case: workflows actually run at once |
 | `test_plugins.py` | 2 | none — cleat has no upstream analogue; plugin calls through a real worker |
 | `test_priority_order.py` | 2 | `test_queue.py` — priority is a queue control |

@@ -61,17 +61,25 @@ def test_the_same_idempotency_key_starts_one_run(cleat, retry_workflow, fixture_
         idempotency_key=idem,
     )
 
-    assert second.get("workflow_id") == first["id"], (
+    assert second.get("id") == first["id"], (
         f"the second start created a different run: first={first['id']!r} "
         f"second={second!r}. Deduplication is keyed on the Idempotency-Key header."
     )
-    assert status_b == 200, (
-        f"a deduplicated start answered {status_b}, not 200. 201 would mean "
-        f"'created', which is exactly what did not happen: {second!r}"
+    assert status_b == status_a, (
+        f"a deduplicated start answered {status_b}, not the first call's "
+        f"{status_a}. Since cleat#1169 a replay repeats the ORIGINAL response, so "
+        f"status parity is the assertion; the duplicate is signalled by "
+        f"idempotent_replay rather than by a different code: {second!r}"
     )
-    assert second.get("already_started") == "true", (
+    assert second.get("idempotent_replay") is True, (
         f"the response does not say the run already existed, so a caller cannot "
         f"tell a fresh start from a deduplicated one: {second!r}"
+    )
+    assert first.get("idempotent_replay") is False, (
+        f"the FIRST start carried idempotent_replay={first.get('idempotent_replay')!r}, "
+        f"not False: {first!r}. The flag is on the original as well as the replay "
+        f"so a caller can read it unconditionally -- an ABSENT field cannot be "
+        f"told from a server too old to send one."
     )
 
     cleat.await_terminal(first["id"], timeout=60.0)
@@ -132,7 +140,7 @@ def test_a_completed_run_still_answers_for_its_idempotency_key(
 
     status_b, second = cleat.start(retry_workflow, payload, idempotency_key=idem)
 
-    assert second.get("workflow_id") == first["id"], (
+    assert second.get("id") == first["id"], (
         f"re-submitting a completed run's idempotency key started a DIFFERENT "
         f"run: first={first['id']!r} second={second!r}. cleat's key binding is "
         f"stored with a 7-day expiry rather than released at completion, so a "
@@ -140,12 +148,12 @@ def test_a_completed_run_still_answers_for_its_idempotency_key(
         f"had already had. (This is where DBOS deliberately differs -- see the "
         f"docstring -- so a change here is a decision, not a bug fix.)"
     )
-    assert status_b == 200, (
+    assert status_b == status_a, (
         f"a start deduplicated against a COMPLETED run answered {status_b}, not "
-        f"200. 201 claims the run was created by this call, which it was not: "
-        f"{second!r}"
+        f"the first call's {status_a}. cleat#1169 replays the original response "
+        f"verbatim, so the status matching is the contract: {second!r}"
     )
-    assert second.get("already_started") == "true", (
+    assert second.get("idempotent_replay") is True, (
         f"the response does not mark this start as a duplicate, so a caller "
         f"cannot tell that the result it is about to read belongs to an earlier "
         f"submission: {second!r}"
@@ -267,12 +275,16 @@ def test_a_key_used_for_one_workflow_does_not_answer_for_another(
         signal_timeout_workflow, {"timeoutMs": 3000}, idempotency_key=key
     )
 
-    if second_status == 200 and second.get("workflow_id") == first["id"]:
+    # The ID is the discriminator, and since cleat#1169 it is the ONLY one. A
+    # replayed start now repeats the original 201, so a correct fresh start of
+    # signal_timeout_workflow and a wrong replay of complex_arg_workflow's run
+    # carry the same status and differ only in which run they name.
+    if second.get("id") == first["id"]:
         pytest.skip(
             f"cleat#1047: starting {signal_timeout_workflow!r} with a key already "
-            f"used by {complex_arg_workflow!r} answered 200 "
-            f"{second!r} -- the id of the OTHER workflow's run, with "
-            f"already_started true. The requested workflow never started and "
+            f"used by {complex_arg_workflow!r} answered {second_status} "
+            f"{second!r} -- the id of the OTHER workflow's run, marked "
+            f"idempotent_replay. The requested workflow never started and "
             f"nothing in the response says so.\n"
             f"\n"
             f"An Idempotency-Key is hashed as sha256(key) and looked up on "
@@ -287,7 +299,7 @@ def test_a_key_used_for_one_workflow_does_not_answer_for_another(
             f"#1047 is open. The day it is fixed this test passes on its own."
         )
 
-    assert second_status != 200 or second.get("workflow_id") != first["id"], (
+    assert second.get("id") != first["id"], (
         f"second start answered {second_status} {second!r}"
     )
 
@@ -302,11 +314,20 @@ def test_concurrent_starts_under_one_key_elect_exactly_one_creator(
     docs/cadence-persistence-survey.md: that suite's
     TestCreateWorkflowExecutionConcurrentCreate spawns concurrent creates of one
     workflow id and asserts `s.Equal(int32(1), numOfErr)` -- exactly one racer
-    fails. Cadence ERRORS the losers; cleat answers them 200 with
-    `already_started`. Same election, different report, and this asserts cleat's.
+    fails. Cadence ERRORS the losers; cleat answers them the WINNER'S OWN
+    RESPONSE, marked `idempotent_replay: true`. Same election, different report,
+    and this asserts cleat's.
+
+    THE ELECTION IS NO LONGER VISIBLE IN THE STATUS CODE, which is what this
+    test had to change for. Before cleat#1169 the losers answered 200 and the
+    winner 201, so counting 201s counted creators. A replay now repeats the
+    original response verbatim -- all eight racers answer 201 -- and partitioning
+    on the status would find eight creators and zero duplicates, failing an
+    engine that is behaving perfectly. The flag carries the election now, so the
+    partition is on the flag, and the uniform 201 is asserted separately.
 
     WHY ITS NEIGHBOURS DO NOT COVER IT. test_the_same_idempotency_key_starts_one
-    _run already pins the 201-then-200 distinction -- but SEQUENTIALLY, sending
+    _run already pins the fresh-then-replay distinction -- but SEQUENTIALLY, sending
     the second start after the first returned. So does every other dedup test
     here, and so does ports#156's pair in the durabletask-go port. Sequential
     starts exercise the LOOKUP: the run exists, the second start finds it.
@@ -330,30 +351,35 @@ def test_concurrent_starts_under_one_key_elect_exactly_one_creator(
             pool.submit(cleat.start, retry_workflow, payload, idempotency_key=idem)
             for _ in range(racers)]]
 
-    creators = [b for st, b in results if st == 201]
-    dupes = [b for st, b in results if st == 200]
+    assert {st for st, _ in results} == {201}, (
+        f"not every racer was answered 201: {[st for st, _ in results]}. Since "
+        f"cleat#1169 a replay repeats the original response, so a uniform status "
+        f"is expected and a stray code is a real difference. Cadence errors every "
+        f"racer but one; if cleat has adopted that, this test should assert it "
+        f"rather than be deleted."
+    )
+
+    flags = [b.get("idempotent_replay") for _, b in results]
+    assert all(f is True or f is False for f in flags), (
+        f"a racer carried no idempotent_replay, or a non-bool: {flags!r}. The "
+        f"election is unreadable without it -- see the docstring."
+    )
+    creators = [b for _, b in results if b.get("idempotent_replay") is False]
+    dupes = [b for _, b in results if b.get("idempotent_replay") is True]
 
     assert len(creators) == 1, (
-        f"{len(creators)} of {racers} concurrent starts were answered 201, not one. "
-        f"A 201 means 'this call created the run', so more than one is two callers "
-        f"each told they created it -- a check-then-insert with no uniqueness "
-        f"constraint behind it. statuses: {[st for st, _ in results]}"
-    )
-    assert len(creators) + len(dupes) == racers, (
-        f"some starts were neither 201 nor 200: {[st for st, _ in results]}. "
-        f"Cadence errors every racer but one; if cleat has adopted that, this "
-        f"test should assert it rather than be deleted."
+        f"{len(creators)} of {racers} concurrent starts reported "
+        f"idempotent_replay=false, not one. False means 'this call created the "
+        f"run', so more than one is two callers each told they created it -- a "
+        f"check-then-insert with no uniqueness constraint behind it. flags: {flags!r}"
     )
 
     run_id = creators[0]["id"]
     for b in dupes:
-        assert b.get("workflow_id") == run_id, (
-            f"a deduplicated racer was pointed at {b.get('workflow_id')!r}, not at "
+        assert b.get("id") == run_id, (
+            f"a deduplicated racer was pointed at {b.get('id')!r}, not at "
             f"the created run {run_id!r}. The election picked one creator and told "
             f"the losers about a different run."
-        )
-        assert b.get("already_started") == "true", (
-            f"a deduplicated racer did not report already_started: {b!r}"
         )
 
     final = cleat.await_terminal(run_id, timeout=60.0)

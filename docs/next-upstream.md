@@ -85,6 +85,24 @@ is written on every child row and surfaced to nobody), an idempotency key on
 `cleat_signal_workflow`, and `list_workflows` filters that do not exist. Three
 more are already covered here under different local names.
 
+> **Third correction (2026-09-13): one of those four was not missing.**
+> "poll/await_child are children-only" is false. `PollChild` hands the run id
+> straight to `GetChildResult`, whose query is `WHERE id = ?` with no parentage
+> predicate on any of the three dialects, and the ABI binding filters nothing;
+> a probe returned an unrelated workflow's full result body on all three. So
+> the arbitrary-workflow status read **was available the whole time** and is
+> now ported as `test_observe_arbitrary_run.py`; ISSUES 33 is withdrawn and the
+> correction is recorded on cleat#1120. **The residual of four drops to three.**
+> I am deliberately not restating the overall total: the correction above
+> already holds that the 18 is stale and a defensible figure is 2–4, so
+> decrementing it would republish a number this document has withdrawn.
+>
+> It is the same lesson as the two corrections above, one layer deeper. Those
+> were about a verified enumeration making an unverified classification look
+> verified. This one was not screened by scanning the export list at all — it
+> was screened by reading a call's **name**. `poll_child` says `child`, three
+> files repeated it, and nobody ran it.
+
 **The 9 was enumerated AND machine-verified, and still wrong, which is the part
 worth keeping.** The check that ran proved *these 61 names are the file's cases,
 partitioned, none invented* — a claim about the **upstream**. "Portable" is a

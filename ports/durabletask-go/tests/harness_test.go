@@ -430,8 +430,8 @@ func deploy(t *testing.T, pkg, workflowName string) string {
 		t.Fatalf("building %s failed: %v\n%s", pkg, err, tail(stderr.String(), 2000))
 	}
 	// Reading STDERR alone is complete here, and that is a property of the
-	// wrapper rather than of cleat. scripts/build-workflow.sh line 76 runs the
-	// whole `cleat build` invocation with `) >&2`, so cleat's stdout and stderr
+	// wrapper rather than of cleat. scripts/build-workflow.sh runs the whole
+	// `cleat build` invocation inside `( ... ) >&2`, so cleat's stdout and stderr
 	// are MERGED into this stream and the wrapper's own stdout carries nothing
 	// but the .wasm path.
 	//

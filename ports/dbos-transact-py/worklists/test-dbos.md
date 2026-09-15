@@ -384,7 +384,7 @@ failure was that its check was not written down beside its conclusion.
 | `test_send_recv` | **portable** (one part) | several signals to one workflow arriving in a defined order. Nothing in `test_signals.py` or `test_send.py` asserts ordering. |
 | `test_simple_workflow_attempts_counter` | **portable** | expressible through the API rather than upstream's direct system-DB read: `reclaim_count`/`generation`, plus `started_at >= created_at` (cleat#1090, #1091). |
 | `test_child_workflow` | needs something cleat lacks → **now fixed upstream of us** | the parentage link. `workflow_instances.parent_workflow_id` was written on every child and in no `GetWorkflowByID` SELECT, so no client could read it. Filed as cleat#1103 and fixed; portable once that ships. |
-| `test_retrieve_workflow_in_workflow` | needs something cleat lacks | reads an *arbitrary* workflow's status from **inside** a workflow. `cleat_poll_child` and `cleat_await_child` are the only guest-side cross-workflow reads and both are **children only**. ISSUES 33. |
+| `test_retrieve_workflow_in_workflow` | **portable** — was "needs something cleat lacks", and the basis was false | reads an *arbitrary* workflow's status from **inside** a workflow. The old verdict rested on `cleat_poll_child` being **children-only**, which was never measured and is not true: `PollChild` hands the run id straight to `GetChildResult`, whose query is `WHERE id = ?` with no parentage predicate on any dialect. Ported as `test_observe_arbitrary_run.py`. ISSUES 33, cleat#1120. |
 | `test_send_idempotency_key` | needs something cleat lacks | `cleat_signal_workflow(target, signal, payload)` — three arguments, no idempotency key. ISSUES 34. |
 | `test_send_recv_temp_wf` | needs something cleat lacks | its send/recv half is covered; its subject is `list_workflows` with id-prefix and start-time filters, and `WorkflowFilter` is `{Status, InputContains, ErrorContains, Search, Offset, Limit}`. ISSUES 35. |
 | `test_sleep` | already covered | duration asserted in `test_complex_args.py:72` and `test_replay.py:76`. Its `sleep_counter == 1` is **not** replay — it is idempotent re-start by workflow id, which is `test_queues.py::test_the_same_idempotency_key_starts_one_run`. |
@@ -392,10 +392,22 @@ failure was that its check was not written down beside its conclusion.
 | `test_set_get_events` | already covered | the missing-key case is in `test_query_state.py`; the rest of the case iterates `use_listen_notify`, which is DBOS's own notification mechanism rather than an engine claim. |
 
 **Why `test_child_workflow` is the instructive one.** `cleat_poll_child` looks
-like it answers "whose child is this" and does not — it is children-only, read
-from the parent's side. That is the same near-miss as `cleat_await_any_child`
-against `wait_first`, which *this survey caught*, one case earlier. Catching a
-trap does not inoculate against it; the check has to be run per case.
+like it answers "whose child is this" and does not. That is the same near-miss as
+`cleat_await_any_child` against `wait_first`, which *this survey caught*, one
+case earlier. Catching a trap does not inoculate against it; the check has to be
+run per case.
+
+**And the correction this survey needed, which arrived late.** The sentence
+above used to end "— it is children-only, read from the parent's side." That
+was wrong, and it is the reason `test_retrieve_workflow_in_workflow` sat shelved.
+`poll_child` is not children-only; nothing in the guest call, the ABI binding or
+the store query restricts it by parentage, and a probe on all three dialects
+returned an unrelated workflow's full result body (cleat#1120). The name was
+read as a specification. **A capability was written off on the strength of an
+identifier**, which is the same failure as the two near-misses above with the
+polarity reversed: those were calls whose name matched a capability they did not
+have, and this was a call whose name hid a capability it did have. Both are
+settled the same way — by running it.
 
 **The rule this adds to the three above: name which proposition each check
 establishes.** Enumeration against the pin and portability against cleat are

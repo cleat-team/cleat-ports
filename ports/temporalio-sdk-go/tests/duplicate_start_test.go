@@ -143,15 +143,21 @@ func TestADuplicateStartOfAnUnfinishedWinnerNamesItAndSaysItIsNotDone(t *testing
 	awaitParked(t, firstID, sleepMs/2*time.Millisecond, 30*time.Second)
 
 	dup := start(t, wf, k, map[string]any{"marker": "running-arm", "sleepMs": sleepMs, "fail": 0})
-	if dup.Status != http.StatusOK {
-		t.Fatalf("the duplicate start answered %d, want 200: %s", dup.Status, dup.Raw)
+	// Status PARITY with the first call, not a literal. cleat#1169 replays the
+	// original response, so a duplicate answers whatever the original did; a
+	// hardcoded 200 asserted the old policy, where the status itself carried
+	// the duplicate signal.
+	if dup.Status != first.Status {
+		t.Fatalf("the duplicate start answered %d, want the first call's %d: %s",
+			dup.Status, first.Status, dup.Raw)
 	}
-	if got, _ := dup.Body["already_started"].(string); got != "true" {
-		t.Fatalf("the retry was not recognised as a duplicate (already_started=%q): %s", got, dup.Raw)
+	if got, ok := dup.Body["idempotent_replay"].(bool); !ok || !got {
+		t.Fatalf("the retry was not recognised as a duplicate (idempotent_replay=%#v): %s",
+			dup.Body["idempotent_replay"], dup.Raw)
 	}
-	if got, _ := dup.Body["workflow_id"].(string); got != firstID {
+	if got, _ := dup.Body["id"].(string); got != firstID {
 		t.Errorf("the duplicate names run %q, the first start created %q -- a dedup that "+
-			"returned a DIFFERENT run would satisfy already_started and be the failure "+
+			"returned a DIFFERENT run would satisfy idempotent_replay and be the failure "+
 			"idempotency exists to prevent", got, firstID)
 	}
 
@@ -195,11 +201,11 @@ func TestADuplicateStartOfAFinishedWinnerSaysItIsDone(t *testing.T) {
 	// store cannot answer: core's double reports alreadyExisted from its own
 	// state, so a real key that stopped resolving on completion would pass
 	// there and fail here.
-	if got, _ := dup.Body["already_started"].(string); got != "true" {
+	if got, ok := dup.Body["idempotent_replay"].(bool); !ok || !got {
 		t.Fatalf("after the winner finished, the same key started a NEW run rather than "+
 			"resolving to the old one: %s", dup.Raw)
 	}
-	if got, _ := dup.Body["workflow_id"].(string); got != firstID {
+	if got, _ := dup.Body["id"].(string); got != firstID {
 		t.Errorf("the duplicate names %q, the winner is %q", got, firstID)
 	}
 

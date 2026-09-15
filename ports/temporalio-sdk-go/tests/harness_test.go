@@ -304,12 +304,17 @@ func startedRunID(t *testing.T, r response) string {
 	if r.Status != http.StatusOK && r.Status != http.StatusCreated && r.Status != http.StatusAccepted {
 		t.Fatalf("start answered %d: %s", r.Status, r.Raw)
 	}
-	for _, k := range []string{"id", "workflow_id", "run_id"} {
-		if v, ok := r.Body[k].(string); ok && v != "" {
-			return v
-		}
+	// ONE key, deliberately. The `workflow_id` and `run_id` fallbacks that
+	// stood here arrived with the duplicate-start port (#225), because a
+	// deduplicated start used to answer `{"already_started":"true",
+	// "workflow_id":...}` while a fresh one answered `{"id":...}`. cleat#1169
+	// collapsed those into one shape, so a fallback now has nothing to fall
+	// back to -- and would hide a regression that brought the rename back by
+	// quietly resolving it.
+	if v, ok := r.Body["id"].(string); ok && v != "" {
+		return v
 	}
-	t.Fatalf("start answered %d with no run id: %s", r.Status, r.Raw)
+	t.Fatalf("start answered %d with no `id`: %s", r.Status, r.Raw)
 	return ""
 }
 
