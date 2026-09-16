@@ -81,7 +81,86 @@ assuming the receiver variable is `s` did the same to a file that uses another
 name. Both errors report a populated file as empty — they make the survey look
 *more* complete, not less, which is why neither announced itself.
 
-### The three semaphore suites are the part worth reading next
+### READ 2026-09-16: the semaphore suites yield ZERO, and visibility is the next read
+
+**All fourteen semaphore cases are now read, at the pinned commit, and none is
+both portable and novel.** The recommendation below is superseded; it is kept
+because how it was wrong is the point.
+
+| suite | cases | portable & novel | why not |
+|---|---:|---:|---|
+| `semaphoreMetadataPersistenceTest.go` | 5 | **0** | every case is capacity *declaration* |
+| `semaphoreTasksPersistenceTest.go` | 5 | **0** | 2 already covered; 3 are RangeID/bucket sharding |
+| `semaphoreTokenPersistenceTest.go` | 4 | **0** | 1 already covered; 3 need N>1 |
+| | **14** | **0** | |
+
+**The premise was the error.** This section said the semaphores "are the only
+unread group aimed at a cleat surface that **already exists** — `AcquireLock`
+and `ReleaseLock`, concurrency keys, and the 409". That surface is a **mutex**,
+and Cadence's is a **counting semaphore**. The two are not the same shape:
+
+* Metadata carries `Size: 100, BucketSize: 10` — a declared capacity, a conflict
+  on re-declare, and a listing of which semaphores exist. Cleat has no declare
+  step at all; a key is conjured by its first acquirer and `concurrency_keys` is
+  `key_hash BYTEA PRIMARY KEY`, so N is 1 by construction. All 5 land on
+  cleat#1116.
+* Tokens are **N pre-seeded rows**, each individually grantable —
+  `SeedSemaphoreTokens(TokenIDs)`, then `GrantSemaphoreToken` returning
+  `SemaphoreGrantApplied` or `SemaphoreGrantSlotTaken`. With **one** token that
+  is exactly cleat's mutex, and `TestGrantAndRelease` — including its
+  wrong-owner release — is already covered by
+  `ports/dbos-transact-py/tests/test_locks.py:42`,
+  `test_a_held_lock_cannot_be_taken_and_is_released`. The other three need two
+  or more tokens, or the seed step.
+
+Worth recording for cleat#1116 rather than only here: a system that shipped a
+counting semaphore stores it as **per-permit rows plus a declared capacity**,
+not as an integer counter. That is the crash-safe shape, and it is corroboration
+for the design argument on that issue rather than a new idea.
+
+### Visibility is the next read, and the reason is measured rather than named
+
+| | semaphores | `dbVisibilityPersistenceTest.go` |
+|---|---:|---:|
+| cases | 14 | 12 |
+| portable & novel | **0** | **~8, see scope** |
+| issues already yielded | 1 (cleat#1172) | 2 (cleat#1182, cleat#1183) |
+
+The filtering surface those cases exercise **exists in cleat and is actively
+growing because of this port**. `engine/store_types.go:353` now carries twelve
+fields — `Status, InputContains, ErrorContains, Search, Offset, Limit, DefName,
+ErrorCode, IDPrefix, ConcurrencyKey, StartedAfter, StartedBefore` — and its own
+comments cite cleat#1183 and cleat#1122 as the port findings that added them.
+
+Read at body level rather than by name: `TestFilteringByCloseStatus` records a
+Completed and a Failed execution, lists by `Failed`, and asserts exactly one
+result — which is `WorkflowFilter.Status`, and is the shape that produced this
+survey's existing "cleat has no `cancelled` status" finding. `TestBasicVisibility`,
+`TestVisibilityPagination`, `TestFilteringByType`, `TestFilteringByWorkflowID`,
+`TestBasicVisibilityTimeSkew` and `TestGetClosedExecution` map onto `Status`,
+`Offset`/`Limit`, `DefName`, `IDPrefix`, `StartedAfter`/`StartedBefore` and a
+single-run fetch respectively.
+
+`TestClosedWithoutStarted` records a CLOSE with no prior START and asserts it is
+still queryable — Cadence keeps open and closed in separate visibility records,
+and cleat's row is created at start, so that one is probably inexpressible rather
+than a gap. `TestMultipleUpserts` and `TestUpsertWorkflowExecution` are the same
+two-table model and likely go the same way.
+
+**Scope of this read, stated because the paragraph below is about exactly this
+failure.** All 14 semaphore cases were read as names plus the assertions in their
+bodies. The 12 visibility cases were read as names plus the persistence API each
+calls, and **two** — `TestFilteringByCloseStatus` and `TestClosedWithoutStarted`
+— at body level. So "~8" is a better-grounded estimate than a name-based one and
+is still an estimate; the semaphore **0** is not.
+
+### The three semaphore suites are the part worth reading next — SUPERSEDED 2026-09-16
+
+> Kept for its reasoning, not its recommendation: all fourteen were read and yield
+> **zero** portable-and-novel cases. See the two sections above. The paragraph below
+> about judging 33 unread cases by four file names is the part that survived, and it
+> is what redirected this read to visibility.
+
 
 Fourteen of the forty-seven unread cases are semaphores, and they are the only
 unread group aimed at a cleat surface that **already exists**: `AcquireLock` and
