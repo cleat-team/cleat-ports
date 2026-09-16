@@ -41,6 +41,41 @@ SLEEP_MS = 45_000
 RECOVERY_TIMEOUT = 180.0
 
 
+def _recorded_calls(cleat, run_id: str) -> int:
+    """How many `call` events are DURABLE for this run right now.
+
+    `fixture_calls` counts RECEIPT -- the fixture increments when the request
+    arrives. This counts what survived to the database, which is a different
+    instant and the one the assertions below actually depend on.
+
+    cleat#1082, measured: between `callService` returning and the flush
+    committing (`engine/durablecalls.go:158` -> `:175`, blocking on
+    `engine/lifecycle.go:216`) there is a window in which the call HAS happened
+    and no event records it. `docs/durable-calls.md:35` documents a crash there
+    as at-least-once and says the call is re-made on replay. So a test that
+    synchronises on receipt and then asserts exactly-once is asserting something
+    cleat does not promise, and the width of that window is dialect-specific:
+
+        postgres    5.0 - 12.7 ms      (n=8)
+        SQL Server  17.5 - 1790.3 ms   (n=8, bimodal: five under 60ms, three over 360ms)
+
+    `worker.crash()` lands roughly 300ms after the poll observes receipt, so on
+    PostgreSQL the event is always durable first and on SQL Server it is not --
+    which is the whole of cleat#1082's 7:1, and why it was SQL-Server-only.
+
+    Waiting on this instead does NOT weaken the assertion. The engine was
+    measured 16/16 across two dialects to serve a DURABLE call from history
+    rather than re-execute it, so exactly-once is the right assertion once the
+    crash is known to land outside the documented window. The endpoint is a
+    live route and was positive-controlled: it reports the event ~139ms after
+    receipt, so a zero here means not-yet-durable rather than not-visible.
+    """
+    code, body = cleat.api(f"/api/instances/{run_id}/events")
+    if code != 200 or not isinstance(body, list):
+        return 0
+    return len([e for e in body if e.get("type") == "call"])
+
+
 def _body(final):
     raw = final["result"]
     return json.loads(raw) if isinstance(raw, str) else raw
@@ -69,6 +104,16 @@ def test_a_workflow_survives_the_loss_of_its_worker(
         lambda: fixture_calls(f"{key}-before") == 1,
         timeout=60.0,
         what="the pre-crash durable call to reach the fixture",
+    )
+    # ...and then for its EVENT to be durable. Receipt is not enough: see
+    # _recorded_calls. Both waits are kept rather than only the second, because
+    # they fail differently -- a timeout on the first says the call never
+    # happened, on the second that it happened and was never recorded, and
+    # those are different defects.
+    wait_until(
+        lambda: _recorded_calls(cleat, run_id) >= 1,
+        timeout=60.0,
+        what="the pre-crash durable call's event to reach the database",
     )
     assert fixture_calls(f"{key}-after") == 0, (
         "the post-crash call happened before the crash; the sleep is too short "
@@ -142,6 +187,12 @@ def test_an_idempotency_key_survives_the_loss_of_its_worker(
         lambda: fixture_calls(f"{key}-before") == 1,
         timeout=60.0,
         what="the pre-crash durable call to reach the fixture",
+    )
+    # Durable, not merely received -- same reason as the plain recovery test.
+    wait_until(
+        lambda: _recorded_calls(cleat, run_id) >= 1,
+        timeout=60.0,
+        what="the pre-crash durable call's event to reach the database",
     )
     assert fixture_calls(f"{key}-after") == 0, (
         "the post-crash call happened before the crash; the sleep is too short "
@@ -268,6 +319,21 @@ def test_a_recovered_parent_does_not_start_its_child_a_second_time(
     # nothing unless it is known to have been 1 going in. Without this, a
     # parent that spawned twice on the FIRST pass would fail the assertion
     # below and be reported as a recovery defect.
+    # DELIBERATELY NOT given the durable-record wait the two tests above now
+    # have, and this is a scope statement rather than an oversight.
+    #
+    # The same hazard applies in principle: the spawn is recorded by the same
+    # machinery, and `engine/children.go` uses a history lookup that is
+    # character-for-character the one in `engine/durablecalls.go`. But what is
+    # measured is the durable-CALL window (cleat#1082, 16/16 across two
+    # dialects) -- nobody has measured the child-spawn record, and the event
+    # `_recorded_calls` counts is `type == "call"`, which a spawn is not.
+    #
+    # Adding a wait keyed on the wrong event type would hang here rather than
+    # tighten anything, and guessing the right one would be the same move that
+    # made cleat#1082 take a week: asserting across a window without measuring
+    # its width. If this test starts failing intermittently on SQL Server, that
+    # is the first place to look and the measurement is the thing to do.
     before_crash = fixture_calls(key)
     assert before_crash == 1, (
         f"{before_crash} children ran before the crash. This test attributes a "
