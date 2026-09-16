@@ -75,12 +75,23 @@ _SIG = re.compile(r'^func\s+[A-Z]\w*\(h cleat\.HostCalls,?\s*([^)]*)\)', re.M)
 
 
 def _entry_params(pkg_dir: pathlib.Path) -> list[str] | None:
-    """Parameter names of a workflow package's entry point, in order.
+    """REQUIRED parameter names of a workflow package's entry point, in order.
 
     Returns None when the payload does not bind by name at all: an entry point
     whose ONLY parameter is a string receives the raw input JSON instead
     (wasm/exports.go, `len(fields) == 1 && fields[0].GoType == "string"`), so
     for those a "missing parameter" is not a meaningful thing to check.
+
+    OPTIONAL PARAMETERS ARE EXCLUDED, and that is the whole point of the
+    distinction. In Go a `*T` entry-point parameter is cleat#1065's spelling for
+    "absence is expected here" -- the workflow author declaring that a caller
+    may leave it out. Reporting one as omitted would flag the supported case as
+    an error, which is backwards: the star is the author saying so.
+
+    A grouped declaration gives its type to the LAST name in the group, so
+    `a, b *string` makes BOTH optional. The types are resolved right-to-left for
+    that reason; reading left-to-right marks `a` required and is wrong in the
+    permissive direction, which is the direction that does not fail. cleat#1705.
     """
     src = (pkg_dir / "main.go").read_text()
     m = _SIG.search(src)
@@ -96,9 +107,17 @@ def _entry_params(pkg_dir: pathlib.Path) -> list[str] | None:
             fields.append((toks[0], None))
     if not fields:
         return None
-    if len(fields) == 1 and fields[0][1] == "string":
+
+    resolved, carried = [], None
+    for name, typ in reversed(fields):
+        if typ is not None:
+            carried = typ
+        resolved.append((name, carried))
+    resolved.reverse()
+
+    if len(resolved) == 1 and resolved[0][1] == "string":
         return None
-    return [name for name, _ in fields]
+    return [name for name, typ in resolved if not (typ or "").startswith("*")]
 
 
 @pytest.fixture(scope="session")
@@ -227,10 +246,13 @@ class Cleat:
         omitted = [p for p in _ENTRY_PARAMS.get(name, []) if p not in payload]
         assert not omitted, (
             f"start({name!r}) omits {', '.join(omitted)}, which the entry point "
-            f"declares. Pass every parameter explicitly. An omitted parameter "
-            f"binds its zero value and the run completes, so the assertions "
-            f"below will most likely still pass -- against a workflow that did "
-            f"not receive what this test meant to give it. See _ENTRY_PARAMS."
+            f"declares as required. Pass every parameter explicitly, or declare "
+            f"the parameter optional in the workflow (`*T` in Go) if absence is "
+            f"meant to be allowed. Since cleat#1065 the guest REFUSES an absent "
+            f"declared parameter, so this now costs a failed run rather than a "
+            f"quietly wrong one -- but the failure surfaces as the run's error, "
+            f"not as a rejected start, which is why this check is worth keeping "
+            f"here. See _ENTRY_PARAMS."
         )
         headers = {}
         if concurrency_key:
