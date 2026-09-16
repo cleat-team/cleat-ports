@@ -36,33 +36,26 @@ import pytest
 # an engine that discards everything.
 VALID = '{"ok":true}'
 
-# What each dialect does with an integer past 2**53. MEASURED, not assumed --
-# and it differs, which is cleat#1022.
+# An integer past 2**53 survives the round trip EXACTLY, on every dialect.
 #
-# PostgreSQL's jsonb keeps numbers as `numeric`, so the value survives exactly.
-# MySQL's JSON stores an integer exactly only to BIGINT and past that converts
-# to DOUBLE, so it comes back as 1.2345678901234566e29 -- valid JSON, right
-# shape, plausible, and a different number.
+# This used to be a per-dialect table, because it used to differ: PostgreSQL's
+# jsonb keeps numbers as `numeric` and SQL Server's column is NVARCHAR(MAX) with
+# an ISJSON check, so both survived; MySQL's native JSON type keeps an integer
+# only to BIGINT and silently converts anything larger to DOUBLE. That was
+# cleat#1022 -- the stored value stayed valid JSON, the right shape and entirely
+# plausible, and was a different number.
 #
-# SQL Server is deliberately absent rather than guessed: `result` there is a
-# CHECK (ISJSON(...)) column, a third implementation, and nobody has measured
-# it. The test skips with that reason and self-retires the moment a row is
-# added, which a decorator skip would not.
+# cleat#1626 closed it by porting SQL Server's representation to MySQL column
+# for column: LONGTEXT + CHECK (JSON_VALID(col)). Its commit message states the
+# intent this assertion now pins -- "All three dialects now preserve, rather
+# than two agreeing and MySQL being documented as lesser."
+#
+# So the divergence this test was built to describe no longer exists, and the
+# table went with it. A NEW dialect is held to the invariant rather than being
+# skipped pending measurement: preserving the caller's JSON is the contract, not
+# a property each backend gets to have its own answer to.
 BIG_INT_RETURNED = '{"x":123456789012345678901234567890}'
-BIG_INT_STORED = {
-    "postgres": {"x": 123456789012345678901234567890},
-    "mysql": {"x": 1.2345678901234566e29},
-    # Measured 2026-09-10, which is what this row was waiting for -- the skip
-    # below declined to guess, and a guess would have been wrong in the
-    # interesting direction: mssql looks like MySQL in most result-shape
-    # questions and here it behaves like PostgreSQL.
-    #
-    # Verified two ways rather than one. `valid` returns {"ok":true} on the same
-    # worker, so the path works and this is not an artifact of a broken run; and
-    # the same probe reproduced postgres's documented value exactly, so the
-    # method is the one that produced the two rows above.
-    "mssql": {"x": 123456789012345678901234567890},
-}
+BIG_INT_STORED = {"x": 123456789012345678901234567890}
 
 
 def _run(cleat, workflow, kind):
@@ -98,35 +91,42 @@ def test_a_storable_result_survives_unchanged(cleat, bad_result_workflow):
     )
 
 
-def test_a_large_integer_result_keeps_whatever_precision_the_dialect_offers(
+def test_a_large_integer_result_survives_unchanged_on_every_dialect(
     cleat, bad_result_workflow
 ):
-    """PINS cleat#1022: the same result is a different number on MySQL.
+    """PINS the contract cleat#1626 established: the caller's JSON survives, intact.
 
-    This is the assertion that found it, and only because it compares against
-    the exact value rather than checking the result "is a number" or "is an
-    object" -- both of which pass on both dialects. The degraded value is valid
-    JSON, the right shape, and plausible.
+    This is the assertion that found cleat#1022, and only because it compares
+    against the exact value rather than checking the result "is a number" or "is
+    an object" -- both of which passed while MySQL was silently rewriting it.
+    The degraded value was valid JSON, the right shape, and plausible. Keep the
+    exact comparison: every weaker check this test could make was already passing
+    on the broken dialect.
+
+    Now that all three preserve, the failure directions are worth naming because
+    they are not symmetric:
+
+      * narrows on ANY dialect -> a regression in that dialect's column type or
+        its write path. cleat#1626 made MySQL LONGTEXT + CHECK (JSON_VALID(col));
+        a migration that puts the native JSON type back reintroduces cleat#1022
+        without erroring, exactly as it did the first time.
+      * fails on a NEW dialect -> not a gap in this test. The invariant is the
+        contract; a backend that cannot hold the caller's JSON has to say so
+        rather than store a different number.
     """
     dialect = os.environ.get("CLEAT_PORTS_DIALECT", "postgres")
-    if dialect not in BIG_INT_STORED:
-        pytest.skip(
-            f"what {dialect} does with an integer past 2**53 has not been measured; "
-            f"add a row to BIG_INT_STORED once it has. See cleat#1022 -- postgres "
-            f"and mssql keep it exactly and mysql narrows it to a double, so a "
-            f"fourth answer is entirely possible and guessing one would assert "
-            f"nothing. All three supported dialects now have a row, so reaching "
-            f"this skip means a NEW dialect was added without measuring it."
-        )
 
     final = _run(cleat, bad_result_workflow, "big-int")
     assert final["status"] == "done", f"big-int: {final}"
-    assert _result(final) == BIG_INT_STORED[dialect], (
-        f"big-int on {dialect}: expected {BIG_INT_STORED[dialect]!r}, got "
+    assert _result(final) == BIG_INT_STORED, (
+        f"big-int on {dialect}: expected {BIG_INT_STORED!r}, got "
         f"{final['result']!r}.\n\n"
-        "If this now matches what the workflow returned on a dialect that used to "
-        "narrow it, cleat#1022 has been fixed and this row should be updated. If it "
-        "narrows on a dialect that used to keep it, that is a regression."
+        f"The workflow returned {BIG_INT_RETURNED}. Every dialect is required to "
+        "give it back unchanged (cleat#1022, closed by cleat#1626). A value that "
+        "is still valid JSON and still the right shape but a DIFFERENT NUMBER is "
+        "the signature of a JSON column that reparses numerically -- check this "
+        "dialect's column type for the result/input/payload columns before "
+        "looking anywhere else."
     )
 
 
