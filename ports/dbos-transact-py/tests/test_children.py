@@ -191,3 +191,51 @@ def test_awaiting_one_child_survives_the_parent_suspending(cleat, await_one_chil
     assert isinstance(child, dict) and child.get("tag") == tag, (
         f"the child's result did not round-trip: {body!r}"
     )
+def test_a_child_names_the_parent_that_spawned_it(cleat, fanout_workflow):
+    """The parentage link, ported from upstream's `test_child_workflow`.
+
+    This case sat in the worklist as "needs something cleat lacks" for a
+    reason worth restating: `workflow_instances.parent_workflow_id` had been
+    WRITTEN on every child since children existed, and was selected by no read
+    path, so no client could observe it. Filed as cleat#1103 and fixed; this is
+    the coverage that would notice if it regressed.
+
+    "Is a field written" and "is a field readable" are separate questions, and
+    a column can fail either one alone. A test that checked the database
+    directly would have passed throughout the defect. This one goes through
+    `GET /api/workflows/{id}` -- the path a client actually has.
+
+    Uses mode=1 (AwaitAnyChild) because that is the arm whose result carries a
+    child's run id; nothing new is deployed for it.
+    """
+    status, started = cleat.start(fanout_workflow, {"n": 2, "ms": CHILD_MS, "mode": 1})
+    assert status == 201, f"start rejected: {status} {started}"
+    parent_id = started["id"]
+
+    final = cleat.await_terminal(parent_id, timeout=90.0)
+    assert final["status"] == "done", (
+        f"parent did not complete: {final.get('status')!r} "
+        f"{(final.get('error') or '')[:300]!r}"
+    )
+    child_id = _body(final)["run_id"]
+    assert child_id and child_id != parent_id
+
+    status, child = cleat.get(child_id)
+    assert status == 200, f"child not readable: {status} {child}"
+    assert child.get("parent_workflow_id") == parent_id, (
+        "a child does not name the run that spawned it: "
+        f"parent_workflow_id={child.get('parent_workflow_id')!r} want {parent_id!r}. "
+        "cleat#1103 -- the column is written but must also be SELECTed."
+    )
+
+    # The control, and it is what makes the assertion above mean anything.
+    # A field that simply echoed the run being asked about would satisfy the
+    # check above and fail here. A top-level run has no parent, and the API
+    # omits the key entirely rather than sending null.
+    status, parent = cleat.get(parent_id)
+    assert status == 200, f"parent not readable: {status} {parent}"
+    assert not parent.get("parent_workflow_id"), (
+        "a run nobody spawned reports a parent: "
+        f"{parent.get('parent_workflow_id')!r}. The field would then carry no "
+        "information -- every run would look like a child."
+    )

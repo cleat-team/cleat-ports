@@ -414,3 +414,40 @@ establishes.** Enumeration against the pin and portability against cleat are
 different claims requiring different evidence, and satisfying the first says
 nothing about the second. Both shipped in one sentence and only one had been
 checked.
+
+### Portable - 3 - **all three ported 2026-09-15**
+
+**This heading exists because the reconciliation check could not see this row
+at all.** `check-worklist-totals.py` reported `test_dbos.py` as the one row it
+"can neither confirm nor contradict", because the file had no `### Portable - N`
+section to read. The row said **2** and nothing checked it. The moment the
+section was added the check contradicted it — and the check was right.
+
+| case | state | evidence |
+|---|---|---|
+| `test_child_workflow` | **ported 2026-09-15** | blocked on cleat#1103 — `parent_workflow_id` was written on every child and SELECTed by nothing, so no client could read it. That shipped (`engine/db.go` fills it on the read path), which made the case portable. Ported as `test_children.py::test_a_child_names_the_parent_that_spawned_it`, with the top-level-run control. |
+| `test_send_recv` | **already ported** | `test_signals.py::test_a_signal_goes_to_the_await_that_named_it_and_same_name_signals_queue_in_order` asserts `names == ["topic","queued","queued"]` and `payloads[1:] == ["first","second"]` — per-name queues, each FIFO, which IS upstream's assertion. |
+| `test_simple_workflow_attempts_counter` | **already ported** | `test_run_metadata.py::test_a_repeated_start_is_not_counted_as_a_recovery` asserts `reclaim_count == 0` behind a presence check, plus `created_at`/`started_at`. Upstream's "attempts still 1" is cleat's "reclaims still 0". |
+
+**So the row was wrong in both directions at once, which is the interesting
+part.** One case had become portable without anyone editing the number *up*
+(its blocker shipped), and two had been ported without anyone editing it
+*down*. The two errors nearly cancelled — 2 claimed against a true 0 — and a
+number that is wrong by cancellation is indistinguishable from a number that is
+right, for exactly as long as nothing checks it.
+
+**I got `test_send_recv` wrong on the first pass of this very section**, writing
+that the signals test "reads like it covers this and says in its own docstring
+that it does not". The docstring says something different: that *upstream's*
+assertion is not an arrival-order claim. The port covers what upstream actually
+asserts. I had paraphrased a docstring from memory of its shape instead of
+reading it, and the check's contradiction is what sent me back to it.
+
+**The check's own limit, stated so the next reader does not over-trust it:**
+"cited by a test" is a substring search for the case name across the tests
+directory. A docstring that names an upstream case while porting only half of it
+would count as covered. That is not a defect to fix here — it caught this row —
+but the citation is a pointer to evidence, not the evidence.
+
+`tests/test_dbos.py` is now **0 portable unported**, which is the condition
+`docs/next-upstream.md` names for finishing the first upstream.
