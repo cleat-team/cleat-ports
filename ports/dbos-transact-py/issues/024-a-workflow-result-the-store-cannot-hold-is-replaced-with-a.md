@@ -67,15 +67,29 @@ mangle values merely for being awkward. It found a different defect, filed as
 cleat#1022: the same result is stored exactly on PostgreSQL and narrowed to a
 double on MySQL.
 
-| dialect | `{"x":123456789012345678901234567890}` stored as |
-|---|---|
-| PostgreSQL | `{"x": 123456789012345678901234567890}` |
-| MySQL | **`{"x": 1.2345678901234566e29}`** |
+| dialect | `{"x":123456789012345678901234567890}` stored as | |
+|---|---|---|
+| PostgreSQL | `{"x": 123456789012345678901234567890}` | unchanged |
+| MySQL | was **`{"x": 1.2345678901234566e29}`**, now exact | **fixed** |
+| SQL Server | `{"x": 123456789012345678901234567890}` | measured 2026-09-10 |
 
-Read from the column on both, same WASM binary. The conversion is inherent to
-MySQL's `JSON` type -- exact only to `BIGINT` -- so the defect is the silence
-and the divergence, not the narrowing. Nothing logs it, and the degraded value
-is valid JSON of the right shape.
+Read from the column, same WASM binary. The conversion was inherent to MySQL's
+`JSON` type -- exact only to `BIGINT` -- so the defect was the silence and the
+divergence, not the narrowing. Nothing logged it, and the degraded value was
+valid JSON of the right shape.
+
+**CLOSED 2026-09-15 by cleat#1626**, which ported SQL Server's representation to
+MySQL column for column: `LONGTEXT` + `CHECK (JSON_VALID(col))`. All three
+dialects now preserve the caller's JSON, so the divergence this section
+describes no longer exists in the engine.
+
+The port caught the fix the way it caught the defect: the nightly failed on
+mysql (cleat#1678) because `test_results.py` still predicted the narrowing. Its
+per-dialect table has been replaced by a single invariant, and the test renamed
+`test_a_large_integer_result_survives_unchanged_on_every_dialect`. A narrowing
+on ANY dialect is now a regression rather than that dialect's own answer -- the
+failure mode to watch for is a migration that restores MySQL's native `JSON`
+type, which would reintroduce cleat#1022 silently, exactly as it arrived.
 
 Worth recording how it surfaced: an assertion that the result "is a number" or
 "is an object" passes on both dialects. It took comparing against the exact
