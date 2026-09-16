@@ -352,7 +352,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_cancel_propagation.py` | 3 | `test_workflow_management.py` — upstream test_cancel_workflow_children -- cleat defers propagation to parent close |
 | `test_cancellation.py` | 4 (1 skipped) | `test_workflow_management.py` |
 | `test_child_priority.py` | 3 | `test_queue.py` — priority is a queue control one level down: what a CHILD is given, which upstream has no case for because it has no such rule |
-| `test_children.py` | 5 | `test_concurrency.py` — concurrent execution and isolation |
+| `test_children.py` | 6 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
 | `test_concurrency.py` | 5 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 3 | `test_dbos.py` — bounded history via self-restart |

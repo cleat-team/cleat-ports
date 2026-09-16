@@ -20,7 +20,7 @@ does not show:
 
 | upstream file | cases | portable, unported |
 |---|---:|---:|
-| `test_dbos.py` | 61 | 17 → 9 → **2**, see below |
+| `test_dbos.py` | 61 | 17 → 9 → 2 → **0**, see below |
 | `test_failures.py` | 37 | 5 → **0** |
 | `test_scheduler.py` | 35 | 5 → **0** |
 | `test_client.py` | 57 | 3 → **0** |
@@ -28,7 +28,7 @@ does not show:
 | `test_concurrency.py` | 11 | 1 → **0** |
 | `test_workflow_management.py` | 46 | 1 → **0** |
 | `test_queue.py` | 91 | 0 |
-| **total** | **371** | **33 → 25 → 18 → 2** |
+| **total** | **371** | **33 → 25 → 18 → 2 → 0** |
 
 *The right-hand column is now checked rather than typed:
 `scripts/check-worklist-totals.py` reconciles every row against the worklist it
