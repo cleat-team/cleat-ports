@@ -49,6 +49,13 @@ echo "cleat ref=$REF sha=$SHA"
 # exercised on one dialect and assumed on the others.
 ( cd "$SRC" && CGO_ENABLED=0 go build -o "$BIN/deploy-workflow" ./cmd/deploy-workflow )
 
+# cleatctl, for `egress-allow`. The tenant half of cleat#1565's egress policy is
+# per-tenant rows in admin.tenant_egress_allow, and cleatctl is the only thing
+# that writes them -- there is no worker flag, because a tenant's list is a
+# tenant's, not a deployment's. scripts/worker.sh needs it to put the fixture
+# host on this suite's tenant list. cleat-ports#243.
+( cd "$SRC" && CGO_ENABLED=0 go build -o "$BIN/cleatctl" ./cmd/cleatctl )
+
 # Recorded so a failing run can name the exact commit under test rather than a
 # branch name that has moved on by the time anyone reads the log.
 printf 'ref=%s\nsha=%s\n' "$REF" "$SHA" > "$ROOT/bin/.cleat-build"
