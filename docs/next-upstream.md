@@ -665,6 +665,7 @@ offloading, which are cleat surfaces that exist and have no port coverage.
 - **`external_storage_test.go`** (32 cases). Large payloads offloaded to
   external storage. cleat has a blobstore plugin and `workflow_blob_refs`;
   nothing in any port exercises it.
+  <!-- absence-claim pattern="blob_ref|blobstore|external_storage" scope="ports" expect="absent" -->
 - **`payload_limits_test.go`** (19 cases). What happens when a payload exceeds
   the limit — at start, at signal, at child start, at completion. cleat has
   `signalMaxBodySize` and a 413 path (the update handler returns one), so the
@@ -1064,6 +1065,7 @@ is.
 | upstream cases | verdict |
 |---|---|
 | `TestSignalWithStartIdConflictPolicy`, `TestSignalWithStartWorkflowTypedSearchAttributes`, `TestStartDelaySignalWithStart`, `TestInterceptorStartWithSignal` | **not portable** — signal-with-start does not exist in cleat. `grep -rniE 'signalwithstart\|signal_with_start'` over the whole tree returns nothing; a signal addresses an existing run |
+<!-- absence-claim pattern="signalwithstart|signal_with_start" scope="tree" expect="absent" -->
 | `TestSignalWorkflow` | already asserted — `dbos-transact-py/tests/test_signals.py`, and `samples-go` asserts it three more ways: `signal_counter_test.go`, `await_signals_test.go`, `quorum_test.go` |
 | `TestSignalWorkflowWithInterceptorError`, `TestSignalWorkflowWithStubbornGrpcError`, `TestTemporalPrefixSignal` | not portable — SDK interceptors, gRPC transport faults, and a reserved `__temporal_` name prefix cleat does not have |
 
@@ -1219,9 +1221,23 @@ and a low-priority parent's children jump ahead of the parent's own peers.
 
 `dbos-transact-py/tests/test_priority_order.py` asserts that priority orders
 dispatch for top-level runs — carefully, with a simulated sample size chosen
-because three earlier thresholds had been fudged. **Nothing sets
-`ChildWorkflowOptions.Priority` anywhere in any port**, and nothing asserts the
-default, so both halves of that behaviour are a documented promise with no test
-behind it. That is a candidate found by reading cleat, not by reading an
+because three earlier thresholds had been fudged.
+
+> **~~Nothing sets `ChildWorkflowOptions.Priority` anywhere in any port, and nothing asserts the
+> default, so both halves of that behaviour are a documented promise with no test behind it.~~**
+> **STALE — corrected 2026-09-17.** ports#236 closed it on 2026-09-13 00:47:49Z, three days before
+> this document was last edited: `dbos-transact-py/tests/test_child_priority.py` asserts both
+> halves, and `workflows/childpriority/main.go:43` sets
+> `cleat.ChildWorkflowOptions{Priority: explicitPriority}` explicitly. That test's own docstring
+> says *"nothing asserted the default, so both halves **were** a documented promise"* — past tense,
+> because it then asserts them.
+
+<!-- absence-claim pattern="ChildWorkflowOptions\{Priority|test_child_priority" scope="ports" expect="present" -->
+
+**This is the second stale claim in this closing section; the first was `TestSelectorNoBlock`
+(ports#254).** Both were absences that had been closed, and both sat in **prose**, which the
+candidate-row guard that PR added does not read. So every absence claim in this document now
+carries a machine-checkable marker and `scripts/check-stale-candidates.py` verifies each on every
+run. The correction is the lesser half; the marker is why there will not be a third. That is a candidate found by reading cleat, not by reading an
 upstream, and it is the kind the four-upstream method cannot produce: no upstream
 has a case for it, because no upstream has this rule.
