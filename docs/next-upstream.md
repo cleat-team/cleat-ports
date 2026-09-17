@@ -1252,6 +1252,50 @@ case's `worker.New` is registration — which cleat does by deploying a definiti
 predicted to contain.
 
 <!-- absence-claim pattern="panic_in_defer|PanicInDefer|panicking_defer" scope="ports" expect="absent" -->
+
+#### The rest of the bucket: 18 of 52 read, and what the other 34 rest on
+
+Second instalment. **Eleven more read in full**, taking the total to 18 of 52.
+**No further candidates** — the count for this bucket stands at one.
+
+| case | verdict |
+|---|---|
+| `TestSimplePluginDoNothing` | not portable — a client-side **SDK plugin**. cleat's plugins are server-side WASM with host calls; there is no client plugin concept to be a no-op |
+| `TestNoVersioningBehaviorPanics` | not portable — asserts registration **panics** without a default versioning behaviour, under worker deployment versioning. cleat has no versioned workers |
+| `TestWorkerFatalErrorOnStart` | not portable — a gRPC interceptor makes a poll return `NamespaceNotFound`; asserts the worker fails fast |
+| `TestEagerWorkflowDispatchRaceWithWorkerStop` | not portable — races worker stop against eager dispatch; cleat has neither |
+| `TestPreferredVersionProviderRollout` | not portable — versioning rollout with a preferred-version provider |
+| `TestSendsCorrectMeteringData` | not portable — gRPC interceptor capturing metering fields on local-activity attempts |
+| `TestSessionWorkerShutdownWithPollComplete` | not portable — calls `WorkflowService().DescribeNamespace`, i.e. raw gRPC, plus a session worker |
+| `TestWorkflowCompletionMetrics` | not portable — the workflow-outcome half is ordinary, the property is metrics |
+| `TestGracefulActivityCompletion` | not portable — worker shutdown waiting for in-flight work |
+| `TestLocalActivityRetryBehavior` | not portable as written; **the property is already covered** — retry attempt counting against a policy is `dbos-transact-py/tests/test_retries.py`, for durable calls |
+| `TestActivityCancelUsingReplay` | not portable — replays a recorded history JSON file |
+
+#### What the remaining 34 rest on, stated so it can be disagreed with
+
+Not read individually. **14** are activity-centric and **20** have assertions that
+name worker machinery — so for those the steering is the property rather than the
+setup, which is the condition that made this bucket worth reading at all.
+
+The 14 rest on this document's own family ruling, *"cleat has durable calls, not
+activities"*. **I spot-checked three rather than asserting it**, and all three
+were not portable — but the spot-check also **broke the method I used to pick
+them**:
+
+> `TestGracefulActivityCompletion` has **zero** activity-API references in its
+> body. It is a worker-shutdown case with "Activity" in the name.
+
+So *"activity-centric"* was a **name** match, not a body match, and one of the 14
+is certainly mis-labelled. The verdicts survive; the label does not. That is the
+third time in this document a mechanical split has been shown to leak, which is
+the same finding as the bucket table itself being a first cut rather than a
+partition.
+
+**What would change the answer:** a body-level pass over those 14 (`ExecuteActivity`,
+`ExecuteLocalActivity`, `activity.`), and reading the 20 to check that the
+worker-naming assertion is load-bearing rather than incidental. Neither is done,
+and neither is claimed.
  Nobody has read them case by case, and the pass that excluded them is
 the same kind of mechanical filter that this document has twice caught being
 wrong in the flattering direction. They are not known to be barren; they are
