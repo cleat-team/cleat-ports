@@ -233,8 +233,16 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v5
+      # 1.26 because `make install-cleat` BUILDS cleat from source at
+      # CLEAT_PINNED_REF, and cleat's go.work carries `go 1.26.0`
+      # (cleat#1714). setup-go sets GOTOOLCHAIN=local, so a toolchain
+      # below that floor cannot upgrade itself to satisfy it -- the job
+      # dies at install-cleat with "go.work requires go >= 1.26.0", before
+      # a single port test runs. This pin therefore tracks CLEAT's
+      # workspace floor, not this repo's own needs; nothing here is
+      # written in Go. cleat-ports#251.
       - uses: actions/setup-go@v6
-        with: { go-version: "1.25" }
+        with: { go-version: "1.26" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
       - name: Install pinned cleat
