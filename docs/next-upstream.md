@@ -1192,7 +1192,67 @@ effects, 3 continue-as-new, 3 memo/search-attributes, 4 in the final row.
 The 122 cases the reachability pass put in its exclusion buckets — worker
 steering 52, in-process tracer/metrics 35, local activities 14, history internals
 8, raw gRPC 6, nexus 5, interceptors 2 — remain excluded **by that pass, not by
-reading**. Nobody has read them case by case, and the pass that excluded them is
+reading**.
+
+### Seven of the 52 worker-steering cases, read (2026-09-17)
+
+The first instalment of the read the paragraph above asks for. **Seven of 52, not
+122 of 122** — a partial read with its denominator stated, because a partial read
+reported as a complete one is worse than none.
+
+**Why the worker-steering bucket and not a smaller one.** It is the bucket this
+document's own argument points at: *"a case that constructs a worker asserts on
+perfectly ordinary run outcomes, so its assertions look portable while its setup
+is unreachable."* If the steering is **setup** rather than the property, the case
+may be portable after all. That is the only bucket where the exclusion marker is
+plausibly incidental; in the others the marker names the property itself.
+
+**And it is the only bucket whose count I could reproduce.** Reconstructing the
+pass from the upstream file gave 52 worker-steering exactly, and differed on
+every other bucket — reachable 127 vs 87, local activities 22 vs 14, nexus 1 vs 5.
+So for this bucket I am reading the same population the pass excluded; for the
+others I would not be, and I have not pretended otherwise. Two caveats a reader
+should carry: the upstream has moved since the survey (read today at
+`626130f1fd9d`), and although the corpus is still 256 cases, *the same total is
+not the same set*.
+
+| case | verdict |
+|---|---|
+| **`TestPanicWithDeferredYield`** | **candidate gap** — see below |
+| `TestSideEffectSummary` | not portable — reads `GetWorkflowHistory` and asserts on a marker event's `UserMetadata.Summary`; cleat has no history-event metadata. Same ground as `TestAwaitWithOptionsTimeout` |
+| `TestMutableSideEffectSummary` | not portable — identical shape to the above |
+| `TestPayloadSizeWarningDefaultSize` | not portable — asserts an **in-process client logger** warning via `ilog.NewMemoryLogger`. cleat's ports drive over HTTP and have no SDK logger to inspect. cleat's nearest surface is a 413 *refusal*, which is a different property |
+| `TestSessionCancelNDE` | not portable — needs `EnableSessionWorker` and a custom failing `DataConverter`; cleat has neither |
+| `TestUnhandledCommandAndMetrics` | not portable — the interesting half (a signal arriving while the workflow is running) is **already covered** by `dbos-transact-py/tests/test_promise_wakes.py`; the rest is metrics assertions |
+| `TestWorkflowWithParallelSideEffectsUsingReplay` | not portable — `worker.NewWorkflowReplayer` against a recorded history JSON fixture; cleat replays from its own event store, not from a file |
+
+**Note what three of those six show about the bucketing**: `TestSideEffectSummary`,
+`TestMutableSideEffectSummary` and `TestWorkflowWithParallelSideEffectsUsingReplay`
+are really *history internals* and *replay*, not worker steering. They matched the
+worker marker incidentally. The buckets are a first cut, not a partition.
+
+#### `TestPanicWithDeferredYield` — candidate gap
+
+The property: **a workflow panics, and its `defer` yields** (makes a call that
+suspends) during the unwinding. Upstream's comment names the crux — the yield
+*"freezes the panic and lets the WFT complete with the activity command from this
+defer"*. The panic must not be lost.
+
+cleat has all three ingredients and the combination is untested:
+
+- panics — `temporalio-sdk-go/tests/panic_test.go`, ports#234;
+- defers that make durable calls — `dbos-transact-py/workflows/defercleanup`,
+  `deferdeadletter`, driven by `tests/test_defer.py`;
+- the defer phase itself, fenced on the claim and on the marker (§3.112).
+
+**Measured, not assumed:** `panic_test.go` mentions `defer` **zero** times, and no
+test file under `ports/*/tests/` mentions both a panic and a defer. The upstream
+case's `worker.New` is registration — which cleat does by deploying a definition
+— so the steering is incidental to the property, which is the case this bucket was
+predicted to contain.
+
+<!-- absence-claim pattern="panic_in_defer|PanicInDefer|panicking_defer" scope="ports" expect="absent" -->
+ Nobody has read them case by case, and the pass that excluded them is
 the same kind of mechanical filter that this document has twice caught being
 wrong in the flattering direction. They are not known to be barren; they are
 unexamined. 87 + 122 = 209 unread, plus the 47 surveyed in the first two
