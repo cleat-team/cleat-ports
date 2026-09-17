@@ -1121,21 +1121,45 @@ That leaves four `Await*` cases and one `Selector` case:
 | `TestAwaitWithTimeoutTimerNotCancelledByDefault` | not portable — asserts on history timer events and on SDK flags in the history |
 | `TestAwaitWithOptionsTimeout` | not portable — finds a timer by its `UserMetadata` Summary; cleat has no timer metadata |
 | **`TestAwaitWithTimeoutConditionAlreadyTrue`** | **candidate gap** — see below |
-| **`TestSelectorNoBlock`** | **candidate gap** — see below |
+| ~~**`TestSelectorNoBlock`**~~ | **WITHDRAWN 2026-09-17 — not portable, and the selector is covered.** ports#237 |
 
-**`TestSelectorNoBlock` is the stronger of the two, and it was found the same way
-the panic case was.** cleat has a selector: `cleat/selector.go` defines
-`NewSelector`, `AddSignal`, `AddChildWorkflow`, `AddTimer`, `Select` and `Err`,
-with futures for all three sources. The upstream case is as portable as a case
-gets — execute a workflow that selects over a signal, assert the result is
-`"HELLO"`, no history reads, no worker steering.
+**~~`TestSelectorNoBlock` is the stronger of the two~~ — withdrawn, and the
+paragraph below it was wrong in both of its halves.** Kept rather than deleted,
+because how it was wrong is the point.
 
-And **`grep -rli selector ports/*/tests/` returns nothing.** Across four ports and
-roughly two hundred cases, not one test mentions a selector. A guest API with
-three future types, a timer path and an error path, and no port asserts any of
-it. That is the same shape as the panic finding in ports#234, found by the same
-one-second command, and it is the second time the cross-port grep has returned
-empty on a surface that plainly exists.
+The gap it named was real and **has been closed**: ports#237 landed
+`ports/samples-go/tests/selector_test.go` on 2026-09-16 at 00:44:31Z, asserting
+cleat's selector directly — signal-wins-the-race, timer-wins-when-no-signal,
+earliest-deadline-only, and the durable-clock check that makes the others mean
+something. So "no port asserts any of it" was true when written and false three
+hours before this document was last edited.
+
+**And the case itself is NOT portable**, which ports#237 established by reading
+what the case *exercises* rather than what it asserts:
+
+> Its TEST body is clean — execute a workflow, assert `"HELLO"`, no history
+> reads, no worker steering. Its WORKFLOW, `Workflows.SelectorBlockSignal`, uses
+> `workflow.Go` goroutines, two channels, `selector.AddDefault`,
+> `selector.HasPending` and an activity. cleat has none of the five and vet
+> refuses three (E001, E002).
+
+So the paragraph above recommended, as its strongest candidate, a case whose
+portability assessment had stopped at the test body — **the exact error this
+document warns about one level up.** *Reading the case is not reading what the
+case exercises.*
+
+**The grep claim was also false by the time it was load-bearing.**
+`grep -rli selector ports/*/tests/` now returns
+`ports/samples-go/tests/selector_test.go`. Two further notes on that command,
+because it is cited here as a one-second method and has now misfired twice:
+
+- as a **git pathspec** the trailing slash matches nothing —
+  `git grep -li selector origin/develop -- 'ports/*/tests/'` returns zero files,
+  and so does the same pathspec for `workflow`, which is the positive control
+  that catches it. Use `'ports/*/tests/*'`;
+- an empty cross-port grep says a *word* is absent, not that a *property* is
+  unasserted, and the converse holds too — `selector_test.go` asserts cleat's
+  selector without porting any upstream case that names one.
 
 **`TestAwaitWithTimeoutConditionAlreadyTrue` needs its cleat analogue named
 carefully.** cleat has no `workflow.Await`; the nearest surfaces are
