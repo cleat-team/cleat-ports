@@ -233,6 +233,18 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v5
+      # BEFORE setup-go, because it decides whether the pin below is usable at
+      # all, and because the alternative is finding out three steps later from
+      # a build target (cleat-ports#251: `make install-cleat` Error 1).
+      #
+      # The selftest runs first, and that ordering is the load-bearing half. A
+      # pin check that has stopped matching anything reports success over an
+      # empty set -- the same shape as the silent rot it exists to catch -- so
+      # zero pins found is exit 2 there rather than a pass here.
+      - name: The pin check can still tell right from wrong
+        run: python3 scripts/check-go-toolchain-pin.py --self-test
+      - name: The Go pin is at or above cleat's go.work floor
+        run: python3 scripts/check-go-toolchain-pin.py
       # 1.26 because `make install-cleat` BUILDS cleat from source at
       # CLEAT_PINNED_REF, and cleat's go.work carries `go 1.26.0`
       # (cleat#1714). setup-go sets GOTOOLCHAIN=local, so a toolchain
