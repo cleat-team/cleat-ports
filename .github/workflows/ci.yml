@@ -211,6 +211,20 @@ jobs:
       - name: next-upstream.md reconciles with the worklists
         run: python3 scripts/check-worklist-totals.py
 
+      # The step above reconciles the remaining-work TABLE. The prose below it
+      # was reconciled by nothing, and on 2026-09-17 a candidate had outlived
+      # its own refutation by three hours: `TestSelectorNoBlock` was still "the
+      # stronger of the two" candidate gaps after ports#237 had both covered the
+      # surface AND recorded that the case is not portable. A stale candidate
+      # sends the next person to do work that is done.
+      #
+      # No separate self-test step: this guard runs its known-positive inline on
+      # every invocation, because a document with zero candidate rows is a
+      # legitimate state and would otherwise pass vacuously. A parser that
+      # stopped matching reports UNMEASURED (exit 2) rather than OK.
+      - name: No candidate has outlived its own adjudication
+        run: python3 scripts/check-stale-candidates.py
+
   port:
     name: ${{ matrix.port }}
     needs: discover
