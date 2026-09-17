@@ -374,6 +374,22 @@ MAPPING = {
     "test_cross_worker.py": (None, "cleat-specific: mutual exclusion across two "
                              "worker PROCESSES, which needs the second_worker "
                              "fixture and has no upstream analogue"),
+    # None because the upstream is a DIFFERENT PROJECT, not because there is no
+    # upstream. These cases come from uber/cadence's
+    # dbVisibilityPersistenceTest.go (docs/cadence-persistence-survey.md), and
+    # they live in this port because this port owns the harness and the
+    # fixtures, not because DBOS asks for them.
+    #
+    # Crediting them to any test_*.py in the dbos column would inflate that
+    # file's ported count with cases it does not contain -- the same error the
+    # tables above were generated to stop, arriving from a direction the
+    # generator was not built for: a second upstream landing in the first
+    # upstream's directory. If a third upstream does the same, the honest fix
+    # is an upstream column rather than more None entries.
+    "test_listing_filters.py": (None, "ported from uber/cadence's "
+                                "dbVisibilityPersistenceTest.go, not from DBOS: "
+                                "status, def_name, limit/offset, the half-open "
+                                "time window, and id_prefix"),
 }
 
 

@@ -147,6 +147,23 @@ and cleat's row is created at start, so that one is probably inexpressible rathe
 than a gap. `TestMultipleUpserts` and `TestUpsertWorkflowExecution` are the same
 two-table model and likely go the same way.
 
+**PORTED 2026-09-16: five of the twelve, and the estimate above came down.**
+`ports/dbos-transact-py/tests/test_listing_filters.py` carries the status,
+def-name, pagination, time-window and id-prefix cases. The "~8" was optimistic
+by two or three: `TestCronVisibility` has no counterpart (cleat exposes no cron
+or schedule flag on a listed run), `TestFilteringByWorkflowID` asks a question
+cleat cannot ask (one id per run, no workflowID/runID split -- the id-prefix
+test is named for what it does instead), and `TestGetClosedExecution`'s
+not-found-until-closed half is the two-table model again. **No port had any
+filtering coverage at all before this** -- only "the list contains a run",
+tenant isolation, and a created_at consistency check.
+
+One case corrected the test rather than the engine: the time-window assertion
+was written expecting `started_after` to exclude a row created exactly on the
+boundary, failed, and was right to. `engine/store_types.go:391` documents a
+half-open interval `[after, before)` so adjacent windows tile, and the test now
+pins that asymmetry instead.
+
 **Scope of this read, stated because the paragraph below is about exactly this
 failure.** All 14 semaphore cases were read as names plus the assertions in their
 bodies. The 12 visibility cases were read as names plus the persistence API each

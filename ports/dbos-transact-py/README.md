@@ -364,6 +364,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_executor_identity.py` | 1 (1 skipped) | `test_queue.py` — upstream test_queue_executor_id -- which worker ran a completed run; skipped, ISSUES.md 26 |
 | `test_idempotency_key_form.py` | 6 | `test_client.py` — upstream test_client_enqueue_rejects_empty_workflow_id -- a blank identifier must not become a real one |
 | `test_identity_isolation.py` | 1 | `test_concurrency.py` — a run reports its own id under concurrency |
+| `test_listing_filters.py` | 5 | none — ported from uber/cadence's dbVisibilityPersistenceTest.go, not from DBOS: status, def_name, limit/offset, the half-open time window, and id_prefix |
 | `test_locks.py` | 2 | `test_queue.py` — serialising work through a held key |
 | `test_misfire.py` | 1 | `test_scheduler.py` — firings missed during an outage — upstream calls it backfill, cleat calls it misfire_policy |
 | `test_notify_fallback.py` | 2 | `test_failures.py` — upstream test_notification_errors -- the polling safety net behind pg_notify |
