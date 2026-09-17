@@ -1294,8 +1294,123 @@ partition.
 
 **What would change the answer:** a body-level pass over those 14 (`ExecuteActivity`,
 `ExecuteLocalActivity`, `activity.`), and reading the 20 to check that the
-worker-naming assertion is load-bearing rather than incidental. Neither is done,
-and neither is claimed.
+worker-naming assertion is load-bearing rather than incidental. ~~Neither is done, and neither is claimed.~~ **The first half is now done —
+the 14 are read below. The 20 remain unread.**
+
+#### The 14, read at body level: 32 of 52, and the label cost nothing to be wrong
+
+Third instalment, and it is the pass the paragraph above asks for. The 14 were
+picked out as *"activity-centric"*; that label was already known to be a **name**
+match rather than a body match. So the pass ran the markers the paragraph names
+— `ExecuteActivity`, `ExecuteLocalActivity`, `activity.`, `RegisterActivity` —
+over each case's body, and then read all 14 regardless of what it found.
+
+**Marker result: 10 of 14 hit, 4 did not.** Then all 14 were read.
+
+| case | body markers | verdict |
+|---|---|---|
+| `TestActivityFailureMetric_BenignHandling` | yes | not portable — asserts an `ilog.NewMemoryLogger` line (`ERROR` vs `DEBUG`) and that `ActivityExecutionFailedCounter` does **not** move for a benign error. The property is the metric, and cleat has no error category |
+| `TestLocalActivityFailureMetric_BenignHandling` | yes | not portable — same property against `LocalActivityExecutionFailedCounter` |
+| `TestActivityStartedAtSameTimeAsTimerCancel_Replay` | no | not portable — `ReplayWorkflowHistoryFromJSONFile` against a recorded fixture |
+| `TestCancelTimerAfterActivity_Replay` | yes | not portable — same, `replaytests/cancel-timer-after-activity.json` |
+| `TestWorkflowWithParallelLocalActivitiesUsingReplay` | no | not portable — same, `replaytests/parallel-local-activities.json` |
+| `TestClientFromActivity` | no | not portable — the activity constructs a Temporal **client** and calls the server. cleat's guest reaches the host through host functions; there is no client inside a call |
+| `TestExecuteActivitySuite` | yes | not portable — 9 subtests, all on the **standalone activity** API. See below |
+| `TestInterceptorStandaloneActivity` | yes | not portable — asserts 9 named `ClientOutboundInterceptor` methods were recorded in-process, over that same API |
+| `TestStandaloneActivityTracing` | yes | not portable — asserts on `sdktrace` spans in an in-process recorder (`StartActivity:`/`RunActivity:` names, parent/trace ids). cleat propagates W3C `traceparent` on outbound calls, which is a different surface and already covered |
+| `TestLocalActivityCompleteWithinGracefulShutdown` | yes | not portable — worker drain; **already measured**, see below |
+| `TestLocalActivityWorkerShutdownNoHeartbeat` | yes | not portable — same family, asserting `wftStarted`/`wftTimedOut` counts from the history |
+| `TestLocalActivityTaskTimeoutHeartbeat` | yes | not portable — same family, via `activity.GetWorkerStopChannel` |
+| `TestLocalActivitySummary` | yes | not portable — reads `UserMetadata.Summary` off a `LocalActivity` marker event. Identical ground to `TestSideEffectSummary`, ruled in the first instalment |
+| `TestShutdownDuringActiveTimerActivityWorkflows` | no | not portable — gates on `WorkflowService().DescribeNamespace` capabilities, times `ts.worker.Stop()`, then scans history for task failures |
+
+**No candidates. 32 of 52 read; 20 remain.**
+
+**The finding is not that the label was wrong — it is that fixing it changed
+nothing.** The marker pass and the read agree on all 14: not portable, every
+one. The markers never separated a portable case from an unportable one, because
+the reasons for exclusion are elsewhere entirely — replay-from-file (3),
+in-process recorder or metrics (4), the standalone-activity API (2), worker drain
+(3), history-event metadata (1), a client inside an activity (1). So the
+previous instalment's *"the verdicts survive; the label does not"* can be
+sharpened: the label was not merely inaccurate, it was **not load-bearing**, and
+a pass that corrected it would have been work for no verdict. That is worth
+saying because the obvious remedy for a leaky mechanical split is a better
+mechanical split, and here a better split would have bought nothing.
+
+**And the body pass has the same blind spot one level down.** Three of the four
+misses — `TestClientFromActivity`, and the two `_Replay` cases — are **one-line
+delegating wrappers**: the case body is a single call into `ts.workflows.X`, and
+every activity is in *that* declaration. A whole-body scan cannot see a body that
+is one function call. This document already records the assertion-only pass being
+blind to *setup*; the whole-body pass that replaced it is blind to a body that
+**delegates**. Both times the blindness was in the flattering direction — the
+case looks simpler than it is.
+
+**Only 3 of the 14 are actually about worker steering** (the drain trio). The
+other 11 matched the worker marker incidentally, which with the first
+instalment's 3 of 7 makes the bucket substantially not about its own name.
+
+##### `TestExecuteActivitySuite` — measured, not assumed
+
+Its 9 subtests (`Describe activity`, `Wait for activity result`, `Execute
+activity with argument`, `Cancel activity`, `Terminate activity`, `Inspect activity info`,
+`GetActivityHandle`, `Activity result timeout`, `Execute activity with start
+delay`) all drive `client.ExecuteActivity` — an activity started **with no
+workflow**, then described, paused, unpaused, retargeted and terminated through a
+handle. cleat has no call that exists outside a run, so eight of the nine have no
+surface to aim at.
+
+The ninth is the one that looked portable: **start delay**. It is not. cleat's
+start request is `cmd/cleat-worker/server.go:713`, and its body carries `input`,
+`entry_point`, `concurrency_key`, `tenant_id`, `priority` and four timeout
+ceilings — and no delay of any kind. A tree-wide search for
+`start_?delay|startAfter|start_?at|delay_?seconds` across `*.go`, `*.sql` and
+`*.md` returns exactly one hit, `actual_delay_seconds` in a design document,
+which is a **retry backoff** log field. Positive control: the same search shape
+for `Priority` in `cleat/runtime_children.go` returns 3. cleat's only deferred
+start is the cron scheduler, which is a different property and is ported.
+
+##### The drain trio — a candidate I had, which was already answered
+
+Three of the 14 assert that a stopping worker **drains**: in-flight work
+finishes, no false heartbeat, `Stop()` returns bounded. cleat has the surface —
+`POST /api/admin/drain` sets `draining`, starts are refused 503, and the drain
+completes when in-flight reaches zero — and `tests/test_recovery.py` covers only
+the **crash** half — it is `worker.crash()` throughout, never `stop` — and the
+ports that do call `worker.sh stop` (`test_notify_fallback.py`,
+`test_scheduling.py`, `conftest.py`) use it to take the worker *down*, never as
+the subject. That is a candidate
+gap shaped exactly like the one this bucket was read to find.
+
+It is not one. `ports/durabletask-go/README.md` already carries the
+investigation, run to a measurement on 2026-09-10: a rendezvous through
+`GET /inflight/<key>` catches a run provably mid-segment, `worker.sh stop` drains
+— and `reclaim_count` came back 1 where 0 was wanted, completing in 34s via the
+reaper. The conclusion is stated there in bold: *"A draining worker waits for
+in-flight work; it does not release it."* The drain route makes the state
+producible and the race no more producible than before.
+
+So the property is not untested by oversight; it is **unreachable, measured, and
+written down** — in a port's README, which is neither an issue nor a test. This
+is the third time work here has been saved by looking somewhere other than the
+issue tracker, and the first two were a migration comment and a closed issue.
+
+<!-- absence-claim pattern="A draining worker waits for in-flight work" scope="tree" expect="present" -->
+
+**One limit of that marker, stated because it is the kind of thing that rots.**
+The start-delay claim above is about **cleat's** tree, and
+`scripts/check-stale-candidates.py` greps this repository — `scope="tree"` means
+*this* tree. So a cleat-side absence cannot carry a marker, and every such claim
+in this document is checkable only by re-running its command. The claim above
+names its command and its positive control for that reason.
+
+**What is left, and what it rests on.** The remaining 20 are those whose
+**assertions** name worker machinery — a different and stronger condition than
+the 14 met, since there the steering was the property rather than the setup. They
+are unread. Given that 32 of 32 read so far are not portable, the prior on the
+last 20 is poor; that is a prior, not a result, and it is not a reason to publish
+a verdict on them.
  Nobody has read them case by case, and the pass that excluded them is
 the same kind of mechanical filter that this document has twice caught being
 wrong in the flattering direction. They are not known to be barren; they are
