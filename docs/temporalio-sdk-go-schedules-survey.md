@@ -196,7 +196,7 @@ same three verbs were run against a schedule that *did* exist:
 
 ```
 POST   /api/schedules            -> 201, and the row appears in the list
-POST   /api/schedules/x/disable  -> 200, and the row reads enabled=false
+POST   /api/schedules/x/disable  -> 200, and the row reads disabled_at set
 DELETE /api/schedules/x          -> 200, and the list is empty
 ```
 

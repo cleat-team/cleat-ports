@@ -174,15 +174,19 @@ def _register_cron(cleat, cron_workflows, cleanup_schedules, key):
 def test_disabling_a_schedule_stops_it_firing(
     cleat, cron_workflows, fixture_calls, cleanup_schedules
 ):
-    """The endpoint writes `enabled`; GetDueSchedules filters on it. Nothing
+    """The endpoint writes `disabled_at`; GetDueSchedules filters on it. Nothing
     checked that the two meet.
 
     This is the pair that has been wrong four times in this engine -- a writer
     with no reader, or a reader with no writer (cleat#889 was four of them at
     once). Here both halves exist: POST /api/schedules/{id}/disable calls
-    SetScheduleEnabled, and GetDueSchedules selects `WHERE enabled = true` on
-    all three dialects. Neither port exercised the combination.
+    SetScheduleEnabled, and GetDueSchedules selects `WHERE disabled_at IS NULL`
+    on all three dialects. Neither port exercised the combination.
 
+
+    cleat#1773 replaced the `enabled` column with `disabled_at` and INVERTED
+    the polarity with it: live used to be `enabled = true` and is now the
+    ABSENCE of a timestamp.
     THE FIRST FIRE IS THE CONTROL and it is not optional. Without waiting for
     the schedule to fire at least once, "no fires after disable" is equally
     explained by a schedule that never worked -- and this suite has found
@@ -208,7 +212,7 @@ def test_disabling_a_schedule_stops_it_firing(
     time.sleep(5)
     baseline = fixture_calls(key)
 
-    # Longer than a cron period: if `enabled` is not consulted, this window
+    # Longer than a cron period: if `disabled_at` is not consulted, this window
     # contains at least one fire.
     time.sleep(75)
     after = fixture_calls(key)
@@ -217,7 +221,7 @@ def test_disabling_a_schedule_stops_it_firing(
         f"the schedule fired {after - baseline} more times in 75s after being "
         f"disabled (baseline {baseline}, now {after}).\n"
         f"POST /disable calls SetScheduleEnabled and GetDueSchedules selects "
-        f"WHERE enabled = true; if the count moved, one of those two is not "
+        f"WHERE disabled_at IS NULL; if the count moved, one of those two is not "
         f"reaching the other."
     )
 
@@ -243,7 +247,25 @@ def test_re_enabling_a_schedule_resumes_it(
     code, _ = cleat.schedule_enabled(schedule_id, False)
     assert code == 200, f"disable answered {code}"
     time.sleep(5)
-    disabled_at = fixture_calls(key)
+    calls_while_disabled = fixture_calls(key)
+
+    # The positive half of the field check, taken WHILE the schedule is
+    # disabled. cleat#1773 replaced `enabled` with `disabled_at`, a timestamp
+    # omitted for a live schedule -- so "live" is now an ABSENT key, and an
+    # assertion that only checks absence passes just as happily when the field
+    # is dropped again, renamed again, or never sent at all. Reading it in both
+    # states is what makes the absence asserted below mean anything.
+    code, listing = cleat.schedules()
+    assert code == 200, f"the schedule list answered {code} while disabled"
+    row = next((r for r in listing if r.get("name") == schedule_id), None)
+    assert row is not None, (
+        f"schedule {schedule_id} vanished from the listing while disabled"
+    )
+    assert row.get("disabled_at"), (
+        f"schedule {schedule_id} reads disabled_at={row.get('disabled_at')!r} while "
+        f"disabled, so the listing is not reporting the disabled state at all -- and "
+        f"the re-enable check below would then pass without measuring anything"
+    )
 
     code, body = cleat.schedule_enabled(schedule_id, True)
     assert code == 200, f"re-enabling answered {code}: {body!r}"
@@ -264,13 +286,13 @@ def test_re_enabling_a_schedule_resumes_it(
         f"re-enable; disabling appears to have removed it rather than flagged it. "
         f"listing carries {[r.get('name') for r in listing]}"
     )
-    assert row.get("enabled") is True, (
-        f"schedule {schedule_id} is listed with enabled={row.get('enabled')!r} "
-        f"after a successful re-enable, so the flag and the endpoint disagree"
+    assert not row.get("disabled_at"), (
+        f"schedule {schedule_id} is listed with disabled_at={row.get('disabled_at')!r} "
+        f"after a successful re-enable, so the field and the endpoint disagree"
     )
 
     wait_until(
-        lambda: fixture_calls(key) > disabled_at,
+        lambda: fixture_calls(key) > calls_while_disabled,
         timeout=CRON_FIRE_TIMEOUT,
         what="the re-enabled schedule to fire again",
     )

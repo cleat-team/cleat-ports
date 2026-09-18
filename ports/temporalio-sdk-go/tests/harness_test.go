@@ -149,15 +149,30 @@ func call(t *testing.T, method, path string, body any, headers map[string]string
 const farFutureCron = "0 3 1 1 *"
 
 type schedule struct {
-	Name          string `json:"name"`
-	DefName       string `json:"def_name"`
-	Cron          string `json:"cron_expression"`
-	Enabled       bool   `json:"enabled"`
-	MisfirePolicy string `json:"misfire_policy"`
-	CatchUpLimit  int    `json:"catch_up_limit"`
-	OverlapPolicy string `json:"overlap_policy"`
-	Timezone      string `json:"timezone"`
+	Name          string  `json:"name"`
+	DefName       string  `json:"def_name"`
+	Cron          string  `json:"cron_expression"`
+	DisabledAt    *string `json:"disabled_at"`
+	MisfirePolicy string  `json:"misfire_policy"`
+	CatchUpLimit  int     `json:"catch_up_limit"`
+	OverlapPolicy string  `json:"overlap_policy"`
+	Timezone      string  `json:"timezone"`
 }
+
+// live reports whether a schedule is currently scheduled to fire.
+//
+// cleat#1773 replaced `"enabled": bool` with `disabled_at`, a timestamp that is
+// OMITTED for a live schedule -- so the polarity inverted at the same time as
+// the name changed, which is the combination that makes a mechanical rename
+// pass for the wrong reason.
+//
+// The pointer is load-bearing. A `bool` field named disabled would read false
+// for "live", for "the key was absent", and for "the server stopped sending
+// this field again" alike, so a third contract change would be invisible here
+// exactly as the second one was. A nil pointer still conflates live with
+// absent, which is why pause_test asserts BOTH directions against the same
+// schedule rather than only that a fresh one reads live.
+func (s *schedule) live() bool { return s.DisabledAt == nil }
 
 // createSchedule posts one schedule. extra carries fields the caller wants to
 // set explicitly, which is the whole point of the catch_up_limit case: an
