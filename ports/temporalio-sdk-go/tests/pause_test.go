@@ -51,7 +51,7 @@ func TestDisablingIsIdempotentAndAMissingScheduleIsRefused(t *testing.T) {
 	// idempotence while exercising nothing.
 	if got := scheduleNamed(t, name); got == nil {
 		t.Fatalf("the schedule %q is not in the list after a 201", name)
-	} else if !got.Enabled {
+	} else if !got.live() {
 		t.Fatalf("precondition: %q was created disabled, so the first disable is "+
 			"already the repeat case and this test would measure nothing", name)
 	}
@@ -61,8 +61,8 @@ func TestDisablingIsIdempotentAndAMissingScheduleIsRefused(t *testing.T) {
 		if r.Status != http.StatusOK {
 			t.Fatalf("disable answered %d, want 200: %s", r.Status, r.Raw)
 		}
-		if got := scheduleNamed(t, name); got == nil || got.Enabled {
-			t.Fatalf("after a 200 from disable, the row still reads enabled: %+v", got)
+		if got := scheduleNamed(t, name); got == nil || got.live() {
+			t.Fatalf("after a 200 from disable, the row still reads live (disabled_at %v): %+v", got.DisabledAt, got)
 		}
 	})
 
@@ -77,7 +77,7 @@ func TestDisablingIsIdempotentAndAMissingScheduleIsRefused(t *testing.T) {
 				"is the MySQL trap that issue records -- a no-op UPDATE reports 0 affected "+
 				"rows on MySQL and 1 on the other two dialects.", r.Status, r.Raw)
 		}
-		if got := scheduleNamed(t, name); got == nil || got.Enabled {
+		if got := scheduleNamed(t, name); got == nil || got.live() {
 			t.Errorf("the repeated disable changed or removed the row: %+v", got)
 		}
 	})
@@ -86,8 +86,8 @@ func TestDisablingIsIdempotentAndAMissingScheduleIsRefused(t *testing.T) {
 		if r := setScheduleEnabled(t, name, true); r.Status != http.StatusOK {
 			t.Fatalf("enable answered %d, want 200: %s", r.Status, r.Raw)
 		}
-		if got := scheduleNamed(t, name); got == nil || !got.Enabled {
-			t.Fatalf("after a 200 from enable, the row still reads disabled: %+v", got)
+		if got := scheduleNamed(t, name); got == nil || !got.live() {
+			t.Fatalf("after a 200 from enable, the row still reads disabled (disabled_at %v): %+v", got.DisabledAt, got)
 		}
 		if r := setScheduleEnabled(t, name, true); r.Status != http.StatusOK {
 			t.Errorf("enabling an already-enabled schedule answered %d, want 200: %s",
