@@ -51,6 +51,22 @@ def _claimed_generation(cleat, run_id, timeout=30.0):
     )
 
 
+def _error_sentence(body):
+    """Pull the response's `error` field to the front of a failure message.
+
+    cleat-ports#261. `detail` is a CATEGORY (`state_conflict`, `not_found`) and
+    `error` is the SENTENCE naming which one -- this bug cost real time
+    because a first read stopped at the category word ('state_conflict' read
+    as generation staleness) with the disambiguating sentence sitting one key
+    over in the same object. A category word is not enough to diagnose from;
+    put the sentence where a scanning reader hits it first, not the raw dict
+    where every key looks equally prominent.
+    """
+    if isinstance(body, dict) and body.get("error"):
+        return str(body["error"])
+    return repr(body)
+
+
 def _force_action_past_the_running_workflows_own_writes(cleat, run_id, op, fields, timeout=30.0):
     """Call a force-* admin action, retrying past a transient 409 the RUN'S
     OWN in-flight writes can cause while it is still actively retrying.
@@ -149,8 +165,8 @@ def test_force_complete_moves_a_running_workflow_to_done(cleat, retry_workflow):
         {"result": json.dumps({"forced": True})},
     )
     assert code == 200, (
-        f"force-complete answered {code}: {body!r}. A 200 carrying HTML rather "
-        f"than JSON is cleat#830's shape; a 500 is cleat#832's."
+        f"force-complete answered {code}: {_error_sentence(body)}\nfull body: {body!r}. "
+        f"A 200 carrying HTML rather than JSON is cleat#830's shape; a 500 is cleat#832's."
     )
 
     final = cleat.await_terminal(started["id"], timeout=60.0)
@@ -242,7 +258,7 @@ def test_force_fail_moves_a_running_workflow_to_failed(cleat, retry_workflow):
         cleat, started["id"], "force-fail",
         {"error": "forced by an operator in a port test"},
     )
-    assert code == 200, f"force-fail answered {code}: {body!r}"
+    assert code == 200, f"force-fail answered {code}: {_error_sentence(body)}\nfull body: {body!r}"
 
     final = cleat.await_terminal(started["id"], timeout=60.0)
     assert final["status"] == "failed", (
