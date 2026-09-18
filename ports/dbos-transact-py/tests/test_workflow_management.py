@@ -51,6 +51,86 @@ def _claimed_generation(cleat, run_id, timeout=30.0):
     )
 
 
+def _force_action_past_the_running_workflows_own_writes(cleat, run_id, op, fields, timeout=30.0):
+    """Call a force-* admin action, retrying past a transient 409 the RUN'S
+    OWN in-flight writes can cause while it is still actively retrying.
+
+    cleat-ports#261. The mechanism here is NOT what it first looked like, and
+    the correction is worth keeping because the wrong theory was plausible
+    enough to almost ship.
+
+    THE THEORY THIS REPLACED, AND WHY IT WAS WRONG. _claimed_generation's own
+    docstring says a run's generation keeps bumping as its retry schedule
+    causes reclaims, and that a bump landing between reading the generation
+    and using it produces a stale-generation 409. That reads as exactly this
+    bug's shape. It is not what happens here: both callers configure
+    attempts=5, intervalMs=3000, whose worst-case total backoff (4 * 3s = 12s)
+    is well inside cleat's DefaultHostRetryBudget (60s,
+    engine/engine.go:447), so the retry policy runs entirely ON THE HOST --
+    held within the SAME claim, never suspending, never releasing the run for
+    a worker to reclaim. Measured directly: polling generation every 100ms
+    for 13.71s while this exact workflow retried under it never showed
+    anything but the single 0 -> 1 claim bump. The generation-bump theory
+    does not apply to this fixture's timing at all.
+
+    THE ACTUAL MECHANISM, read from the CI failure this issue was filed from
+    (cleat-ports run 35317775293, job 105513180842) rather than assumed:
+
+        AssertionError: force-fail answered 409:
+        {'detail': 'state_conflict', 'error': 'force-fail: admin force_fail:
+        audit event for workflow ...  step 0 was displaced by a concurrent
+        writer; the force-resolve was rolled back rather than applied
+        without an audit record'}
+
+    That is engine/store_admin.go's adminAuditCollision, raised by
+    adminAppendAudit: it computes the NEXT step as
+    `MAX(step) + 1` over event_history, inserts the admin action's audit
+    event there, then re-reads what actually ended up at that step number --
+    and refuses if it is not the row it just wrote. A workflow retrying
+    under a HOST-held policy appends its own event
+    (engine/durablecalls.go:542, EventTypeCallAttemptFailed) once per failed
+    attempt, roughly every intervalMs. If the admin write's own
+    read-next-step-then-insert straddles the moment one of THOSE appends
+    lands, both computed the same next step number and one of them loses --
+    which is this 409, and has nothing to do with which generation was
+    supplied.
+
+    So the guard this fixes is a step-number allocation race, not a stale
+    read of the generation field. It recurs once per retry attempt (up to
+    `attempts` times), each occurrence narrow -- which fits an intermittent
+    CI failure that a 40-run local loop could not reproduce once.
+
+    WHY THE FIX (retry on ANY 409, timeout-bounded) DOES NOT NEED TO KNOW
+    WHICH OF THE TWO MECHANISMS ABOVE IS TRUE. Both produce a 409 that
+    clears if the SAME call is attempted again a moment later: a genuine
+    stale generation clears once a fresh one is read, and a step-allocation
+    collision clears once the competing write has landed and the next
+    MAX(step)+1 is unambiguous. Retrying blindly on the status code, rather
+    than trying to detect and dodge one specific cause, is what makes this
+    fix correct even though the mechanism it was designed against (the
+    generation theory) turned out not to be the one actually firing.
+
+    Bounded by timeout so a 409 that never clears reads as a real failure
+    rather than being swallowed forever -- the caller's own assertion on the
+    returned (code, body) is what reports that.
+
+    Does not touch test_a_stale_generation_is_refused_as_a_conflict, which
+    supplies a generation far in the future directly to cleat.admin and must
+    keep getting a 409 for it -- calling this helper there would defeat that
+    test by retrying past the very rejection it exists to observe.
+    """
+    gen = _claimed_generation(cleat, run_id, timeout=timeout)
+    deadline = time.time() + timeout
+    while True:
+        code, body = cleat.admin(run_id, op, {"generation": gen, **fields})
+        if code != 409:
+            return code, body
+        if time.time() >= deadline:
+            return code, body
+        gen = cleat.get(run_id)[1].get("generation", gen)
+        time.sleep(0.1)
+
+
 def test_force_complete_moves_a_running_workflow_to_done(cleat, retry_workflow):
     """An operator can terminate a run and supply its result.
 
@@ -64,10 +144,10 @@ def test_force_complete_moves_a_running_workflow_to_done(cleat, retry_workflow):
     })
     assert status == 201, f"start rejected: {status} {started}"
 
-    code, body = cleat.admin(started["id"], "force-complete", {
-        "generation": _claimed_generation(cleat, started["id"]),
-        "result": json.dumps({"forced": True}),
-    })
+    code, body = _force_action_past_the_running_workflows_own_writes(
+        cleat, started["id"], "force-complete",
+        {"result": json.dumps({"forced": True})},
+    )
     assert code == 200, (
         f"force-complete answered {code}: {body!r}. A 200 carrying HTML rather "
         f"than JSON is cleat#830's shape; a 500 is cleat#832's."
@@ -158,10 +238,10 @@ def test_force_fail_moves_a_running_workflow_to_failed(cleat, retry_workflow):
     })
     assert status == 201, f"start rejected: {status} {started}"
 
-    code, body = cleat.admin(started["id"], "force-fail", {
-        "generation": _claimed_generation(cleat, started["id"]),
-        "error": "forced by an operator in a port test",
-    })
+    code, body = _force_action_past_the_running_workflows_own_writes(
+        cleat, started["id"], "force-fail",
+        {"error": "forced by an operator in a port test"},
+    )
     assert code == 200, f"force-fail answered {code}: {body!r}"
 
     final = cleat.await_terminal(started["id"], timeout=60.0)
