@@ -310,7 +310,30 @@ ensure_second_tenant() {
   # down would otherwise read as "old toolchain" and skip in silence. Below,
   # an unsupported flag returns 0 with a message; a failure to create when the
   # flag EXISTS returns 1.
-  if ! "$ROOT/bin/cleat-worker" -h 2>&1 | grep -q -- "-create-tenant"; then
+  # THE HELP TEXT IS CAPTURED, NOT PIPED, and that is not style.
+  #
+  # This read `cleat-worker -h 2>&1 | grep -q -- "-create-tenant"` until
+  # 2026-09-19. Under this script's `set -o pipefail` (line 66), `grep -q` exits
+  # the moment it matches, cleat-worker takes SIGPIPE, and the PIPELINE reports
+  # 141 -- so a successful match makes the `if !` take the "toolchain is too
+  # old" branch. Measured on a current binary that plainly has the flag:
+  #
+  #     set -o pipefail; cleat-worker -h 2>&1 | grep -q -- "-create-tenant"
+  #     pipeline rc=141
+  #
+  #     without pipefail: rc=0
+  #
+  # It is a RACE, which is why CI never showed it and a laptop did: if the
+  # binary finishes writing its help before grep exits, there is no SIGPIPE and
+  # the check is right. The direction is the dangerous one -- the flag being
+  # PRESENT reports as absent, and the branch that reports it is a silent skip,
+  # so every cross-tenant assertion in this suite would quietly stop being
+  # exercised while the run stayed green. The comment below already says this
+  # class of skip is the thing to be afraid of; the check itself was an
+  # instance of it.
+  local help_text
+  help_text="$( "$ROOT/bin/cleat-worker" -h 2>&1 || true )"
+  if ! printf '%s' "$help_text" | grep -q -- "-create-tenant"; then
     echo "cleat-worker has no --create-tenant (cleat#1193); skipping the second tenant" >&2
     return 0
   fi
@@ -325,23 +348,80 @@ ensure_second_tenant() {
     2) [ -s "$KEYFILE_B" ] && return 0 ;;
   esac
 
+  # THE ORG, because cleat#1898 made admin.tenants.org_id NOT NULL and
+  # immutable, so --create-tenant grew a required --org. A toolchain from
+  # before that has neither flag and needs neither, so this is gated the same
+  # way --create-tenant itself is: by asking the binary, not by assuming.
+  #
+  # The nightly found this the expensive way. --create-tenant started failing
+  # with "Requires --org" and the harness reported "could not create or find
+  # the second tenant", which named a symptom and no cause -- see the stderr
+  # handling below, which is the other half of this fix.
+  local org_args=""
+  if printf '%s' "$help_text" | grep -q -- "-org "; then
+    local oid
+    oid=$(owner_psql -tAc \
+      "SELECT org_id FROM admin.orgs WHERE name = '$CLEAT_PORTS_ORG_NAME'" \
+      2>/dev/null | tr -d '[:space:]')
+
+    if [ -z "$oid" ]; then
+      local org_out org_err
+      org_err=$(mktemp)
+      org_out=$( cd "$SRC" && "$ROOT/bin/cleat-worker" \
+          -db "$CLEAT_PORTS_DSN" \
+          -driver "$CLEAT_PORTS_DIALECT" \
+          -create-org "$CLEAT_PORTS_ORG_NAME" 2>"$org_err" ) || true
+      oid=$(printf '%s' "$org_out" | sed -n 's/^Org ID: *//p' | tr -d '[:space:]')
+      if [ -z "$oid" ]; then
+        echo "could not create or find the org '$CLEAT_PORTS_ORG_NAME':" >&2
+        sed 's/^/    /' "$org_err" >&2
+        rm -f "$org_err"
+        return 1
+      fi
+      rm -f "$org_err"
+    fi
+    org_args="$oid"
+  fi
+
   local tid
   tid=$(owner_psql -tAc \
     "SELECT tenant_id FROM admin.tenants WHERE name = '$TENANT_B_NAME'" \
     2>/dev/null | tr -d '[:space:]')
 
   if [ -z "$tid" ]; then
-    tid=$( cd "$SRC" && "$ROOT/bin/cleat-worker" \
-        -db "$CLEAT_PORTS_DSN" \
-        -driver "$CLEAT_PORTS_DIALECT" \
-        -create-tenant "$TENANT_B_NAME" 2>/dev/null ) || true
-    tid=$(printf '%s' "$tid" | sed -n 's/^Tenant ID: *//p' | tr -d '[:space:]')
+    # STDERR IS CAPTURED, NOT DISCARDED. This read `2>/dev/null` until the
+    # 2026-09-19 nightly, and cleat had been printing exactly what was wrong --
+    # "Requires --org" -- into a stream nobody kept. The generic message below
+    # then described the symptom and named no cause, which turned a one-line
+    # diagnosis into a log dive. Whatever the next contract change is, it will
+    # say so here.
+    local tenant_err tenant_out
+    tenant_err=$(mktemp)
+    if [ -n "$org_args" ]; then
+      tenant_out=$( cd "$SRC" && "$ROOT/bin/cleat-worker" \
+          -db "$CLEAT_PORTS_DSN" \
+          -driver "$CLEAT_PORTS_DIALECT" \
+          -create-tenant "$TENANT_B_NAME" \
+          -org "$org_args" 2>"$tenant_err" ) || true
+    else
+      tenant_out=$( cd "$SRC" && "$ROOT/bin/cleat-worker" \
+          -db "$CLEAT_PORTS_DSN" \
+          -driver "$CLEAT_PORTS_DIALECT" \
+          -create-tenant "$TENANT_B_NAME" 2>"$tenant_err" ) || true
+    fi
+    tid=$(printf '%s' "$tenant_out" | sed -n 's/^Tenant ID: *//p' | tr -d '[:space:]')
   fi
 
   if [ -z "$tid" ]; then
     echo "could not create or find the second tenant '$TENANT_B_NAME'" >&2
+    if [ -n "${tenant_err:-}" ] && [ -s "$tenant_err" ]; then
+      echo "cleat-worker said:" >&2
+      sed 's/^/    /' "$tenant_err" >&2
+    fi
+    rm -f "${tenant_err:-}"
     return 1
   fi
+  rm -f "${tenant_err:-}"
   printf '%s\n' "$tid" > "$TENANT_B_FILE"
 
   ( cd "$SRC" && "$ROOT/bin/cleat-worker" \

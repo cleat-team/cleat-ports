@@ -97,6 +97,15 @@ esac
 : "${CLEAT_PORTS_TENANT:=00000000-0000-0000-0000-000000000000}"
 : "${CLEAT_PORTS_TENANT_B_NAME:=cleat-ports-tenant-b}"
 
+# The org both harness tenants belong to. cleat#1898 made admin.tenants.org_id
+# NOT NULL and immutable, so `--create-tenant` now requires `--org` and there is
+# no implicit default -- the operator names the org the same way they name the
+# tenant. One org for the whole harness is deliberate: the isolation these ports
+# assert is per-TENANT, and putting the two tenants in separate orgs would test
+# a boundary none of them make claims about while making the fixture harder to
+# reason about.
+: "${CLEAT_PORTS_ORG_NAME:=cleat-ports-org}"
+
 # Where this run keeps its pidfiles, logs, minted keys and built WASM.
 #
 # Keyed by COMPOSE_PROJECT_NAME because that is already how a session declares
@@ -140,4 +149,4 @@ export CLEAT_PORTS_WORKER_EXTRA_FLAGS
 export CLEAT_PORTS_RESULTS_ROOT CLEAT_PORTS_RESULTS_DIR
 export CLEAT_PORTS_DIALECT CLEAT_PORTS_MYSQL_PORT CLEAT_PORTS_MSSQL_PORT
 export CLEAT_PORTS_FIXTURE_PORT CLEAT_PORTS_FIXTURE_URL
-export CLEAT_PORTS_TENANT CLEAT_PORTS_TENANT_B_NAME CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API
+export CLEAT_PORTS_TENANT CLEAT_PORTS_TENANT_B_NAME CLEAT_PORTS_ORG_NAME CLEAT_PORTS_PG_PORT CLEAT_PORTS_DSN CLEAT_PORTS_API_PORT CLEAT_PORTS_API
