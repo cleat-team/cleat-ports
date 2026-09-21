@@ -12,14 +12,21 @@ mechanisms rather than one queue object:
 
 | DBOS | cleat |
 |---|---|
-| `queue(concurrency=N)` | concurrency keys — `test_concurrency.py`, `test_locks.py` |
+| `queue(concurrency=N)` | a declared queue — a `queues` row named by the start's `concurrency_key`. `test_concurrency.py` |
+| `queue(concurrency=1)` | the same key with NO registered queue: `concurrency_keys`, a mutex. `test_concurrency.py`, `test_locks.py` |
 | deduplication | the `Idempotency-Key` start header |
 | priority | the `priority` field on the start body |
-| rate limits | no equivalent surface |
+| rate limits | no equivalent surface (cleat#1918) |
 
-So this file covers the two admission controls that exist and are reachable,
-and says plainly that rate limiting has nothing to test rather than inventing a
-proxy for it.
+The first two rows were one row until 2026-09-20, and the change is cleat#1116:
+`concurrency_key` used to be a mutex and nothing else, so `concurrency=N` for
+N > 1 had nothing to map onto. It now takes one of two arms depending on whether
+the key names a live `queues` row, and both are asserted in `test_concurrency.py`
+rather than here — this file stays on deduplication and priority.
+
+So this file covers the two admission controls that are reachable from the start
+body alone, and says plainly that rate limiting has nothing to test rather than
+inventing a proxy for it.
 """
 
 import concurrent.futures
