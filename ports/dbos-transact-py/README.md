@@ -354,7 +354,7 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_child_priority.py` | 3 | `test_queue.py` — priority is a queue control one level down: what a CHILD is given, which upstream has no case for because it has no such rule |
 | `test_children.py` | 6 | `test_concurrency.py` — concurrent execution and isolation |
 | `test_complex_args.py` | 3 | `test_queue.py` — upstream test_complex_type -- a nested struct argument survives the store, including across a suspension |
-| `test_concurrency.py` | 5 (1 skipped) | `test_queue.py` — concurrency keys are cleat's dedup surface |
+| `test_concurrency.py` | 5 | `test_queue.py` — concurrency keys are cleat's dedup surface |
 | `test_continue_as_new.py` | 3 | `test_dbos.py` — bounded history via self-restart |
 | `test_cross_worker.py` | 3 | none — cleat-specific: mutual exclusion across two worker PROCESSES, which needs the second_worker fixture and has no upstream analogue |
 | `test_dead_letters.py` | 5 | `test_failures.py` — retries exhausted, and what is retained |
@@ -391,17 +391,18 @@ assertion, mapped to the upstream file the assertion came from:
 | `test_versions.py` | 3 | none — cleat-specific version reporting across a suspension |
 | `test_workflow_management.py` | 5 | `test_workflow_management.py` — force-complete, force-fail, and their refusals |
 
-The five skips are not unfinished work. Each is a cleat gap this port found,
+The skips below are not unfinished work. Each is a cleat gap this port found,
 left visible in the suite with the reason attached rather than deleted, so the
 assertion a reader expects is where they expect it:
 
-(This sentence said "three" while the table below listed four and the suite had
-five. A count in prose beside the list it counts is a claim that rots twice —
-derive it, or do not write it.)
+(This sentence carried a NUMBER until 2026-09-20 and was wrong both times it
+was written: it said "three" while the table listed four and the suite had
+five, and it then said "five" until the queue skip was un-skipped and the
+answer became four. A count in prose beside the list it counts is a claim that
+rots twice — derive it, or do not write it. It is now not written.)
 
 | Skipped | Gap |
 |---|---|
-| `test_blocked_task_runs_after_the_holder_finishes` | no queueing concurrency limit for N>1. The deferral half closed in cleat#1186 -- a blocked start is now accepted and its run waits -- and is asserted by `test_a_second_start_under_the_same_key_waits_then_runs`. `concurrency_keys` is still one row per key, so a limit greater than one has nothing to map onto |
 | `test_a_detached_run_can_be_addressed_by_its_caller` | `RunDetached` returns no handle |
 | `test_cancel_stops_a_workflow_that_does_not_cooperate` | no pre-emptive cancellation and no cancelled terminal state |
 | `test_the_workflow_id_survives_the_transition` | continue-as-new starts an unlinked new run, so the caller cannot follow the chain to its result (cleat#826) |

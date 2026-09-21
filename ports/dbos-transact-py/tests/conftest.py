@@ -1164,6 +1164,97 @@ def holds_key_workflow(cleat: Cleat) -> str:
     return _build_and_deploy("concurrency", "holds_key")
 
 
+@pytest.fixture
+def declared_queue(dsn: str):
+    """Register a queue with a concurrency LIMIT and return its name.
+
+    THE ONLY WAY THIS HARNESS CAN RAISE A CONCURRENCY KEY ABOVE ONE, and the
+    reason test_concurrency.py had a skipped test for a fortnight. An
+    unregistered `concurrency_key` is cleat's original mechanism -- one row in
+    `concurrency_keys` per key, so a MUTEX: one holder, the rest deferred. A
+    key that matches a live row in `queues` is a semaphore of that row's
+    `concurrency_limit` (cleat#1930). Registering the row is what cleat#1934
+    added, and `cleatctl queue create` is the whole of the operator path: no
+    HTTP route registers a queue, and until that PR the table could be
+    populated only by hand-written SQL.
+
+    So this shells out to `bin/cleatctl`, the binary scripts/worker.sh already
+    uses for `egress-allow`, with `-driver` passed explicitly the way
+    _build_and_deploy passes it to deploy-workflow -- one path exercised on
+    every dialect beats a conditional exercised on one.
+
+    IT VERIFIES THE STATE CHANGED rather than reporting the exit code of the
+    attempt, which is CONTRIBUTING.md's rule for a harness verb and the shape
+    this repo has found four times. The specific failure it exists to catch is
+    not hypothetical: `cleatctl queue` did not exist before 2026-09-20, and a
+    cleat build predating it answers an unknown subcommand on stderr. Reading
+    `queue list` back is what separates "registered" from "the binary printed
+    something".
+
+    Function-scoped and uniquely named per call. A queue is addressed by the
+    `concurrency_key` a start carries, so two tests sharing a name would share
+    one limit, and the second would be measuring the first's holders.
+
+    NO TEARDOWN, deliberately. cleat has no `queue delete` -- retirement is
+    `queue disable`, which leaves the row and drops admission to one rather
+    than removing anything -- so a teardown would be a second state change with
+    no assertion behind it. A name no other test can generate makes the row
+    inert instead, which is the same choice cleat's own
+    TestQueueCommandWorksOnEveryDialect made and for the same reason.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    cleatctl = root / "bin" / "cleatctl"
+    tenant = os.environ.get("CLEAT_PORTS_TENANT")
+    driver = os.environ.get("CLEAT_PORTS_DIALECT", "postgres")
+
+    def _run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [str(cleatctl), "-db", dsn, "-driver", driver, "queue", *args],
+            capture_output=True, text=True,
+        )
+
+    def register(concurrency: int) -> str:
+        if not cleatctl.exists():
+            pytest.fail(
+                f"{cleatctl} is missing — run `make install-cleat`. A declared "
+                f"queue has no other registration path: no HTTP route creates "
+                f"one, so without this binary the test would be measuring an "
+                f"unregistered key, which is a mutex."
+            )
+        if not tenant:
+            pytest.fail("CLEAT_PORTS_TENANT is unset — run via `make port`.")
+
+        name = f"port-queue-{uuid.uuid4()}"
+        created = _run("create", tenant, name, "--concurrency", str(concurrency))
+        if created.returncode != 0:
+            pytest.fail(
+                f"registering queue {name} with concurrency {concurrency} "
+                f"failed (rc={created.returncode}):\n"
+                f"{created.stderr[-2000:]}\n"
+                f"`cleatctl queue` landed in cleat on 2026-09-20 (cleat#1934); "
+                f"a usage message here means bin/ holds an older build."
+            )
+
+        # The verification, not decoration. See the docstring.
+        listed = _run("list", tenant)
+        if listed.returncode != 0:
+            pytest.fail(f"listing queues failed:\n{listed.stderr[-2000:]}")
+        row = [ln for ln in listed.stdout.splitlines() if name in ln]
+        if len(row) != 1:
+            pytest.fail(
+                f"queue {name} is not in `cleatctl queue list {tenant}` after a "
+                f"create that exited 0:\n{listed.stdout[-2000:]}"
+            )
+        if f"concurrency={concurrency}" not in row[0] or "live" not in row[0]:
+            pytest.fail(
+                f"queue {name} registered with the wrong limit or not live: "
+                f"{row[0]!r} (wanted concurrency={concurrency}, live)"
+            )
+        return name
+
+    return register
+
+
 @pytest.fixture(scope="session")
 def parallel_unit_workflow(cleat: Cleat) -> str:
     """Deploy the workflow whose durable call the fixture holds open.

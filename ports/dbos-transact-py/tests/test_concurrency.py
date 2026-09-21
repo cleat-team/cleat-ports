@@ -32,9 +32,25 @@ key on the row, where the alternative is a run that starts and is never
 deferred. No dialect this suite runs against takes that path, so a 409 here now
 means the key was not recorded, which is a defect rather than the contract.
 
-Still absent, and still a real gap: there is no counter. `concurrency_keys` is
-one row per key, so `concurrency=N` for N > 1, `worker_concurrency` and the rate
-limiter have nothing to map onto.
+AND THE COUNTER ARRIVED TOO (cleat#1116, closed 2026-09-20), which is what
+un-skipped the last test in this file.
+
+`concurrency_keys` is still one row per key, and that is still a mutex -- but it
+is no longer the only arm. A key that names a live row in the `queues` table is
+claimed against that row's `concurrency_limit` instead (cleat#1930), counted in
+`queue_holders` under a row lock, so `concurrency=N` for N > 1 finally has
+something to map onto. `cleatctl queue create` registers one (cleat#1934); the
+`declared_queue` fixture is this harness's only route to it, because no HTTP
+route registers a queue.
+
+A key with no registered queue keeps the old behaviour exactly -- which is why
+the three tests above are unchanged and still pass. The two arms are what the
+last test here discriminates between: with a queue declaring 2, two runs must be
+admitted at once; without one, a bug that ignored the table would admit one.
+
+Still absent: `worker_concurrency` (a PER-WORKER cap, cleat#1917, which was
+blocked on this) and the rate limiter (`limiter={limit, period}`, cleat#1918).
+Neither has a cleat surface yet, and neither is tested here.
 """
 
 import time
@@ -145,30 +161,173 @@ def test_distinct_keys_do_not_block_each_other(cleat, holds_key_workflow):
         assert cleat.await_terminal(run["id"])["status"] == "done"
 
 
-@pytest.mark.skip(
-    reason="GAP, NARROWED by cleat#1186: cleat still has no queueing "
-           "concurrency LIMIT -- concurrency_keys is one row per key, so "
-           "concurrency=N for N>1, worker_concurrency and the rate limiter have "
-           "nothing to map onto. The deferral half is no longer missing: a "
-           "blocked start is now accepted and its run waits, and that is "
-           "asserted by test_a_second_start_under_the_same_key_waits_then_runs "
-           "above. What remains unportable here is a limit greater than one."
-)
-def test_blocked_task_runs_after_the_holder_finishes():
+# Two, not one: one is what an UNREGISTERED key already gives, so a limit of one
+# would pass this test whether the queue was registered or not. Two is the
+# smallest number that can tell the semaphore from the mutex.
+QUEUE_LIMIT = 2
+
+# Four seconds, so the two admitted holders overlap for many samples. The
+# assertion is about how many hold a slot AT ONCE, and a hold short enough to
+# finish between two samples would make "never more than two" true for the wrong
+# reason -- which is what `full_samples` below refuses to accept.
+QUEUE_HOLD_MS = 4000
+
+
+def test_blocked_task_runs_after_the_holder_finishes(
+    cleat, holds_key_workflow, declared_queue
+):
     """Upstream test_one_at_a_time_with_worker_concurrency, second half.
 
-    Left in place, skipped, rather than omitted: an absent test is
+    SKIPPED FOR A FORTNIGHT AND NOW WRITTEN, which is the whole reason it was
+    left in the tree with a docstring and no body: an absent test is
     indistinguishable from an untried one, and this is the assertion a reader
-    comparing the two systems will look for first.
+    comparing the two systems looks for first.
 
-    THE SKIP REASON WAS FALSE BEFORE IT WAS EDITED, and that is worth saying.
-    It read "cleat rejects the start with 409 and it never runs", which stopped
-    being true when cleat#1186 landed. A skip carries its justification in
-    prose that nothing executes, so it cannot go red when the world moves under
-    it -- it just keeps asserting a gap that has closed, to every reader who
-    trusts it. Checked against the code rather than the reason: the deferral
-    half now works and is covered above; the counter half does not exist.
+    ITS SKIP REASON WAS FALSE TWICE, and both times in the same direction --
+    claiming a gap that had closed. The first version read "cleat rejects the
+    start with 409 and it never runs", which stopped being true at cleat#1186.
+    The second read "cleat still has no queueing concurrency LIMIT", which
+    stopped being true at cleat#1930 and was fully reachable at cleat#1934. A
+    skip carries its justification in prose that nothing executes, so it cannot
+    go red when the world moves under it; it just keeps telling every reader
+    who trusts it about a hole that is filled.
+
+    WHAT UPSTREAM ASSERTS: a queue with a concurrency limit runs at most that
+    many tasks at once, and the ones past the limit are HELD and run later
+    rather than refused. Cleat spells the queue as a row in `queues` and the
+    enqueue as a start carrying that queue's name as its `concurrency_key`.
+
+    WHY THE LIMIT IS TWO, AND WHY THAT IS THE TEST'S OWN CONTROL. An
+    unregistered key is a mutex, N=1. So a test written with a limit of one
+    would pass identically against a cleat that ignored the `queues` table
+    entirely -- it would be measuring the mechanism the three tests above
+    already cover. At two, the two arms disagree, and this test fails in a
+    DIFFERENT way against each defect:
+
+        the table is ignored / the queue never registered   peak 1, not 2
+        the limit is not enforced                           3 hold a slot at once
+
+    Both directions are asserted, so neither a missing semaphore nor a missing
+    limit passes. Falsified, not assumed: see the PR body.
+
+    The three runs are identical in duration on purpose. Asserting WHICH two
+    are admitted would rest on the claim's `ORDER BY priority, created_at`
+    breaking a tie between three starts issued in one loop, which is a
+    different property from the one under test and a real source of flake. The
+    waiter is identified by being the one not admitted.
+
+    OCCUPANCY IS READ AS `started_at` AND NOT-TERMINAL, WHICH IS NEITHER FIELD
+    ALONE. Two earlier versions of this test were written and both were wrong
+    against a working engine, which is why the reasoning is here rather than
+    trusted:
+
+      * `status == "running"` cannot see a holder. `holds_key` holds its key
+        across a DURABLE SLEEP, and a sleeping run reads `ready` -- the same
+        thing a run deferred behind a full queue reads. Measured, three runs
+        against a queue declaring 2:
+
+            t+0.0s   running  ready  ready
+            t+0.4s   ready    ready  ready      <- both holders, asleep
+            t+5.4s   done     done   running    <- the waiter, admitted
+
+        For most of the window `status` says `ready` about a run holding a slot
+        and about a run that has never had one.
+
+      * `started_at` alone cannot see a LIMIT, because it is monotone: it
+        answers "has this ever begun", so once the first holder releases and
+        the waiter is admitted, all three have begun and a snapshot taken then
+        reads as three-at-once. The first version of this test asserted exactly
+        that and failed against a correct engine whenever the sample landed
+        after the release.
+
+    `started_at AND NOT terminal` is "holds a slot right now", it goes down as
+    well as up, and it is what the limit is a limit on.
     """
+    queue = declared_queue(QUEUE_LIMIT)
+
+    runs = []
+    for _ in range(QUEUE_LIMIT + 1):
+        status, body = cleat.start(
+            holds_key_workflow, {"ms": QUEUE_HOLD_MS}, concurrency_key=queue
+        )
+        assert status == 201, (
+            f"a start against a declared queue should be accepted and deferred, "
+            f"never refused, got {status}: {body}"
+        )
+        runs.append(body["id"])
+    assert len(set(runs)) == len(runs), f"starts returned duplicate ids: {runs}"
+
+    begun: set[str] = set()
+    peak = 0            # most slots held simultaneously, over every sample
+    full_samples = 0    # samples that caught the queue exactly at its limit
+
+    deadline = time.monotonic() + 90.0
+    while time.monotonic() < deadline:
+        bodies = {rid: cleat.get(rid)[1] for rid in runs}
+        begun |= {rid for rid, b in bodies.items() if b.get("started_at")}
+        holding = [
+            rid for rid, b in bodies.items()
+            if b.get("started_at") and b.get("status") not in cleat.TERMINAL
+        ]
+
+        # The limit, asserted at EVERY sample rather than once. This is the
+        # direction a broken enforcement fails in, and it is the reason the
+        # loop samples instead of waiting and then looking.
+        assert len(holding) <= QUEUE_LIMIT, (
+            f"{len(holding)} runs held a slot at once on a queue declaring "
+            f"concurrency={QUEUE_LIMIT} ({holding}); admission past a declared "
+            f"limit is the failure this table exists to prevent"
+        )
+        peak = max(peak, len(holding))
+
+        if len(holding) == QUEUE_LIMIT:
+            full_samples += 1
+            # While the queue is full, the run past the limit has never begun.
+            # Upstream's "does not start while the others run", and the half a
+            # deferral-that-rejects would also satisfy -- which is why the
+            # completion assertions below are the other half.
+            waiting = [rid for rid in runs if rid not in begun]
+            assert len(waiting) == 1, (
+                f"the queue is at its limit of {QUEUE_LIMIT} and "
+                f"{len(waiting)} of {len(runs)} runs have never begun; expected "
+                f"exactly the one past the limit"
+            )
+
+        if len(begun) == len(runs):
+            break
+        time.sleep(0.2)
+
+    # The semaphore. ONE is what an unregistered key gives -- a mutex -- so this
+    # is the assertion that separates a declared queue from cleat's original
+    # mechanism, and the one that fails if the `queues` row was never read.
+    assert peak == QUEUE_LIMIT, (
+        f"at most {peak} run(s) ever held a slot at once on a queue declaring "
+        f"concurrency={QUEUE_LIMIT}. One means the declared limit was not read "
+        f"and the key fell back to the concurrency_keys mutex, which is what an "
+        f"unregistered name does -- so check that the queue was registered"
+    )
+
+    # Non-vacuity. A run in which the queue was never observed full has proved
+    # nothing about exclusion, and would pass every assertion above.
+    assert full_samples >= 3, (
+        f"the queue was caught at its limit in only {full_samples} sample(s), "
+        f"so exclusion was barely measured. The holders sleep {QUEUE_HOLD_MS}ms, "
+        f"which should afford many"
+    )
+
+    assert len(begun) == len(runs), (
+        f"only {len(begun)} of {len(runs)} runs ever began within 90s; a queue "
+        f"that defers and never releases is indistinguishable from one that "
+        f"refuses, and fails silently"
+    )
+
+    # And that everything finishes, not merely starts.
+    for rid in runs:
+        final = cleat.await_terminal(rid, timeout=90.0)
+        assert final["status"] == "done", (
+            f"run {rid} did not complete: {final.get('status')!r} "
+            f"error={final.get('error')!r}"
+        )
 
 
 # The reaper needs the heartbeat to go stale (10s) and then to run (every 10s),
