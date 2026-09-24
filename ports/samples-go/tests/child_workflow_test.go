@@ -142,13 +142,21 @@ func TestATerminateChildIsStoppedWhenItsParentCloses(t *testing.T) {
 	if child["status"] == "done" {
 		t.Errorf("a TERMINATE child completed anyway (status done) after its parent closed")
 	}
-	// The error message is asserted because it is the evidence of CAUSE. A
-	// child that failed for some other reason is a different bug wearing this
-	// one's result, and the engine writes exactly this text
-	// (engine/store_lifecycle.go:545).
-	if msg, _ := child["error"].(string); !strings.Contains(msg, "parent workflow terminated") {
-		t.Errorf("a TERMINATE child ended %v with error %q; want an error naming the parent",
-			child["status"], msg)
+	// DELIBERATE DIFFERENCE, recorded rather than smoothed over: cleat#1978 / cleat#2026
+	// (57e8e949, 2026-09-23). A TERMINATE close-policy child is now recorded TERMINATED,
+	// not failed, and its error message names the parent's REAL outcome rather than a fixed
+	// "parent workflow terminated". Here the parent completed, so the message is "parent
+	// workflow completed". This asserted status "failed"-shaped text until then; it went red
+	// on the nightly the day #2026 merged, hidden behind the migrate refusal (cleat#2174).
+	//
+	// The message is still asserted because it is the evidence of CAUSE. A child that ended
+	// for some other reason is a different bug wearing this one's result.
+	if child["status"] != "terminated" {
+		t.Errorf("a TERMINATE child ended %v, want terminated (cleat#2026)", child["status"])
+	}
+	if msg, _ := child["error"].(string); !strings.Contains(msg, "parent workflow completed") {
+		t.Errorf("a TERMINATE child ended %v with error %q; want an error naming the parent's outcome, "+
+			"\"parent workflow completed\" (cleat#2026)", child["status"], msg)
 	}
 	// The load-bearing half. A status flipped to failed while the child ran on
 	// is exactly the defect the generation bump at store_lifecycle.go:520 was
