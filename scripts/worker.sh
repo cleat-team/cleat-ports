@@ -939,6 +939,41 @@ start() {
   ensure_app_role || exit 1
   start_fixture || exit 1
 
+  # MIGRATE, THEN START. cleat#2117 / cleat#2174.
+  #
+  # A cleat-worker no longer migrates on start: it VERIFIES the schema and
+  # refuses ("the database has no schema_migrations table: it has never been
+  # migrated") when it is behind. Migration is a deploy step, `--migrate-only`,
+  # and this harness is the deploy. Until this ran, every leg of every port on
+  # every dialect failed at the worker's first line of output -- twelve nightly
+  # legs on 2026-09-24 (cleat run 35958726863).
+  #
+  # `--migrate-only` and not `--migrate-on-start`, deliberately: the second is
+  # the single-node opt-in that keeps the old behaviour, and "the old behaviour"
+  # is what hid the fact that the harness had no migration step of its own. This
+  # exercises the path a fleet uses. It is idempotent, so a second worker
+  # (CLEAT_PORTS_WORKER_INSTANCE >= 2) and a restart run it again and change
+  # nothing.
+  #
+  # Same flags as the worker below, so the migration is applied by the owner
+  # (-migrate-db) and the worker's schema check runs as the unprivileged role
+  # (-db). Run from $SRC for the same reason the worker is: the migrations
+  # directory is a relative path.
+  #
+  # The state change is verified by the worker that follows, not by this exit
+  # status: a worker started on a schema that is still behind refuses to start,
+  # which surfaces here as "worker exited during startup" with the refusal in
+  # the log -- the loud failure, not a quiet one.
+  MIGRATE_LOG="$CLEAT_PORTS_RESULTS_DIR/migrate.log"
+  if ! ( cd "$SRC" && "$ROOT/bin/cleat-worker" --migrate-only \
+          -db "$CLEAT_PORTS_RUNTIME_DSN" \
+          -migrate-db "$CLEAT_PORTS_DSN" \
+          -driver "$CLEAT_PORTS_DIALECT" ) >"$MIGRATE_LOG" 2>&1; then
+    echo "cleat-worker --migrate-only failed; log follows:" >&2
+    tail -20 "$MIGRATE_LOG" >&2
+    exit 1
+  fi
+
   # -driver as well as -db. The worker defaults to postgres and will hand a
   # MySQL or SQL Server DSN to lib/pq without it, which fails with a message
   # about SSL or about a missing "=" rather than about dialect.

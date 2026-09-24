@@ -89,16 +89,21 @@ func Test_TerminateOrchestration_Recursive_TerminateCompletedSubOrchestration(t 
 
 	// The running child. Upstream's L2: still going, and TERMINATE reaches it.
 	running := awaitTerminal(t, body.RunningChild, 90*time.Second)
-	if got := running["status"]; got != "failed" {
-		t.Errorf("the child still running when its parent closed is %v, want failed.\n\n"+
+	// DELIBERATE DIFFERENCE: cleat#1978 / cleat#2026 (57e8e949, 2026-09-23). A TERMINATE
+	// close-policy child is recorded TERMINATED, not failed, with error_op parent_close and an
+	// error message naming the parent's real outcome. This asserted "failed" until then, and
+	// went red on the nightly the day #2026 merged, hidden behind the migrate refusal
+	// (cleat#2174).
+	if got := running["status"]; got != "terminated" {
+		t.Errorf("the child still running when its parent closed is %v, want terminated.\n\n"+
 			"It was spawned with ParentClosePolicy TERMINATE, which is cleat's "+
 			"spelling of upstream's recursive terminate. `done` here would mean "+
 			"the policy did not reach it -- and this assertion is what stops the "+
 			"one above passing vacuously, since a policy that terminates NOTHING "+
 			"also leaves the completed child alone.", got)
 	}
-	if msg, _ := running["error"].(string); msg == "" {
-		t.Errorf("the terminated child carries no error message; the TERMINATE arm " +
-			"sets error_msg = 'parent workflow terminated'")
+	if msg, _ := running["error"].(string); msg != "parent workflow completed" {
+		t.Errorf("the terminated child's error is %q; the TERMINATE arm records the parent's real "+
+			"outcome, and the root completed, so want \"parent workflow completed\" (cleat#2026)", msg)
 	}
 }
