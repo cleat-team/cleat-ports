@@ -111,16 +111,19 @@ jobs:
         run: python3 scripts/check-go-toolchain-pin.py --self-test
       - name: The Go pin is at or above cleat's go.work floor
         run: python3 scripts/check-go-toolchain-pin.py
-      # 1.26 because `make install-cleat` BUILDS cleat from source at
-      # CLEAT_PINNED_REF, and cleat's go.work carries `go 1.26.0`
-      # (cleat#1714). setup-go sets GOTOOLCHAIN=local, so a toolchain
-      # below that floor cannot upgrade itself to satisfy it -- the job
-      # dies at install-cleat with "go.work requires go >= 1.26.0", before
-      # a single port test runs. This pin therefore tracks CLEAT's
-      # workspace floor, not this repo's own needs; nothing here is
-      # written in Go. cleat-ports#251.
+      # 1.27 because `make install-cleat` BUILDS cleat from source at
+      # CLEAT_PINNED_REF, and cleat's go.work carries `go 1.27.0`
+      # (cleat#2216, landed 7b13ac29c169). setup-go sets GOTOOLCHAIN=local,
+      # so a toolchain below that floor cannot upgrade itself to satisfy it
+      # -- the job dies at install-cleat with "go.work requires
+      # go >= 1.27.0", before a single port test runs. This pin therefore
+      # tracks CLEAT's workspace floor, not this repo's own needs; nothing
+      # here is written in Go. Second bump of this shape -- cleat-ports#251
+      # was the first, at 1.25->1.26 -- which is why check-go-toolchain-pin.py
+      # exists: so the next one announces itself instead of failing all four
+      # port jobs silently for days (cleat#2174).
       - uses: actions/setup-go@v6
-        with: { go-version: "1.26" }
+        with: { go-version: "1.27" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
       # ONE LEG PER RUNNER, AND THAT IS LOAD-BEARING. Each matrix combination

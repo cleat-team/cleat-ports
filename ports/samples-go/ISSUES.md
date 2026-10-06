@@ -494,25 +494,33 @@ The path shape is unchanged — a caller still cannot tell from the URL which ki
 a segment wants — but giving the wrong kind is now an error rather than a
 plausible empty answer.
 
-**One path deliberately left**
+**One path deliberately left — now resolved**
 
 ```
-DELETE /api/workflows/no_such_workflow_name/tags/stable -> 200
+DELETE /api/workflows/no_such_workflow_name/tags/stable -> 404  (was 200)
 ```
 
-*For leaving it:* DELETE is conventionally idempotent, and removing a tag that
-is not there is a no-op success.
+*For leaving it at 200 (the original case):* DELETE is conventionally
+idempotent, and removing a tag that is not there is a no-op success.
 
 *Against:* the thing that does not exist is the DEFINITION, not the tag. "The
 tag was removed" and "there is no such workflow" share one response, so a caller
-who typos the workflow name is told the deletion succeeded. #945 has just
+who typos the workflow name is told the deletion succeeded. #945 had just
 decided an unknown definition is a 404 on the reads, and the writes already 409;
-this is the last path where an unknown definition is silently fine.
+this was the last path where an unknown definition was silently fine.
 
-Not filed as a defect — idempotency is a real principle and this is a decision
-about which convention wins. Pinned in
-`TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200` so the decision is
-visible and the port notices whichever way it goes.
+Pinned in `TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200` so the
+decision would be visible whichever way it went — **and it has gone.** A run
+against cleat `develop` @ `0765f80ae` (2026-10-06) found that pin was the only
+failure across all four ports: cleat had already moved to 404
+(`cmd/cleat-worker/server.go`'s `handleRemoveWorkflowTag`), and this port's pin
+was stale. Filed as cleat-team/cleat#3165; owner decision, verbatim via the
+coordinator: **"recommendation accepted"** — keep 404 for an unknown
+definition, keep 200 for an absent tag on a definition that exists (the DELETE
+idempotency argument above still wins for the tag itself, just not for a typo'd
+workflow name). The pin is now `TestDeletingATagOnAnUnknownDefinitionIs404`,
+with `TestDeletingAnAbsentTagOnAKnownDefinitionIsStill200` as the control for
+the half that did not move.
 
 **Assessment**
 
