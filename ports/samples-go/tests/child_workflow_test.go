@@ -63,7 +63,16 @@ func runUnderPolicy(t *testing.T, k, policy string, childMs int) (parentID, chil
 	// mid-flight when the parent closes -- and that margin is checked below
 	// rather than trusted, because trusting it is how the first version of
 	// this file reported a TERMINATE defect that did not exist.
-	const parentMs = 1500
+	//
+	// 1500 was ports#269: measured dispatch latency (parent start -> child's
+	// first fixture call) is 110-116ms steady state, but under induced CPU
+	// contention (12 busy-loop processes pinning a 10-core host, load average
+	// to ~26) it tailed up to 3740ms across 15 runs -- more than double the
+	// old margin, which is the ports#30 "generous on paper, zero in practice"
+	// defect class. 6000 gives ~1.6x headroom over that measured tail and
+	// still leaves childMs=8000 comfortably larger, which is what the
+	// child-still-running check below actually depends on.
+	const parentMs = 6000
 	parentID = startedRunID(t, start(t, childPair(t), map[string]any{
 		"key": k, "policy": policy, "childMs": childMs, "parentMs": parentMs,
 	}))
