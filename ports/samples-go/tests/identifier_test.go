@@ -93,39 +93,49 @@ func TestTheTwoIdentifierKindsAreNotInterchangeable(t *testing.T) {
 	}
 }
 
-// TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200 pins the one path
-// cleat#945 deliberately did not change, with the reason recorded so whoever
-// decides it argues with the position rather than around it.
+// TestDeletingATagOnAnUnknownDefinitionIs404 pins the decision this pin
+// deliberately left open, now that it has been made.
 //
-//	DELETE /api/workflows/no_such_workflow_name/tags/stable -> 200
+// This test used to assert 200 (TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200,
+// pinning cleat#945's deliberate non-decision so the port would notice when
+// cleat ever moved). It has: a run against cleat develop @ 0765f80ae
+// (2026-10-06) found this the only failure across all four ports, and
+// cleat-team/cleat#3165 brought it to the owner. Owner decision, verbatim via
+// the coordinator: "recommendation accepted" -- keep 404 for an unknown
+// definition (matching the reads cleat#945 already settled, and the writes'
+// existing 409), keep 200 for an absent TAG on a real workflow.
 //
-// The case FOR leaving it: DELETE is conventionally idempotent, and removing a
-// tag that is not there is a no-op success. Making it 404 changes that.
-//
-// The case AGAINST: the thing that does not exist here is the DEFINITION, not
-// the tag. "The tag was removed" and "there is no such workflow" share one
-// response, and a caller who typos the workflow name is told the deletion
-// succeeded. cleat#945 has just decided that an unknown definition is a 404 on
-// the reads; the writes already 409. This is the last path where an unknown
-// definition is silently fine.
-//
-// Not filed as a defect: idempotency is a real principle and this is a decision
-// about which of two conventions wins. Pinned so the decision is visible and so
-// the port notices whichever way it goes.
-func TestDeletingATagOnAnUnknownDefinitionCurrentlyAnswers200(t *testing.T) {
+// So cleat did not change; the pin was stale. `cmd/cleat-worker/server.go`'s
+// handleRemoveWorkflowTag already called refuseIfAbsentOrInternalDef before
+// this port last ran green on this test, and
+// TestDeletingATagOnAnUnknownDefinitionIs404 (cleat's own
+// cmd/cleat-worker/tags_api_test.go) already pinned the 404 on cleat's side.
+// See ISSUES.md's "One path deliberately left" section for the resolution
+// recorded against the original decision.
+func TestDeletingATagOnAnUnknownDefinitionIs404(t *testing.T) {
 	r := call(t, http.MethodDelete,
 		"/api/workflows/no_such_workflow_name_for_delete/tags/stable", nil, nil)
 
-	switch r.Status {
-	case 200:
-		t.Logf("current behaviour: DELETE on an unknown definition answers 200. " +
-			"Idempotent, and indistinguishable from a successful removal.")
-	case 404:
-		t.Errorf("DELETE on an unknown definition now answers 404, so the idempotency " +
-			"question has been decided the other way. Update this test to assert it " +
-			"and record the decision in ISSUES.md #8.")
-	default:
-		t.Errorf("DELETE on an unknown definition answered %d: %s -- neither convention",
-			r.Status, r.Raw)
+	if r.Status != 404 {
+		t.Errorf("DELETE on an unknown definition answered %d: %s -- want 404 "+
+			"(cleat-team/cleat#3165's owner decision)", r.Status, r.Raw)
+	}
+}
+
+// TestDeletingAnAbsentTagOnAKnownDefinitionIsStill200 is the control the
+// decision above needs: it asserts the convention that was NOT reversed.
+// Deleting an absent TAG on a definition that genuinely exists stays a 200
+// no-op -- DELETE idempotency is kept for the tag itself, and only the
+// unknown-DEFINITION case moved to 404. (Not a duplicate of
+// TestAKnownDefinitionWithNothingIsStill200 above, which covers the GET
+// routing/tags collection-emptiness case -- this is the DELETE path.)
+func TestDeletingAnAbsentTagOnAKnownDefinitionIsStill200(t *testing.T) {
+	name := sagaWorkflow(t)
+	r := call(t, http.MethodDelete,
+		"/api/workflows/"+name+"/tags/no_such_tag_was_ever_set", nil, nil)
+
+	if r.Status != 200 {
+		t.Errorf("DELETE of an absent tag on a KNOWN definition answered %d: %s -- "+
+			"want 200, idempotency is kept here", r.Status, r.Raw)
 	}
 }
