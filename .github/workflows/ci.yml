@@ -270,8 +270,18 @@ jobs:
       # was the first, at 1.25->1.26 -- which is why check-go-toolchain-pin.py
       # exists: so the next one announces itself instead of failing all four
       # port jobs silently for days (cleat#2174).
+      #
+      # EXACT 1.27.3, NOT A FLOATING 1.27 (cleat#3704). The floating minor
+      # resolved to 1.27.4 on 2026-11-11 and every leg died at
+      # `make install-cleat` before any port ran: Go 1.27.4's cgo refuses the
+      # libwasmtime.a that wasmtime-go ships ("disallowed LTO section
+      # .llvmbc"; upstream bytecodealliance/wasmtime-go#299, open). cleat itself
+      # stays on 1.27.3 for the same reason (cleat#3701, waiver D69). 1.27.3 is
+      # cleat's `toolchain` line and sits above its `go` floor, so the pin check
+      # above still holds. Unpin when cleat#3701 is resolved: go1.27.5 ships or
+      # wasmtime-go#299 is fixed.
       - uses: actions/setup-go@v6
-        with: { go-version: "1.27" }
+        with: { go-version: "1.27.3" }
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
       - name: Install pinned cleat
