@@ -71,6 +71,50 @@ func cancelRun(t *testing.T, runID, reason string) {
 	}
 }
 
+// awaitClaimed polls until a worker has claimed the run and it has not
+// finished, and fails at once if it finishes first.
+//
+// IT REPLACED awaitParked HERE, which asked for more than this test needs. That
+// helper waits for the run to be "demonstrably parked on a durable sleep of at
+// least minPark" -- a row with next_wake_at at least minPark after started_at.
+// cleat#4351 made residency the default on 2026-11-22: the worker HOLDS a run
+// through a short wait instead of suspending it, and a held run's row reads
+// status=running, generation 1, with next_wake_at left at the time the run was
+// dispatched, 8.7ms BEFORE started_at in the log that found it:
+//
+//	PROBE poll status=running gen=1 started_at=...40.092325Z next_wake_at=...40.083609Z
+//
+// So the helper never saw a park, the workflow finished its 40 slices unseen, and
+// the test failed "the winner finished without ever parking" -- about 25s on every
+// dialect from the 2026-11-23 nightly, 18s on a laptop. The cancel itself still
+// worked: with the park wait replaced, the whole test passed in 2.7s with residency
+// on and again with it off.
+//
+// What THIS test needs from "parked" is only that the run is alive and polling
+// when the cancel arrives, and "claimed and not finished" is that on both paths.
+// awaitParked is still the right helper where a test is about the park itself
+// (the duplicate-start cases), and is left as it was.
+func awaitClaimed(t *testing.T, runID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last map[string]any
+	for time.Now().Before(deadline) {
+		r := call(t, http.MethodGet, "/api/workflows/"+runID, nil, nil)
+		last = r.Body
+		if got, _ := last["completed_at"].(string); got != "" {
+			t.Fatalf("the run finished (completed_at=%q) before it could be cancelled, "+
+				"so this case cannot say anything about a cancelled one. The usual cause "+
+				"is `slices` not binding: the input key is matched by exact Go parameter "+
+				"name.\n%#v", got, last)
+		}
+		if got, _ := last["started_at"].(string); got != "" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("run %s was never claimed by a worker within %s: %#v", runID, timeout, last)
+}
+
 func TestACancelledWorkflowMayStillStartAChild(t *testing.T) {
 	wf := cancelChildWorkflow(t)
 	child := updatesWorkflow(t) // any deployed definition; the child's behaviour is not under test
@@ -81,10 +125,10 @@ func TestACancelledWorkflowMayStillStartAChild(t *testing.T) {
 
 	// The run must be alive and polling before the cancel, or "it never
 	// observed cancellation" would be a statement about timing rather than
-	// about cleat. awaitParked is reused from the duplicate-start cases for
-	// exactly this: it returns only once a worker has claimed the run and
-	// parked it on the sleep this test asked for.
-	awaitParked(t, runID, 200*time.Millisecond, 60*time.Second)
+	// about cleat. awaitClaimed returns once a worker has claimed the run and it
+	// has not finished; the workflow then looks for the cancel every 400ms for
+	// 40 slices, so a cancel sent now has about 16s to be seen.
+	awaitClaimed(t, runID, 60*time.Second)
 
 	const reason = "port: cancelled, then asked for a child"
 	cancelRun(t, runID, reason)

@@ -22,6 +22,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -72,10 +73,9 @@ func race(t *testing.T, key, signalName string, shortMs, longMs int) string {
 //
 // The record is not decoration. Every assertion in this file that is about a
 // DEADLINE can be satisfied by a Selector that returns the right sentinel
-// instantly, and `generation` is the only field that distinguishes "waited"
-// from "answered at once": a run that suspends and resumes reports 2, one that
-// never suspends reports 1. Measured, not assumed -- see the control in
-// assertWaited below.
+// instantly, and the engine's own `created_at` and `completed_at` are what
+// distinguish "waited" from "answered at once" -- see assertWaited below, and
+// why `generation` is NOT that field any more.
 func outcome(t *testing.T, runID string, timeout time.Duration) (selectorOutcome, map[string]any) {
 	t.Helper()
 	final := awaitTerminal(t, runID, timeout)
@@ -113,11 +113,11 @@ func outcome(t *testing.T, runID string, timeout time.Duration) (selectorOutcome
 // So this asserts both halves of "the deadline was honoured":
 //
 //	the durable clock advanced by at least the deadline, and
-//	the run actually suspended, which is the engine's own record of it.
+//	the engine's own wall-clock record says the run took at least that long.
 //
 // Either alone is weaker than it looks. A guest could report elapsed time from
-// a clock that jumped without the run ever parking; a run could suspend for an
-// unrelated reason without the deadline being what woke it.
+// a clock that jumped without the run ever waiting; the engine's timestamps
+// say how long the run took and nothing about what the guest believed.
 func assertWaited(t *testing.T, o selectorOutcome, final map[string]any, deadlineMs int64) {
 	t.Helper()
 	if o.ElapsedMs < deadlineMs {
@@ -127,17 +127,45 @@ func assertWaited(t *testing.T, o selectorOutcome, final map[string]any, deadlin
 			"produces (cleat#1404), and it is what this assertion exists to catch.",
 			o.ElapsedMs, deadlineMs)
 	}
-	gen, ok := final["generation"].(float64)
-	if !ok {
-		t.Fatalf("the instance record carries no numeric generation (%T %v); this "+
-			"assertion cannot run and must not pass silently",
-			final["generation"], final["generation"])
+
+	// The second half is the ENGINE's record of how long the run took, read from
+	// outside the guest: completed_at minus created_at. It is true of a run that
+	// suspended and resumed AND of one the worker held through the wait, which is
+	// the point -- see the next paragraph.
+	//
+	// IT USED TO ASSERT `generation >= 2`, "the run actually suspended", and that
+	// was a proxy for the mechanism rather than for the deadline. On 2026-11-22
+	// cleat#4351 turned residency on by default: a worker now HOLDS a run through
+	// a wait that is due soon (the first 10 s, at the defaults) and answers it in
+	// the same segment, so a deadline that was honoured completes at generation 1.
+	// Both tests below went red on every dialect from the 2026-11-23 nightly,
+	// with the winner, the fired flag and the durable clock all correct -- they
+	// failed only the proxy. What the proxy was for is still checked here, by a
+	// clock the guest does not control.
+	if final["completed_at"] == nil || final["created_at"] == nil {
+		t.Fatalf("the instance record carries no created_at/completed_at (%v, %v); "+
+			"this assertion cannot run and must not pass silently",
+			final["created_at"], final["completed_at"])
 	}
-	if gen < 2 {
-		t.Errorf("the run completed at generation %v, so it never suspended. A "+
-			"deadline that is honoured parks the workflow and resumes it; one that "+
-			"is not is answered inside the first segment.", gen)
+	created, err1 := time.Parse(time.RFC3339Nano, fmt.Sprint(final["created_at"]))
+	completed, err2 := time.Parse(time.RFC3339Nano, fmt.Sprint(final["completed_at"]))
+	if err1 != nil || err2 != nil {
+		t.Fatalf("created_at %v / completed_at %v do not parse as RFC 3339 (%v, %v)",
+			final["created_at"], final["completed_at"], err1, err2)
 	}
+	const slack = 100 * time.Millisecond // two readings of one wall clock, not a timing bound
+	wall := completed.Sub(created)
+	if wall+slack < time.Duration(deadlineMs)*time.Millisecond {
+		t.Errorf("the engine's own record says the run took %s from created_at to "+
+			"completed_at, less than the %dms deadline. A deadline that is honoured "+
+			"takes at least that long, whether the run suspended or was held through "+
+			"it; one answered at once does not.", wall, deadlineMs)
+	}
+	// Which mechanism answered is information, not a verdict: 1 means the worker
+	// held the run (residency, the default since 0.6.0), 2 or more means it
+	// suspended and resumed.
+	t.Logf("deadline %dms honoured: durable clock %dms, engine wall clock %s, generation %v",
+		deadlineMs, o.ElapsedMs, wall.Round(time.Millisecond), final["generation"])
 }
 
 // TestASignalWinsTheRaceAgainstALaterDeadline is the base case: the selector
