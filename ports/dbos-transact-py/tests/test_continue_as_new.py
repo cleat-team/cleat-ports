@@ -243,7 +243,10 @@ def test_a_delivered_but_unconsumed_signal_crosses_a_continue_as_new(
         "If that has come back, the carry-over was removed and the UPGRADE NOTE "
         "that announced it needs rewriting."
     )
-    assert body["payload"] == json.dumps({"from": "iteration-1"}, separators=(",", ":")), (
+    # Compared as JSON, not as a string: the body is re-serialised on the way
+    # through the store, and a JSON column does not keep the sender's spacing on
+    # every dialect.
+    assert json.loads(body["payload"]) == {"from": "iteration-1"}, (
         f"the signal crossed the boundary but not intact: {body}"
     )
     assert body["iteration"] == 2, f"the wrong iteration answered: {body}"

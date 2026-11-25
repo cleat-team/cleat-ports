@@ -340,8 +340,11 @@ ensure_second_tenant() {
   # `worker.sh: line 361: printf: write error: Broken pipe` and then
   # `--org is required with --create-tenant`, because the `-org ` check below read
   # false for a flag that was there (11-22 temporalio-sdk-go/postgres; 11-25
-  # dbos-transact-py/postgres, twice). Measured in a loop of 300 against the real
-  # `-h` text under pipefail: 7 false negatives with one build, 26 with another.
+  # dbos-transact-py/postgres, twice). Looped 300 times against the real `-h` text
+  # under pipefail on macOS (2026-11-25, three cleat builds, several runs), the old
+  # form gave between 1 and 26 false negatives per 300 and `case` gave 0: the rate
+  # moves with the build and the run, which is what a race does. The CI rate is not
+  # known.
   # `case` matches in this shell, with no second process, so there is nothing to
   # SIGPIPE; `scripts/selftest-help-text-match.sh` loops it.
   local help_text
