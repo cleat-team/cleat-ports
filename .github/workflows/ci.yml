@@ -157,6 +157,14 @@ jobs:
         # milliseconds. The Go ports cover the same filter in their own
         # tests/buildwarnings_test.go.
         run: python3 scripts/selftest-build-warnings.py
+      - name: worker.sh still matches the worker's help text without a pipe
+        # `printf '%s' "$help_text" | grep -q` under pipefail is a SIGPIPE race:
+        # grep -q exits at its first match while printf is still writing, so a
+        # flag that is present reads as absent -- only sometimes. The nightlies of
+        # 2026-11-22 and 2026-11-25 hit it (`printf: write error: Broken pipe`,
+        # then `--org is required with --create-tenant`). Pure shell: no database,
+        # no services, under a second.
+        run: scripts/selftest-help-text-match.sh
 
       - name: Inventory tables match the tree
         # The dbos-transact-py README's two tables are generated. They were

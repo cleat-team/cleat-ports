@@ -25,6 +25,16 @@ def _body(final):
     return json.loads(raw) if isinstance(raw, str) else raw
 
 
+# A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency
+# the default on 2026-11-22: a worker holds a run in memory through a wait that is
+# due within --resident-window-floor (10 s, a starting point) and answers it in the
+# same segment, so a 3 s sleep no longer replays anything. This test is about the
+# replay, so its sleep has to outlast that window; the `generation > 1` assertion
+# below is what says so out loud if it ever stops doing that. Also passes with
+# `--resident-max-runs 0`, where any sleep suspends.
+PAST_THE_HOLD_WINDOW_MS = 12_000
+
+
 def test_the_reported_versions_survive_a_suspension(cleat, min_version_workflow):
     """Version and MinVersion are the same before and after a suspension.
 
@@ -35,7 +45,8 @@ def test_the_reported_versions_survive_a_suspension(cleat, min_version_workflow)
     """
     key = f"ver-{uuid.uuid4().hex[:8]}"
 
-    status, started = cleat.start(min_version_workflow, {"key": key, "sleepMs": 3000})
+    status, started = cleat.start(
+        min_version_workflow, {"key": key, "sleepMs": PAST_THE_HOLD_WINDOW_MS})
     assert status == 201, f"start rejected: {status} {started}"
 
     final = cleat.await_terminal(started["id"], timeout=60.0)
@@ -47,7 +58,9 @@ def test_the_reported_versions_survive_a_suspension(cleat, min_version_workflow)
 
     assert final.get("generation", 1) > 1, (
         f"the workflow completed in one segment (generation {final.get('generation')}), "
-        f"so it never suspended and this test did not compare across a replay."
+        f"so it never suspended and this test did not compare across a replay. A "
+        f"worker holds a run through a wait shorter than its residency window "
+        f"(10 s at the defaults): raise PAST_THE_HOLD_WINDOW_MS above it."
     )
 
     assert body["beforeVersion"] == body["afterVersion"], (

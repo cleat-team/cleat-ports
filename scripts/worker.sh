@@ -331,12 +331,31 @@ ensure_second_tenant() {
   # exercised while the run stayed green. The comment below already says this
   # class of skip is the thing to be afraid of; the check itself was an
   # instance of it.
+  # THE CAPTURE IS NOT ENOUGH, AND THIS LINE USED TO PIPE IT AGAIN (cleat-ports,
+  # 2026-11-25). The fix above captured the help text and then handed it back to
+  # `printf '%s' "$help_text" | grep -q ...`, which is the same pipeline with a
+  # shell builtin in place of the binary: `grep -q` exits at its first match,
+  # `printf` is still writing about 55 KB, takes SIGPIPE, and `set -o pipefail`
+  # reports the pipeline as failed. The nightly logged it as
+  # `worker.sh: line 361: printf: write error: Broken pipe` and then
+  # `--org is required with --create-tenant`, because the `-org ` check below read
+  # false for a flag that was there (11-22 temporalio-sdk-go/postgres; 11-25
+  # dbos-transact-py/postgres, twice). Looped 300 times against the real `-h` text
+  # under pipefail on macOS (2026-11-25, three cleat builds, several runs), the old
+  # form gave between 1 and 26 false negatives per 300 and `case` gave 0: the rate
+  # moves with the build and the run, which is what a race does. The CI rate is not
+  # known.
+  # `case` matches in this shell, with no second process, so there is nothing to
+  # SIGPIPE; `scripts/selftest-help-text-match.sh` loops it.
   local help_text
   help_text="$( "$ROOT/bin/cleat-worker" -h 2>&1 || true )"
-  if ! printf '%s' "$help_text" | grep -q -- "-create-tenant"; then
-    echo "cleat-worker has no --create-tenant (cleat#1193); skipping the second tenant" >&2
-    return 0
-  fi
+  case "$help_text" in
+    *"-create-tenant"*) ;;
+    *)
+      echo "cleat-worker has no --create-tenant (cleat#1193); skipping the second tenant" >&2
+      return 0
+      ;;
+  esac
 
   # Same three-way answer mint_key relies on, and for the same reason: a
   # non-empty key file is not a working key. `|| state=$?` keeps set -e from
@@ -358,7 +377,10 @@ ensure_second_tenant() {
   # the second tenant", which named a symptom and no cause -- see the stderr
   # handling below, which is the other half of this fix.
   local org_args=""
-  if printf '%s' "$help_text" | grep -q -- "-org "; then
+  # `case`, not `printf | grep -q`: see the note at the first match above.
+  local has_org_flag=0
+  case "$help_text" in *"-org "*) has_org_flag=1 ;; esac
+  if [ "$has_org_flag" = 1 ]; then
     local oid
     oid=$(owner_psql -tAc \
       "SELECT org_id FROM admin.orgs WHERE name = '$CLEAT_PORTS_ORG_NAME'" \

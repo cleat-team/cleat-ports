@@ -148,43 +148,43 @@ def test_the_chain_is_followable_to_the_run_carrying_the_result(
     )
 
 
-def test_a_delivered_but_unconsumed_signal_does_not_cross_a_continue_as_new(
+def test_a_delivered_but_unconsumed_signal_crosses_a_continue_as_new(
         cleat, continue_as_new_signal_workflow, fixture_calls):
-    """A signal left unconsumed at the boundary is not visible to the new run.
+    """A signal left unconsumed at the boundary is carried to the new run.
 
-    Upstream's `Test_ContinueAsNew_Events` carries such events across, behind an
-    explicit opt-in — `task.WithKeepUnprocessedEvents()`. cleat has no
-    counterpart, so the upstream case is not portable as written. What cleat can
-    answer is what happens by default, and nothing here asked.
+    THIS TEST ASSERTED THE OPPOSITE until cleat#4340 (#4379, 2026-11-23) changed
+    the behaviour on purpose, and its own docstring said how that would read:
+    "If cleat ever grows one, this test should fail, and that failure is the
+    point." It failed on the 2026-11-23 nightly on all three dialects. The change
+    is an UPGRADE NOTE in cleat's changelog:
 
-    **The storage explains the answer and is worth stating, because the test
-    would otherwise look like it is hunting a bug.** `workflow_signals` is keyed
-    `(workflow_id, signal_name)`, and `ContinueAsNew` mints a NEW run id without
-    touching that table — zero mentions of `workflow_signals` inside the
-    function, on all three dialects. So the row stays attached to the run that
-    has just finished.
+      "A signal already stored on a run (sent, not yet read) when it continues
+      as new is carried to its successor, in order, in the transaction that
+      completes the old run; a signal that races the continue lands on exactly
+      one run."
 
-    **This asserts cleat's behaviour, not upstream's.** It is a divergence
-    nobody has adjudicated: matching upstream's *default* (which also drops
-    them) while lacking upstream's opt-in. If cleat ever grows one, this test
-    should fail, and that failure is the point.
+    Upstream's `Test_ContinueAsNew_Events` carries such events across behind an
+    explicit opt-in, `task.WithKeepUnprocessedEvents()`; cleat now carries them
+    without one, because a signal is addressed to a WORKFLOW, not to a run. So
+    this asserts cleat's behaviour, not upstream's, and it is still a divergence
+    from upstream's default (which drops them). It was a divergence nobody had
+    adjudicated when this was written; cleat#4340 is the adjudication.
 
-    **Ordering is the whole fixture.** `carried` is delivered FIRST, while
-    iteration one is still parked on `go`. That is what makes it
-    already-delivered-and-unconsumed at the boundary rather than a signal that
-    simply arrived too late — two situations with the same visible outcome and
-    entirely different meanings.
+    **Ordering is the whole fixture, and it is unchanged.** `carried` is
+    delivered FIRST, while iteration one is still parked on `go`. That is what
+    makes it already-delivered-and-unconsumed at the boundary rather than a
+    signal that simply arrived too late -- two situations with the same visible
+    outcome and entirely different meanings.
 
     **The control is built in, and it needs saying, because the obvious way for
     this test to pass for the wrong reason is that signals never arrive at
-    all.** A test asserting a timeout is satisfied by a broken delivery path.
-
-    It cannot happen here: reaching iteration two at all requires `go` to have
-    been delivered and consumed by iteration one. If the signal path were
-    broken, iteration one would time out, return `never-released`, and never
-    continue — so `/terminal` would still be the run we started, and the
-    `final.get("id") != run_id` assertion below fails first. The path this test
-    depends on is exercised by the test itself, one step before the assertion.
+    all.** Reaching iteration two requires `go` to have been delivered and
+    consumed by iteration one. If the signal path were broken, iteration one
+    would time out, return `never-released`, and never continue -- so
+    `/terminal` would still be the run we started, and the
+    `final.get("id") != run_id` assertion below fails first. And the payload is
+    asserted, not only the outcome: a `carried` that arrived with the wrong body
+    would be a different signal.
     """
     key = f"cansignal-{uuid.uuid4().hex[:8]}"
     status, started = cleat.start(continue_as_new_signal_workflow,
@@ -236,10 +236,17 @@ def test_a_delivered_but_unconsumed_signal_does_not_cross_a_continue_as_new(
     )
 
     body = _body(final)
-    assert body["outcome"] == "timedout", (
-        f"iteration 2 reported {body['outcome']!r}: {body}. `carried` means the "
-        "signal crossed the boundary — which would be a change in behaviour, "
-        "since ContinueAsNew does not touch workflow_signals on any dialect and "
-        "the table is keyed by workflow_id."
+    assert body["outcome"] == "carried", (
+        f"iteration 2 reported {body['outcome']!r}: {body}. `timedout` means the "
+        "signal did NOT cross the boundary, which is what cleat did before "
+        "cleat#4340: the signal stayed attached to the run that had just finished. "
+        "If that has come back, the carry-over was removed and the UPGRADE NOTE "
+        "that announced it needs rewriting."
+    )
+    # Compared as JSON, not as a string: the body is re-serialised on the way
+    # through the store, and a JSON column does not keep the sender's spacing on
+    # every dialect.
+    assert json.loads(body["payload"]) == {"from": "iteration-1"}, (
+        f"the signal crossed the boundary but not intact: {body}"
     )
     assert body["iteration"] == 2, f"the wrong iteration answered: {body}"
