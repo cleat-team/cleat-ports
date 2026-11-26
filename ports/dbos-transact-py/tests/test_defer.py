@@ -37,6 +37,22 @@ wait_until = functools.partial(_wait_until, interval=0.25)
 
 SLEEP_MS = 3000
 
+# A sleep the worker SUSPENDS through rather than holds (cleat#4351, residency on by
+# default: a wait due within --resident-window-floor, 10 s at the defaults, is held in
+# memory and answered in the same segment). The two tests that claim a suspension use it;
+# the others keep SLEEP_MS. cleat-ports#276: at 3 s three of four runs stayed at
+# generation 1. test_replay.py names the same constant for the same reason.
+PAST_THE_HOLD_WINDOW_MS = 12_000
+
+
+def _assert_suspended(final, why):
+    """The run left generation 1: a replay or a suspension is what the test is about."""
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so "
+        f"it never suspended: {why}. A worker holds a run through a wait shorter than its "
+        f"residency window (10 s at the defaults): raise PAST_THE_HOLD_WINDOW_MS above it."
+    )
+
 
 def test_a_registered_cleanup_runs(cleat, defer_workflow, fixture_calls):
     """The defer body reaches the service. 3.70's defect was silent otherwise."""
@@ -72,7 +88,7 @@ def test_a_cleanup_does_not_run_at_registration(cleat, defer_workflow, fixture_c
     defer_key = f"defer-run-{uuid.uuid4().hex[:8]}"
 
     status, started = cleat.start(defer_workflow, {
-        "bodyKey": body_key, "deferKey": defer_key, "sleepMs": SLEEP_MS,
+        "bodyKey": body_key, "deferKey": defer_key, "sleepMs": PAST_THE_HOLD_WINDOW_MS,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
@@ -92,8 +108,9 @@ def test_a_cleanup_does_not_run_at_registration(cleat, defer_workflow, fixture_c
         "while the workflow was still suspended"
     )
 
-    final = cleat.await_terminal(started["id"], timeout=60.0)
+    final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final, "the assertion above was made against a held run, not a suspended one")
 
 
 def test_a_cleanup_runs_once_though_the_body_runs_twice(cleat, defer_workflow, fixture_calls):
@@ -113,12 +130,13 @@ def test_a_cleanup_runs_once_though_the_body_runs_twice(cleat, defer_workflow, f
     defer_key = f"defer-run-{uuid.uuid4().hex[:8]}"
 
     status, started = cleat.start(defer_workflow, {
-        "bodyKey": body_key, "deferKey": defer_key, "sleepMs": SLEEP_MS,
+        "bodyKey": body_key, "deferKey": defer_key, "sleepMs": PAST_THE_HOLD_WINDOW_MS,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
-    final = cleat.await_terminal(started["id"], timeout=60.0)
+    final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final, "the body ran once, so a count of 1 holds with no replay at all")
 
     wait_until(
         lambda: fixture_calls(defer_key) >= 1,
