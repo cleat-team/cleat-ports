@@ -34,6 +34,23 @@ wait_until = functools.partial(_wait_until, interval=0.25)
 
 SLEEP_MS = 3000
 
+# A sleep the worker SUSPENDS through rather than holds (cleat#4351, residency on by
+# default: a wait due within --resident-window-floor, 10 s at the defaults, is held in
+# memory and answered in the same segment). The two tests below that claim a suspension
+# use it; the first test does not and keeps SLEEP_MS. cleat-ports#276: at 3 s both ran at
+# generation 1, so the body never replayed. test_replay.py names the same constant.
+PAST_THE_HOLD_WINDOW_MS = 12_000
+
+
+def _assert_suspended(final, why):
+    """The run left generation 1: a replay is what these tests are about."""
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so "
+        f"it never suspended and the body did not replay: {why}. A worker holds a run "
+        f"through a wait shorter than its residency window (10 s at the defaults): "
+        f"raise PAST_THE_HOLD_WINDOW_MS above it."
+    )
+
 
 def _body(final):
     raw = final["result"]
@@ -70,11 +87,12 @@ def test_a_send_is_not_repeated_when_the_workflow_replays(
     """
     key = f"send-once-{uuid.uuid4().hex[:8]}"
 
-    status, started = cleat.start(send_workflow, {"key": key, "sleepMs": SLEEP_MS})
+    status, started = cleat.start(send_workflow, {"key": key, "sleepMs": PAST_THE_HOLD_WINDOW_MS})
     assert status == 201, f"start rejected: {status} {started}"
 
-    final = cleat.await_terminal(started["id"], timeout=60.0)
+    final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final, "a count of 1 would hold with no replay at all")
 
     wait_until(
         lambda: fixture_calls(key) >= 1,
@@ -117,12 +135,13 @@ def test_a_send_after_a_suspension_still_arrives(cleat, send_after_sleep_workflo
     late = f"late-{uuid.uuid4().hex[:8]}"
 
     status, started = cleat.start(send_after_sleep_workflow, {
-        "earlyKey": early, "lateKey": late, "sleepMs": SLEEP_MS,
+        "earlyKey": early, "lateKey": late, "sleepMs": PAST_THE_HOLD_WINDOW_MS,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
-    final = cleat.await_terminal(started["id"], timeout=60.0)
+    final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final, "the late send was made in the same segment as the early one")
 
     wait_until(
         lambda: fixture_calls(early) >= 1,

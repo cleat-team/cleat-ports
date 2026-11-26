@@ -34,6 +34,10 @@ from conftest import wait_until
 # against a scheduler that never fired.
 CRON_FIRE_TIMEOUT = 100.0
 
+#: A sleep the worker SUSPENDS through rather than holds (cleat#4351; see the generation
+#: assertion in test_a_delayed_invocation_reaches_the_service, cleat-ports#276).
+PAST_THE_HOLD_WINDOW_MS = 12_000
+
 
 @pytest.fixture
 def cleanup_schedules(cleat):
@@ -143,12 +147,21 @@ def test_a_delayed_invocation_reaches_the_service(cleat, schedule_invoke_workflo
     key = f"si-{uuid.uuid4().hex[:8]}"
 
     status, started = cleat.start(schedule_invoke_workflow, {
-        "invokeKey": key, "delayMs": 1000, "sleepMs": 6000,
+        "invokeKey": key, "delayMs": 1000, "sleepMs": PAST_THE_HOLD_WINDOW_MS,
     })
     assert status == 201, f"start rejected: {status} {started}"
 
-    final = cleat.await_terminal(started["id"], timeout=60.0)
+    final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    # Without this the arrangement above is not the one the docstring describes: a worker
+    # that HOLDS the run through a wait shorter than its residency window (10 s at the
+    # defaults, cleat#4351) answers it in the same segment, the invocation is never due
+    # on the far side of a replay frontier, and elapsed time cannot tell (cleat-ports#276).
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so it "
+        f"never suspended and the invocation was not due in another segment. Raise "
+        f"PAST_THE_HOLD_WINDOW_MS above the residency window."
+    )
 
     wait_until(
         lambda: fixture_calls(key) >= 1,
