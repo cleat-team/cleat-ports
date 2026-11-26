@@ -30,7 +30,23 @@ and the engine did not hold it.
 import json
 import uuid
 
-SLEEP_MS = 6000
+# A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency the
+# default on 2026-11-22: a worker holds a run in memory through a wait due within
+# --resident-window-floor (10 s at the defaults, a starting point) and answers it in the
+# same segment. At 6 s these tests read a HELD run's state, which is a different path
+# from a suspended run's (cleat-ports#276: generation 1 in both). test_replay.py and
+# test_versions.py name the same constant for the same reason.
+SLEEP_MS = 12_000
+
+
+def _assert_suspended(final):
+    """The run left generation 1, so the state read mid-sleep was a suspended run's."""
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so a "
+        f"worker held it through the sleep and the query above read a held run's state, "
+        f"not a suspended one's. A worker holds a run through a wait shorter than its "
+        f"residency window (10 s at the defaults): raise SLEEP_MS above it."
+    )
 
 
 def test_query_state_is_readable_while_the_workflow_is_suspended(cleat, query_state_workflow):
@@ -63,8 +79,9 @@ def test_query_state_is_readable_while_the_workflow_is_suspended(cleat, query_st
     # an earlier segment's value survives rather than being replaced wholesale.
     assert cleat.poll_query(run_id, "tag", timeout=5.0) == tag
 
-    final = cleat.await_terminal(run_id, timeout=60.0)
+    final = cleat.await_terminal(run_id, timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final)
 
 
 def test_a_reader_sees_the_current_value_not_the_final_one(cleat, query_state_workflow):
@@ -84,8 +101,9 @@ def test_a_reader_sees_the_current_value_not_the_final_one(cleat, query_state_wo
 
     during = cleat.poll_query(run_id, "phase", timeout=15.0)
 
-    final = cleat.await_terminal(run_id, timeout=60.0)
+    final = cleat.await_terminal(run_id, timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    _assert_suspended(final)
     after_status, after = cleat.query(run_id, "phase")
     assert after_status == 200, f"query after completion: {after_status} {after}"
 
