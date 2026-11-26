@@ -173,6 +173,48 @@ QUEUE_LIMIT = 2
 QUEUE_HOLD_MS = 4000
 
 
+def _consistent_sample(cleat, runs, attempts=20):
+    """The runs' states at ONE instant, or None if none could be established.
+
+    Three sequential GETs are three instants. The holders sleep the same
+    duration on purpose, so they finish within a few milliseconds of each other and
+    the waiter is admitted a few milliseconds after that, while the three reads span
+    tens of milliseconds (43 to 69 ms in the failing samples of cleat-ports#271). A
+    sample that straddles the release therefore reads a state that never existed,
+    and reports it as over-admission or as a queue short of its limit. The database
+    showed a peak occupancy of 2 in 150 of 150 rounds, the failing ones included.
+
+    So a sample is accepted only when TWO CONSECUTIVE PASSES AGREE on every run's
+    (has begun, is terminal). That pair is monotone per run (a run goes unbegun, then
+    begun, then terminal, and never back), so a run whose pair is the same at both of
+    its reads has not changed in between; and the second pass starts after the first
+    ends, so the instant between the passes lies inside every run's interval. That
+    instant is a real state, and it is the one asserted on.
+
+    A pass that changed is discarded and read again, never counted: this does not
+    retry the TEST, it refuses to look at a torn read, and `None` (no two passes
+    agreed within `attempts`) is skipped by the caller rather than passed. It is not
+    `status`: a holder asleep reads `ready`, which is why the pair is (started_at,
+    terminal) and not the status. See the docstring of the test.
+    """
+    def read():
+        return {rid: cleat.get(rid)[1] for rid in runs}
+
+    def shape(bodies):
+        return {
+            rid: (bool(b.get("started_at")), b.get("status") in cleat.TERMINAL)
+            for rid, b in bodies.items()
+        }
+
+    previous = read()
+    for _ in range(attempts):
+        current = read()
+        if shape(current) == shape(previous):
+            return current
+        previous = current
+    return None
+
+
 def test_blocked_task_runs_after_the_holder_finishes(
     cleat, holds_key_workflow, declared_queue
 ):
@@ -260,10 +302,19 @@ def test_blocked_task_runs_after_the_holder_finishes(
     begun: set[str] = set()
     peak = 0            # most slots held simultaneously, over every sample
     full_samples = 0    # samples that caught the queue exactly at its limit
+    consistent = 0      # samples two passes agreed on; the ones asserted on
+    torn = 0            # samples no two passes agreed on, skipped and never passed
 
     deadline = time.monotonic() + 90.0
     while time.monotonic() < deadline:
-        bodies = {rid: cleat.get(rid)[1] for rid in runs}
+        bodies = _consistent_sample(cleat, runs)
+        if bodies is None:
+            # Two passes never agreed within the attempts: the state was changing
+            # throughout. Not a sample, and not a pass; look again.
+            torn += 1
+            time.sleep(0.2)
+            continue
+        consistent += 1
         begun |= {rid for rid, b in bodies.items() if b.get("started_at")}
         holding = [
             rid for rid, b in bodies.items()
@@ -296,6 +347,17 @@ def test_blocked_task_runs_after_the_holder_finishes(
         if len(begun) == len(runs):
             break
         time.sleep(0.2)
+
+    # Non-vacuity of the SAMPLER. Every assertion in the loop runs on a consistent
+    # sample, so a sampler that never produced one (the three runs always changing
+    # between two passes, or an error in how agreement is judged) would skip every
+    # check and pass, which is the "a green that measured nothing" this test must not
+    # be. Two is not many; a 4 s hold read every 0.2 s should afford tens.
+    assert consistent >= 5, (
+        f"only {consistent} consistent sample(s) were taken ({torn} torn ones skipped), "
+        f"so the limit was barely checked. Two passes over the three runs never "
+        f"agreed; that is a fault in the sampler or in the engine's timing, not a pass"
+    )
 
     # The semaphore. ONE is what an unregistered key gives -- a mutex -- so this
     # is the assertion that separates a declared queue from cleat's original
