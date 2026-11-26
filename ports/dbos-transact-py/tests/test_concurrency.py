@@ -331,7 +331,16 @@ def test_blocked_task_runs_after_the_holder_finishes(
         )
         peak = max(peak, len(holding))
 
-        if len(holding) == QUEUE_LIMIT:
+        # BEFORE THE FIRST RELEASE ONLY. Once a holder finishes, a correct engine
+        # admits the waiter while the other holder still holds, so "two holding and
+        # none unbegun" is a REAL state for as long as the holders' completions are
+        # apart (the gap, minus the waiter's admission delay). #271 measured that gap
+        # at 4 ms against an admission delay of 5 to 16 ms, which made the state
+        # unreachable on that machine and is a fact about that machine; started a
+        # second apart, or claimed on different polls (MySQL and SQL Server poll),
+        # it is reached every time. The limit above is still asserted on every sample.
+        released = any(b.get("status") in cleat.TERMINAL for b in bodies.values())
+        if len(holding) == QUEUE_LIMIT and not released:
             full_samples += 1
             # While the queue is full, the run past the limit has never begun.
             # Upstream's "does not start while the others run", and the half a
