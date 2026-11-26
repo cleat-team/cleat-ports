@@ -33,8 +33,6 @@ import time
 
 import pytest
 
-SLEEP_MS = 3000
-
 # A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency the
 # default on 2026-11-22: a worker holds a run in memory through a wait that is due
 # within --resident-window-floor (10 s, a starting point) and answers it in the same
@@ -129,19 +127,32 @@ def test_the_virtual_clock_advances_across_a_sleep(cleat, replay_identity_workfl
 
     The window matters because it is where a workflow naturally looks at the
     clock: immediately on waking, to decide what to do next.
+
+    The sleep is past the residency window, and `generation > 1` says so: a run a
+    worker HOLDS through a short wait reads its in-memory clock in the same segment
+    and never takes this path (cleat-ports#273: at the defaults a 3 s sleep gave
+    generation 1, so this test compared a held run's clock and exercised nothing of
+    cleat#804).
     """
-    status, started = cleat.start(replay_identity_workflow, {"ms": SLEEP_MS})
+    status, started = cleat.start(replay_identity_workflow, {"ms": PAST_THE_HOLD_WINDOW_MS})
     assert status == 201, f"start rejected: {status} {started}"
 
     final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so "
+        f"it never suspended and the clock read below is a held run's, not the "
+        f"post-suspension read this test is about. A worker holds a run through a "
+        f"wait shorter than its residency window (10 s at the defaults): raise "
+        f"PAST_THE_HOLD_WINDOW_MS above it."
+    )
 
     body = _body(final)
     cached, fresh = int(body["cached"]), int(body["fresh"])
     advanced = fresh - cached
 
-    assert advanced >= SLEEP_MS * 0.8, (
-        f"the virtual clock advanced {advanced}ms across a {SLEEP_MS}ms sleep. "
+    assert advanced >= PAST_THE_HOLD_WINDOW_MS * 0.8, (
+        f"the virtual clock advanced {advanced}ms across a {PAST_THE_HOLD_WINDOW_MS}ms sleep. "
         "A durable clock read on waking must already include the wait; a value "
         "near zero means it returned the pre-suspension anchor."
     )
@@ -149,10 +160,10 @@ def test_the_virtual_clock_advances_across_a_sleep(cleat, replay_identity_workfl
     # Bounded on both sides. The lower bound alone would pass on a clock that
     # jumped to some far-future wall-clock instant, which is the same defect
     # class -- a read that is not the durable anchor -- pointing the other way.
-    # The slack above SLEEP_MS is the real time the resumed execution takes;
+    # The slack above PAST_THE_HOLD_WINDOW_MS is the real time the resumed execution takes;
     # measured at ~165ms.
-    assert advanced <= SLEEP_MS * 2, (
-        f"the virtual clock advanced {advanced}ms across a {SLEEP_MS}ms sleep, "
+    assert advanced <= PAST_THE_HOLD_WINDOW_MS * 2, (
+        f"the virtual clock advanced {advanced}ms across a {PAST_THE_HOLD_WINDOW_MS}ms sleep, "
         "far more than was asked for. The clock should carry the sleep plus the "
         "cost of resuming, not an unrelated wall-clock reading."
     )
