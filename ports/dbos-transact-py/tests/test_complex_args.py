@@ -15,11 +15,20 @@ import time
 
 import pytest
 
-SLEEP_MS = 2000
+# A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency the
+# default on 2026-11-22: a worker holds a run in memory through a wait due within
+# --resident-window-floor (10 s at the defaults, a starting point) and answers it in the
+# same segment, so a 2 s sleep decoded the argument once and replayed nothing
+# (cleat-ports#276: generation 1). test_replay.py and test_versions.py name the same
+# constant for the same reason.
+SLEEP_MS = 12_000
 
 
-def _run(cleat, workflow, outer, n, sleep_ms=0):
-    """Start one run and return (decoded result, wall-clock seconds)."""
+def _run(cleat, workflow, outer, n, sleep_ms=0, expect_suspension=False):
+    """Start one run and return (decoded result, wall-clock seconds).
+
+    `expect_suspension` asserts the run left generation 1: elapsed time cannot say so, because
+    a worker that HOLDS the run through the wait takes just as long."""
     t0 = time.time()
     status, started = cleat.start(
         workflow, {"outer": outer, "n": n, "sleepMs": sleep_ms}
@@ -28,6 +37,13 @@ def _run(cleat, workflow, outer, n, sleep_ms=0):
     final = cleat.await_terminal(started["id"], timeout=90.0)
     elapsed = time.time() - t0
     assert final["status"] == "done", f"run did not complete: {final!r}"
+    if expect_suspension:
+        assert final.get("generation", 1) > 1, (
+            f"the run completed in one segment (generation {final.get('generation')}), so "
+            f"it never suspended and the argument was decoded once: nothing was replayed. "
+            f"A worker holds a run through a wait shorter than its residency window "
+            f"(10 s at the defaults): raise SLEEP_MS above it."
+        )
     raw = final["result"]
     body = json.loads(raw) if isinstance(raw, str) else raw
     return body, elapsed
@@ -67,7 +83,8 @@ def test_a_nested_struct_argument_survives_a_suspension(cleat, complex_arg_workf
     passes because the workflow ran straight through instead of parking.
     """
     outer = {"inner": {"one": "one", "two": 2}}
-    body, elapsed = _run(cleat, complex_arg_workflow, outer, n=2, sleep_ms=SLEEP_MS)
+    body, elapsed = _run(
+        cleat, complex_arg_workflow, outer, n=2, sleep_ms=SLEEP_MS, expect_suspension=True)
 
     assert elapsed >= SLEEP_MS / 1000 * 0.8, (
         f"the run finished in {elapsed:.2f}s for a {SLEEP_MS}ms durable sleep, so "
