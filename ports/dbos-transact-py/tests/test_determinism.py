@@ -25,7 +25,12 @@ import json
 
 import pytest
 
-SLEEP_MS = 3000
+# A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency the
+# default on 2026-11-22: a worker holds a run in memory through a wait due within
+# --resident-window-floor (10 s, a starting point) and answers it in the same segment,
+# so the 3 s sleep this module used replayed nothing (cleat-ports#276: generation 1).
+# test_replay.py and test_versions.py name the same constant for the same reason.
+PAST_THE_HOLD_WINDOW_MS = 12_000
 
 
 def _body(final):
@@ -40,13 +45,22 @@ def run(cleat, determinism_workflow):
     Separate runs would let a defect that makes randomness constant WITHIN a
     run but varying between runs slip past the distinctness check.
     """
-    status, started = cleat.start(determinism_workflow, {"ms": SLEEP_MS})
+    status, started = cleat.start(determinism_workflow, {"ms": PAST_THE_HOLD_WINDOW_MS})
     assert status == 201, f"start rejected: {status} {started}"
     final = cleat.await_terminal(started["id"], timeout=90.0)
     assert final["status"] == "done", (
         f"the workflow did not complete: {final!r}. Every reading it captures goes "
         "through SideEffect, which fails the run on a replay mismatch, so a "
         "non-terminal run here IS the determinism failure."
+    )
+    # Without this every assertion below is satisfiable with no replay at all: a worker
+    # that HOLDS the run through a short wait answers it in the same segment, the
+    # readings are never compared with history, and "the run completed" proves nothing.
+    assert final.get("generation", 1) > 1, (
+        f"the run completed in one segment (generation {final.get('generation')}), so "
+        f"it never suspended and nothing was replayed: the readings below were not "
+        f"compared with history. A worker holds a run through a wait shorter than its "
+        f"residency window (10 s at the defaults): raise PAST_THE_HOLD_WINDOW_MS above it."
     )
     return started["id"], _body(final)
 
