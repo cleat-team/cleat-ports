@@ -39,7 +39,8 @@ import pytest
 # segment, so a 3 s sleep replays nothing. Measured on cleat-ports#273 at the defaults,
 # PostgreSQL, develop 8263a830: ms=3000 gave generation 1 three times (a held run, the
 # `sleep`/`deadline` park counter moved), ms=12000 gave generation 2 three times (a
-# `window` refusal). Also passes with `--resident-max-runs 0`, where any sleep suspends.
+# `window` refusal). With `--resident-max-runs 0` any sleep should suspend, but that
+# configuration was NOT run for this test.
 # test_versions.py names the same constant for the same reason.
 PAST_THE_HOLD_WINDOW_MS = 12_000
 
@@ -161,7 +162,8 @@ def test_the_virtual_clock_advances_across_a_sleep(cleat, replay_identity_workfl
     # jumped to some far-future wall-clock instant, which is the same defect
     # class -- a read that is not the durable anchor -- pointing the other way.
     # The slack above PAST_THE_HOLD_WINDOW_MS is the real time the resumed execution takes;
-    # measured at ~165ms.
+    # measured at 2 to 4 ms over the sleep at 12 s (12002, 12004, 12004 ms on PostgreSQL,
+    # cleat-ports#273; the ~165ms this said was an older figure, taken at a 3 s sleep).
     assert advanced <= PAST_THE_HOLD_WINDOW_MS * 2, (
         f"the virtual clock advanced {advanced}ms across a {PAST_THE_HOLD_WINDOW_MS}ms sleep, "
         "far more than was asked for. The clock should carry the sleep plus the "
