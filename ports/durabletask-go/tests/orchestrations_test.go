@@ -101,12 +101,24 @@ func Test_EmptyOrchestration(t *testing.T) {
 	}
 }
 
+// pastTheHoldWindowMs is a sleep the worker SUSPENDS through rather than holds. The same
+// constant, for the same reason, is PAST_THE_HOLD_WINDOW_MS in the dbos port's tests.
+const pastTheHoldWindowMs = 12_000
+
 // Test_SingleTimer: an orchestration whose only step is a durable timer
 // completes after the timer fires.
 //
 // Upstream's subject is that the timer is durable state rather than a parked
 // thread. The `resumed` marker is produced AFTER the sleep, so a run that
 // returned without waiting could not carry it.
+//
+// THE TIMER MUST OUTLAST THE RESIDENCY WINDOW. cleat#4351 made residency the
+// default (2026-11-22): a worker holds a run in memory through a wait due within
+// --resident-window-floor (10 s at the defaults, a starting point) and answers it in
+// the same segment, which is a parked thread, the thing this test says it is not.
+// Measured on cleat-ports#276, PostgreSQL, develop 4f2addca, the defaults: a 1 s
+// timer gave generation 1. So the timer is past the window and the run's generation
+// is asserted: one suspension is what "durable state" means here.
 //
 // NO WALL-CLOCK ASSERTION. The obvious addition -- that the run took at least
 // sleepMs -- would be measuring this machine, and the port's sibling
@@ -116,12 +128,18 @@ func Test_EmptyOrchestration(t *testing.T) {
 func Test_SingleTimer(t *testing.T) {
 	marker := key(t)
 	runID := startedRunID(t, start(t, timerWorkflow(t), map[string]any{
-		"marker": marker, "sleepMs": 1000,
+		"marker": marker, "sleepMs": pastTheHoldWindowMs,
 	}))
 	final := awaitTerminal(t, runID, 90*time.Second)
 
 	if got := final["status"]; got != "done" {
 		t.Fatalf("status = %v, want done: %#v", got, final)
+	}
+	if g, _ := final["generation"].(float64); g <= 1 {
+		t.Fatalf("the run completed in one segment (generation %v), so a worker held it "+
+			"through the timer and nothing was suspended. A worker holds a run through a "+
+			"wait shorter than its residency window (10 s at the defaults): raise "+
+			"pastTheHoldWindowMs above it. %#v", final["generation"], final)
 	}
 	b := body(t, final)
 	if b["outcome"] != "resumed" {
