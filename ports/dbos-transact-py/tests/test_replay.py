@@ -17,8 +17,10 @@ anything else, the engine would have refused the run:
     "1788668316318" but history recorded "1788668316209"
 
 That is not hypothetical: this exact workflow produced exactly that error until
-cleat#787, and the guard test below exists to prove the suspension is real, so
-"it completed" cannot be satisfied without a replay having happened.
+cleat#787, and the `generation > 1` assertion below exists to prove the suspension is
+real, so "it completed" cannot be satisfied without a replay having happened. (Until
+cleat-ports#273 the guard was elapsed time, which a held run satisfies too, and at the
+residency defaults this test replayed nothing.)
 
 This is the one place the port asserts something no upstream suite does.
 Re-executing from step 0 while serving completed work from history is cleat's
@@ -32,6 +34,16 @@ import time
 import pytest
 
 SLEEP_MS = 3000
+
+# A sleep the worker SUSPENDS through rather than holds. cleat#4351 made residency the
+# default on 2026-11-22: a worker holds a run in memory through a wait that is due
+# within --resident-window-floor (10 s, a starting point) and answers it in the same
+# segment, so a 3 s sleep replays nothing. Measured on cleat-ports#273 at the defaults,
+# PostgreSQL, develop 8263a830: ms=3000 gave generation 1 three times (a held run, the
+# `sleep`/`deadline` park counter moved), ms=12000 gave generation 2 three times (a
+# `window` refusal). Also passes with `--resident-max-runs 0`, where any sleep suspends.
+# test_versions.py names the same constant for the same reason.
+PAST_THE_HOLD_WINDOW_MS = 12_000
 
 
 def _body(final):
@@ -59,7 +71,8 @@ def test_a_captured_value_survives_the_replay(cleat, replay_identity_workflow):
     captured = []
     for i in range(RUNS):
         started_at = time.monotonic()
-        status, started = cleat.start(replay_identity_workflow, {"ms": SLEEP_MS})
+        status, started = cleat.start(
+            replay_identity_workflow, {"ms": PAST_THE_HOLD_WINDOW_MS})
         assert status == 201, f"run {i}: start rejected: {status} {started}"
 
         final = cleat.await_terminal(started["id"], timeout=90.0)
@@ -73,9 +86,20 @@ def test_a_captured_value_survives_the_replay(cleat, replay_identity_workflow):
             "must serve completed work from history."
         )
         # Without this, the assertion above is satisfiable with no replay at all.
-        assert elapsed_ms >= SLEEP_MS * 0.8, (
+        # It asserts the replay itself: a run's generation goes up each time it is
+        # suspended and resumed. Elapsed time cannot say so, because a worker that
+        # HOLDS the run through the wait takes just as long (3.2 to 4.0 s for a 3 s
+        # sleep, measured), which is how this test passed without replaying anything.
+        assert final.get("generation", 1) > 1, (
+            f"run {i} completed in one segment (generation {final.get('generation')}), "
+            f"so it never suspended and nothing was replayed: the captured value was "
+            f"not compared with history. A worker holds a run through a wait shorter "
+            f"than its residency window (10 s at the defaults): raise "
+            f"PAST_THE_HOLD_WINDOW_MS above it."
+        )
+        assert elapsed_ms >= PAST_THE_HOLD_WINDOW_MS * 0.8, (
             f"run {i} finished in {elapsed_ms:.0f}ms for a requested "
-            f"{SLEEP_MS}ms sleep, so it never suspended and nothing was replayed"
+            f"{PAST_THE_HOLD_WINDOW_MS}ms sleep, so the sleep was not served"
         )
         captured.append(_body(final)["cached"])
 

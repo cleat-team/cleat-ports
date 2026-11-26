@@ -243,9 +243,13 @@ def test_a_delivered_but_unconsumed_signal_crosses_a_continue_as_new(
         "If that has come back, the carry-over was removed and the UPGRADE NOTE "
         "that announced it needs rewriting."
     )
-    # Compared as JSON, not as a string: the body is re-serialised on the way
-    # through the store, and a JSON column does not keep the sender's spacing on
-    # every dialect.
+    # Compared as JSON, not as a string, because the engine hands the payload back
+    # compact: sent as `{"from": "iteration-1"}`, it came back as
+    # `{"from":"iteration-1"}` (observed on PostgreSQL, 2026-11-26, cleat-ports#273).
+    # Where that happens was not established, and it was not observed on MySQL or
+    # SQL Server. In particular this is NOT "a JSON column re-serialises the
+    # spacing": the MySQL column is LONGTEXT with CHECK (JSON_VALID(col)) (cleat#1626),
+    # a text column that a CHECK does not rewrite.
     assert json.loads(body["payload"]) == {"from": "iteration-1"}, (
         f"the signal crossed the boundary but not intact: {body}"
     )
